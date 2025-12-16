@@ -10,7 +10,6 @@ The long and short of it is, when I first learnt about ROM hacking these games w
 ![Legacy of Goku I Logo](./Covers/DBZLOG1.png)
 
 *If You Value What’s Left Of Your Head I Suggest You Stay Where You Are.*
-Soon™
 
 <br>
 
@@ -19,14 +18,16 @@ Soon™
 
 *That's Quite A Move. I Must Find Out How He Does That.*
 
-
+<br>
 
 ## Buu's Fury
 ![Buu's Fury Logo](./Covers/DBZBF.png)
 
 *You can take control of my mind and my body, but there's one thing a Saiyan keeps... HIS PRIDE!*
 
-<br><br>
+<br>
+
+Check out the following links if you're after more information about what I did to find out this information, especially the GBATek documentation.
 
 [IDA Pro 7.7](https://google.com/search?q=IDA%20Pro%207.7) ·
 [GBATek Documentation](https://problemkaputt.de/gbatek.htm) ·
