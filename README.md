@@ -8,6 +8,7 @@ The long and short of it is, when I first learnt about ROM hacking these games w
 
 ## Legacy of Goku I
 ![Legacy of Goku I Logo](./Covers/DBZLOG1.png)
+
 *If You Value What’s Left Of Your Head I Suggest You Stay Where You Are.*
 Soon™
 
@@ -22,6 +23,7 @@ Soon™
 
 ## Buu's Fury
 ![Buu's Fury Logo](./Covers/DBZBF.png)
+
 *You can take control of my mind and my body, but there's one thing a Saiyan keeps... HIS PRIDE!*
 
 <br><br>
