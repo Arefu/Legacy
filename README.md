@@ -1,45 +1,33 @@
-<h2>Legacy - About</h2>
+## Legacy - About
 
-Check the <a href="https://github.com/Arefu/Legacy/wiki">Wiki</a> for more information.
-Essentially when I first learnt about ROM hacking these games were some of the first I thought it would be cool to add different things too, I sadly worked out quickly that they compress the ever living hell out of basically everything in the game, and it seems no one has bothered to document how... Until now.
+Check the [Wiki](https://github.com/Arefu/Legacy/wiki) for more information.
+
+The long and short of it is, when I first learnt about ROM hacking these games were some of the first I thought it would be cool to add different things to. I sadly worked out quickly that they compress the ever living hell out of basically everything in the game, and it seems no one has bothered to document how... Until now. No promises anything near the state of Pokemon modding will come of this, but this is my little area of the internet where I like to share what I find about various projects.
 
 <div align="center">
-  <a href="https://github.com/Arefu/Legacy">
-    <img src="https://upload.wikimedia.org/wikipedia/en/1/1c/Dbzlog1.jpg" alt="Logo" >
-  </a>
 
-<h3 align="center">Legacy of Goku I</h3>
-
-  <p align="center">
-    <i>If You Value What’s Left Of Your Head I Suggest You Stay Where You Are.</i>
-  </p>
-
-  <a href="https://github.com/Arefu/Legacy">
-    <img src="https://static.wikia.nocookie.net/dragonball/images/e/ed/Legacy_of_goku_2.jpg/revision/latest?cb=20100102065837" alt="Logo" >
-  </a>
+## Legacy of Goku I
+![Legacy of Goku I Logo](./Covers/DBZLOG1.png)
+*If You Value What’s Left Of Your Head I Suggest You Stay Where You Are.*
 Soon™
 
 <br>
-<h3 align="center">Legacy of Goku II</h3>
 
-  <p align="center">
-    <i>That's Quite A Move. I Must Find Out How He Does That.</i>
-  </p>
+## Legacy of Goku II
+![Legacy of Goku II Logo](./Covers/DBZLOG2.png)
 
-  <a href="https://github.com/Arefu/Legacy">
-    <img src="https://static.wikia.nocookie.net/dragonball/images/0/0f/GBA_DragonBallZ_BuusFury.jpg/revision/latest/thumbnail/width/360/height/360?cb=20080228180723" alt="Logo" >
-  </a>
+*That's Quite A Move. I Must Find Out How He Does That.*
 
-<h3 align="center">Buu's</h3>
 
-  <p align="center">
-    <i>That's Quite A Move. I Must Find Out How He Does That.</i>
-    <br />
-    <br />
-    <a href="https://google.com/search?q=IDA Pro 7.7">IDA Pro 7.7</a>
-    ·
-    <a href="https://problemkaputt.de/gbatek.htm">GBATek Documentation</a>
-    ·
-    <a href="https://problemkaputt.de/gbahlp.htm">NO$GBA Documentation</a>
-  </p>
+
+## Buu's Fury
+![Buu's Fury Logo](./Covers/DBZBF.png)
+*You can take control of my mind and my body, but there's one thing a Saiyan keeps... HIS PRIDE!*
+
+<br><br>
+
+[IDA Pro 7.7](https://google.com/search?q=IDA%20Pro%207.7) ·
+[GBATek Documentation](https://problemkaputt.de/gbatek.htm) ·
+[NO$GBA Documentation](https://problemkaputt.de/gbahlp.htm)
+
 </div>
