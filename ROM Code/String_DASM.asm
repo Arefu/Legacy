@@ -2,7 +2,8 @@
 ;
 ;   This code was extracted from 0x03000000 during decompression of compressed blocks.
 ;   It seems to pop each char from the compressed block.
-;
+;   This is copied from the ROM at rom_start (0x080000C0), you can find it at 0x87FD6BC.
+;   You can use my IDA DB, or copy the same bytes (3708) to 0x3000000 and then make it a function to see the output.
 ;
 
 push    r4-r11,r14
