@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Deflate/Deflate.vcxproj" Id="82ea309e-8116-4858-8336-f49432108751" />
+</Solution>
