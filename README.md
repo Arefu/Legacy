@@ -29,7 +29,7 @@ The long and short of it is, when I first learnt about ROM hacking these games w
 
 Check out the following links if you're after more information about what I did to find out this information, especially the GBATek documentation.
 
-[IDA Pro 7.7](https://google.com/search?q=IDA%20Pro%207.7) ·
+[IDA Pro 9.3](https://google.com/search?q=IDA%20Pro%209.3) ·
 [GBATek Documentation](https://problemkaputt.de/gbatek.htm) ·
 [NO$GBA Documentation](https://problemkaputt.de/gbahlp.htm)
 
