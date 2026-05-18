@@ -11,6 +11,8 @@
 *.gba
 # haahahahah
 
+crystaltile2/
+ROM/
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 

@@ -7,23 +7,26 @@ The long and short of it is, when I first learnt about ROM hacking these games w
 <div align="center">
 
 ## Legacy of Goku I
-![Legacy of Goku I Logo](./Covers/DBZLOG1.png)
 
-*If You Value What’s Left Of Your Head I Suggest You Stay Where You Are.*
+![Legacy of Goku I Logo](./Assets/Covers/DBZLOG1.png)
+
+_If You Value What’s Left Of Your Head I Suggest You Stay Where You Are._
 
 <br>
 
 ## Legacy of Goku II
-![Legacy of Goku II Logo](./Covers/DBZLOG2.png)
 
-*That's Quite A Move. I Must Find Out How He Does That.*
+![Legacy of Goku II Logo](./Assets/Covers/DBZLOG2.png)
+
+_That's Quite A Move. I Must Find Out How He Does That._
 
 <br>
 
 ## Buu's Fury
-![Buu's Fury Logo](./Covers/DBZBF.png)
 
-*You can take control of my mind and my body, but there's one thing a Saiyan keeps... HIS PRIDE!*
+![Buu's Fury Logo](./Assets/Covers/DBZBF.png)
+
+_You can take control of my mind and my body, but there's one thing a Saiyan keeps... HIS PRIDE!_
 
 <br>
 
