@@ -1,13 +1,15 @@
 using DBZKit.Assets;
-using System.Diagnostics;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace DBZKit
 {
     public partial class DBZKit : Form
     {
-        private readonly Dictionary<int, byte[]> _PortraitData = new();
+        private readonly Dictionary<int, byte[]> _PortraitData = [];
+        private readonly Dictionary<int, byte[]> _ItemData = [];
+
         private readonly ImageList _PortraitImageList;
+        private readonly ImageList _ItemImageList;
+
         private byte[]? _GBARom;
 
         public DBZKit()
@@ -20,62 +22,102 @@ namespace DBZKit
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
+            _ItemImageList = new ImageList
+            {
+                ImageSize = new Size(64, 64),
+                ColorDepth = ColorDepth.Depth32Bit
+            };
+
+            ListView_ItemViewer.View = View.LargeIcon;
+            ListView_ItemViewer.LargeImageList = _ItemImageList;
+            ListView_ItemViewer.AutoArrange = true;
+
             ListView_PortraitViewer.View = View.LargeIcon;
             ListView_PortraitViewer.LargeImageList = _PortraitImageList;
-            ListView_PortraitViewer.ContextMenuStrip = PortraitContextMenu;
+            ListView_PortraitViewer.ContextMenuStrip = AssetContextMenu;
 
-            PortraitContextMenu.Items.Add("Export PNG", null, OnExportPng);
-            PortraitContextMenu.Items.Add("Export BIN", null, OnExportBin);
-            PortraitContextMenu.Items.Add(new ToolStripSeparator());
-            PortraitContextMenu.Items.Add("Replace...", null, OnReplace);
+            AssetContextMenu.Items.Add("Export PNG", null, OnExportPng);
+            AssetContextMenu.Items.Add("Export BIN", null, OnExportBin);
+            AssetContextMenu.Items.Add(new ToolStripSeparator());
+            AssetContextMenu.Items.Add("Replace...", null, OnReplace);
         }
 
         private void OnExportPng(object? sender, EventArgs e)
         {
-            if (ListView_PortraitViewer.SelectedItems.Count == 0) return;
-            string key = ListView_PortraitViewer.SelectedItems[0].ImageKey;
+            ListView? SelectedListView = (ListView)((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
+            if (SelectedListView == null || SelectedListView.SelectedItems.Count == 0)
+                return;
 
-            var save = new SaveFileDialog { Filter = "PNG Image|*.png", FileName = key };
-            if (save.ShowDialog() != DialogResult.OK) return;
+            string key = SelectedListView.SelectedItems[0].ImageKey;
 
-            var bitmap = (Bitmap)_PortraitImageList.Images[key];
-            Portrait.ExportPng(bitmap, save.FileName);
+            SaveFileDialog save = new() { Filter = "PNG Image|*.png", FileName = key };
+            if (save.ShowDialog() != DialogResult.OK)
+                return;
+
+            switch (SelectedListView.Name)
+            {
+                case "ListView_PortraitViewer":
+                    Bitmap? bitmap = (Bitmap)_PortraitImageList.Images[key];
+                    Portraits.ExportPng(bitmap, save.FileName);
+                    break;
+                case "ListView_ItemViewer":
+                    _ = MessageBox.Show("1");
+                    break;
+                default:
+                    break;
+            }
         }
 
         private void OnExportBin(object? sender, EventArgs e)
         {
-            if (ListView_PortraitViewer.SelectedItems.Count == 0) return;
+            if (ListView_PortraitViewer.SelectedItems.Count == 0)
+            {
+                return;
+            }
+
             string key = ListView_PortraitViewer.SelectedItems[0].ImageKey;
             int index = int.Parse(key.Split('_')[1]);
 
-            var save = new SaveFileDialog { Filter = "Binary|*.bin", FileName = key };
-            if (save.ShowDialog() != DialogResult.OK) return;
+            SaveFileDialog save = new() { Filter = "Binary|*.bin", FileName = key };
+            if (save.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
 
-            Portrait.ExportBin(_PortraitData[index], save.FileName);
+            Portraits.ExportBin(_PortraitData[index], save.FileName);
         }
 
         private void OnReplace(object? sender, EventArgs e)
         {
-            if (ListView_PortraitViewer.SelectedItems.Count == 0) return;
-            string key = ListView_PortraitViewer.SelectedItems[0].ImageKey;
+            if (ListView_PortraitViewer.SelectedItems.Count == 0)
+            {
+                return;
+            }
 
-            var open = new OpenFileDialog { Filter = "PNG Image|*.png|Binary|*.bin" };
-            if (open.ShowDialog() != DialogResult.OK) return;
+            _ = ListView_PortraitViewer.SelectedItems[0].ImageKey;
 
-            MessageBox.Show("Replace not yet implemented.", "Coming Soon", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFileDialog open = new() { Filter = "PNG Image|*.png|Binary|*.bin" };
+            if (open.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+
+            _ = MessageBox.Show("Replace not yet implemented.", "Coming Soon", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private void openRomToolStripMenuItem_Click(object sender, EventArgs e)
+        private void OpenRomToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            var OpenFile = new OpenFileDialog();
+            OpenFileDialog OpenFile = new();
             if (OpenFile.ShowDialog() != DialogResult.OK)
             {
-                MessageBox.Show("No File Selected", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please select a GBA ROM file to continue.", "No ROM Selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
-            Portrait.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            MapTest.LoadFirstMap(_GBARom);
         }
     }
 }

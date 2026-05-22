@@ -1,6 +1,4 @@
-﻿using System;
-
-/// <summary>
+﻿/// <summary>
 /// Pure C# port of wisk's JCALG1 decompressor.
 /// Works on raw headerless streams (no size header expected).
 /// Direct port of: https://gist.github.com/wisk/e7deaacba9dbea812dc9b9753f7d8ebe

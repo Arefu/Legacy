@@ -1,10 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing.Imaging;
+﻿using System.Drawing.Imaging;
 
 namespace DBZKit.Assets
 {
-    internal static class Portrait
+    internal static class Portraits
     {
         /// <summary>
         /// Loads all portraits from the ROM's portrait table into the provided

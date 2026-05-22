@@ -44,7 +44,10 @@
             DBZKit_TabControl = new TabControl();
             TabPage_PortraitViewer = new TabPage();
             ListView_PortraitViewer = new ListView();
+            TabPage_ItemViewer = new TabPage();
+            ListView_ItemViewer = new ListView();
             TapPage_MapViewer = new TabPage();
+            treeView1 = new TreeView();
             TabPage_MiscAssetViewer = new TabPage();
             TreeView_MiscAssetList = new TreeView();
             menuStrip1 = new MenuStrip();
@@ -55,10 +58,10 @@
             MenuEnableLOG1 = new ToolStripMenuItem();
             MenuEnableLOG2 = new ToolStripMenuItem();
             MenuEnableLOG3 = new ToolStripMenuItem();
-            PortraitContextMenu = new ContextMenuStrip(components);
-            treeView1 = new TreeView();
+            AssetContextMenu = new ContextMenuStrip(components);
             DBZKit_TabControl.SuspendLayout();
             TabPage_PortraitViewer.SuspendLayout();
+            TabPage_ItemViewer.SuspendLayout();
             TapPage_MapViewer.SuspendLayout();
             TabPage_MiscAssetViewer.SuspendLayout();
             menuStrip1.SuspendLayout();
@@ -67,6 +70,7 @@
             // DBZKit_TabControl
             // 
             DBZKit_TabControl.Controls.Add(TabPage_PortraitViewer);
+            DBZKit_TabControl.Controls.Add(TabPage_ItemViewer);
             DBZKit_TabControl.Controls.Add(TapPage_MapViewer);
             DBZKit_TabControl.Controls.Add(TabPage_MiscAssetViewer);
             DBZKit_TabControl.Dock = DockStyle.Fill;
@@ -96,6 +100,25 @@
             ListView_PortraitViewer.TabIndex = 0;
             ListView_PortraitViewer.UseCompatibleStateImageBehavior = false;
             // 
+            // TabPage_ItemViewer
+            // 
+            TabPage_ItemViewer.Controls.Add(ListView_ItemViewer);
+            TabPage_ItemViewer.Location = new Point(4, 24);
+            TabPage_ItemViewer.Name = "TabPage_ItemViewer";
+            TabPage_ItemViewer.Size = new Size(1256, 629);
+            TabPage_ItemViewer.TabIndex = 3;
+            TabPage_ItemViewer.Text = "Item Viewer";
+            TabPage_ItemViewer.UseVisualStyleBackColor = true;
+            // 
+            // ListView_ItemViewer
+            // 
+            ListView_ItemViewer.Dock = DockStyle.Fill;
+            ListView_ItemViewer.Location = new Point(0, 0);
+            ListView_ItemViewer.Name = "ListView_ItemViewer";
+            ListView_ItemViewer.Size = new Size(1256, 629);
+            ListView_ItemViewer.TabIndex = 1;
+            ListView_ItemViewer.UseCompatibleStateImageBehavior = false;
+            // 
             // TapPage_MapViewer
             // 
             TapPage_MapViewer.Controls.Add(treeView1);
@@ -105,6 +128,39 @@
             TapPage_MapViewer.TabIndex = 2;
             TapPage_MapViewer.Text = "Map Viewer";
             TapPage_MapViewer.UseVisualStyleBackColor = true;
+            // 
+            // treeView1
+            // 
+            treeView1.Dock = DockStyle.Left;
+            treeView1.Location = new Point(0, 0);
+            treeView1.Name = "treeView1";
+            treeNode1.Name = "Area 1";
+            treeNode1.Text = "Area 1";
+            treeNode2.Name = "Area 2";
+            treeNode2.Text = "Area 2";
+            treeNode3.Name = "Area 3";
+            treeNode3.Text = "Area 3";
+            treeNode4.Name = "Area 4";
+            treeNode4.Text = "Area 4";
+            treeNode5.Name = "Area 5";
+            treeNode5.Text = "Area 5";
+            treeNode6.Name = "Area 6";
+            treeNode6.Text = "Area 6";
+            treeNode7.Name = "Area 7";
+            treeNode7.Text = "Area 7";
+            treeNode8.Name = "Zone 1";
+            treeNode8.Text = "Zone 1";
+            treeNode9.Name = "Zone 2";
+            treeNode9.Text = "Zone 2";
+            treeNode10.Name = "Zone 3";
+            treeNode10.Text = "Zone 3";
+            treeNode11.Name = "Zone 4";
+            treeNode11.Text = "Zone 4";
+            treeNode12.Name = "Zones";
+            treeNode12.Text = "Zones";
+            treeView1.Nodes.AddRange(new TreeNode[] { treeNode12 });
+            treeView1.Size = new Size(192, 629);
+            treeView1.TabIndex = 2;
             // 
             // TabPage_MiscAssetViewer
             // 
@@ -146,7 +202,7 @@
             openRomToolStripMenuItem.Name = "openRomToolStripMenuItem";
             openRomToolStripMenuItem.Size = new Size(131, 22);
             openRomToolStripMenuItem.Text = "&Open Rom";
-            openRomToolStripMenuItem.Click += openRomToolStripMenuItem_Click;
+            openRomToolStripMenuItem.Click += OpenRomToolStripMenuItem_Click;
             // 
             // optionsToolStripMenuItem
             // 
@@ -184,43 +240,10 @@
             MenuEnableLOG3.Size = new Size(165, 22);
             MenuEnableLOG3.Text = "Buu's Fury";
             // 
-            // PortraitContextMenu
+            // AssetContextMenu
             // 
-            PortraitContextMenu.Name = "PortraitContextMenu";
-            PortraitContextMenu.Size = new Size(61, 4);
-            // 
-            // treeView1
-            // 
-            treeView1.Dock = DockStyle.Left;
-            treeView1.Location = new Point(0, 0);
-            treeView1.Name = "treeView1";
-            treeNode1.Name = "Area 1";
-            treeNode1.Text = "Area 1";
-            treeNode2.Name = "Area 2";
-            treeNode2.Text = "Area 2";
-            treeNode3.Name = "Area 3";
-            treeNode3.Text = "Area 3";
-            treeNode4.Name = "Area 4";
-            treeNode4.Text = "Area 4";
-            treeNode5.Name = "Area 5";
-            treeNode5.Text = "Area 5";
-            treeNode6.Name = "Area 6";
-            treeNode6.Text = "Area 6";
-            treeNode7.Name = "Area 7";
-            treeNode7.Text = "Area 7";
-            treeNode8.Name = "Zone 1";
-            treeNode8.Text = "Zone 1";
-            treeNode9.Name = "Zone 2";
-            treeNode9.Text = "Zone 2";
-            treeNode10.Name = "Zone 3";
-            treeNode10.Text = "Zone 3";
-            treeNode11.Name = "Zone 4";
-            treeNode11.Text = "Zone 4";
-            treeNode12.Name = "Zones";
-            treeNode12.Text = "Zones";
-            treeView1.Nodes.AddRange(new TreeNode[] { treeNode12 });
-            treeView1.Size = new Size(192, 629);
-            treeView1.TabIndex = 2;
+            AssetContextMenu.Name = "PortraitContextMenu";
+            AssetContextMenu.Size = new Size(61, 4);
             // 
             // DBZKit
             // 
@@ -229,10 +252,13 @@
             ClientSize = new Size(1264, 681);
             Controls.Add(DBZKit_TabControl);
             Controls.Add(menuStrip1);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
             Name = "DBZKit";
             Text = "DBZ Kit";
             DBZKit_TabControl.ResumeLayout(false);
             TabPage_PortraitViewer.ResumeLayout(false);
+            TabPage_ItemViewer.ResumeLayout(false);
             TapPage_MapViewer.ResumeLayout(false);
             TabPage_MiscAssetViewer.ResumeLayout(false);
             menuStrip1.ResumeLayout(false);
@@ -256,8 +282,10 @@
         private ToolStripMenuItem MenuEnableLOG3;
         private TreeView TreeView_MiscAssetList;
         private ListView ListView_PortraitViewer;
-        private ContextMenuStrip PortraitContextMenu;
+        private ContextMenuStrip AssetContextMenu;
         private TabPage TapPage_MapViewer;
         private TreeView treeView1;
+        private TabPage TabPage_ItemViewer;
+        private ListView ListView_ItemViewer;
     }
 }
