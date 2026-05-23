@@ -6,8 +6,10 @@ namespace DBZKit
     {
         private readonly Dictionary<int, byte[]> _PortraitData = [];
         private readonly Dictionary<int, byte[]> _ItemData = [];
+        private readonly Dictionary<int, byte[]> _SpriteData = [];
 
         private readonly ImageList _PortraitImageList;
+        private readonly ImageList _SpriteImageList;
         private readonly ImageList _ItemImageList;
 
         private byte[]? _GBARom;
@@ -28,13 +30,23 @@ namespace DBZKit
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
+            _SpriteImageList = new ImageList
+            {
+                ImageSize = new Size(128, 128),
+                ColorDepth = ColorDepth.Depth32Bit
+            };
+
             ListView_ItemViewer.View = View.LargeIcon;
             ListView_ItemViewer.LargeImageList = _ItemImageList;
-            ListView_ItemViewer.AutoArrange = true;
+            ListView_ItemViewer.ContextMenuStrip = AssetContextMenu;
 
             ListView_PortraitViewer.View = View.LargeIcon;
             ListView_PortraitViewer.LargeImageList = _PortraitImageList;
             ListView_PortraitViewer.ContextMenuStrip = AssetContextMenu;
+
+            ListView_SpriteViewer.View = View.LargeIcon;
+            ListView_SpriteViewer.LargeImageList = _SpriteImageList;
+            ListView_SpriteViewer.ContextMenuStrip = AssetContextMenu;
 
             AssetContextMenu.Items.Add("Export PNG", null, OnExportPng);
             AssetContextMenu.Items.Add("Export BIN", null, OnExportBin);
@@ -117,7 +129,7 @@ namespace DBZKit
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
             Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            MapTest.LoadFirstMap(_GBARom);
+            Sprites.LoadCharacterSpriteSets(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
         }
     }
 }

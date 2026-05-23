@@ -59,18 +59,22 @@
             MenuEnableLOG2 = new ToolStripMenuItem();
             MenuEnableLOG3 = new ToolStripMenuItem();
             AssetContextMenu = new ContextMenuStrip(components);
+            TabPage_SpriteViewer = new TabPage();
+            ListView_SpriteViewer = new ListView();
             DBZKit_TabControl.SuspendLayout();
             TabPage_PortraitViewer.SuspendLayout();
             TabPage_ItemViewer.SuspendLayout();
             TapPage_MapViewer.SuspendLayout();
             TabPage_MiscAssetViewer.SuspendLayout();
             menuStrip1.SuspendLayout();
+            TabPage_SpriteViewer.SuspendLayout();
             SuspendLayout();
             // 
             // DBZKit_TabControl
             // 
             DBZKit_TabControl.Controls.Add(TabPage_PortraitViewer);
             DBZKit_TabControl.Controls.Add(TabPage_ItemViewer);
+            DBZKit_TabControl.Controls.Add(TabPage_SpriteViewer);
             DBZKit_TabControl.Controls.Add(TapPage_MapViewer);
             DBZKit_TabControl.Controls.Add(TabPage_MiscAssetViewer);
             DBZKit_TabControl.Dock = DockStyle.Fill;
@@ -245,6 +249,25 @@
             AssetContextMenu.Name = "PortraitContextMenu";
             AssetContextMenu.Size = new Size(61, 4);
             // 
+            // TabPage_SpriteViewer
+            // 
+            TabPage_SpriteViewer.Controls.Add(ListView_SpriteViewer);
+            TabPage_SpriteViewer.Location = new Point(4, 24);
+            TabPage_SpriteViewer.Name = "TabPage_SpriteViewer";
+            TabPage_SpriteViewer.Size = new Size(1256, 629);
+            TabPage_SpriteViewer.TabIndex = 4;
+            TabPage_SpriteViewer.Text = "Sprite Viewer";
+            TabPage_SpriteViewer.UseVisualStyleBackColor = true;
+            // 
+            // ListView_SpriteViewer
+            // 
+            ListView_SpriteViewer.Dock = DockStyle.Fill;
+            ListView_SpriteViewer.Location = new Point(0, 0);
+            ListView_SpriteViewer.Name = "ListView_SpriteViewer";
+            ListView_SpriteViewer.Size = new Size(1256, 629);
+            ListView_SpriteViewer.TabIndex = 2;
+            ListView_SpriteViewer.UseCompatibleStateImageBehavior = false;
+            // 
             // DBZKit
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -263,6 +286,7 @@
             TabPage_MiscAssetViewer.ResumeLayout(false);
             menuStrip1.ResumeLayout(false);
             menuStrip1.PerformLayout();
+            TabPage_SpriteViewer.ResumeLayout(false);
             ResumeLayout(false);
             PerformLayout();
         }
@@ -287,5 +311,7 @@
         private TreeView treeView1;
         private TabPage TabPage_ItemViewer;
         private ListView ListView_ItemViewer;
+        private TabPage TabPage_SpriteViewer;
+        private ListView ListView_SpriteViewer;
     }
 }
