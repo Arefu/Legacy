@@ -32,7 +32,7 @@ namespace DBZKit
 
             _SpriteImageList = new ImageList
             {
-                ImageSize = new Size(128, 128),
+                ImageSize = new Size(160, 64),
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
@@ -129,7 +129,7 @@ namespace DBZKit
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
             Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Sprites.LoadCharacterSpriteSets(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            Unknowns.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, _SpriteData, GBA.ReadPalette(_GBARom, 0x081DA6C8), ".");
         }
     }
 }

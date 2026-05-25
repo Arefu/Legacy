@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing.Imaging;
-using System.Text;
+﻿using System.Drawing.Imaging;
 
 namespace DBZKit
 {
@@ -39,6 +36,46 @@ namespace DBZKit
             }
 
             return palette;
+        }
+
+        /// <summary>
+        /// Renders 4bpp GBA tiled sprite data. Tiles are 8x8, stored row by row within each tile.
+        /// </summary>
+        public static Bitmap Render4bppTiled(byte[] data, int widthInTiles, int heightInTiles, Color[]? palette = null)
+        {
+            int width = widthInTiles * 8;
+            int height = heightInTiles * 8;
+            var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+
+            int tileIndex = 0;
+            for (int tileY = 0; tileY < heightInTiles; tileY++)
+            {
+                for (int tileX = 0; tileX < widthInTiles; tileX++)
+                {
+                    int tileOffset = tileIndex * 32; // 32 bytes per 8x8 4bpp tile
+                    for (int row = 0; row < 8; row++)
+                    {
+                        for (int col = 0; col < 8; col += 2)
+                        {
+                            byte b = data[tileOffset + row * 4 + col / 2];
+                            byte lo = (byte)(b & 0x0F);
+                            byte hi = (byte)((b >> 4) & 0x0F);
+
+                            int px = tileX * 8 + col;
+                            int py = tileY * 8 + row;
+
+                            Color colorLo = palette != null ? palette[lo] : Color.FromArgb(lo * 17, lo * 17, lo * 17);
+                            Color colorHi = palette != null ? palette[hi] : Color.FromArgb(hi * 17, hi * 17, hi * 17);
+
+                            bmp.SetPixel(px, py, colorLo);
+                            bmp.SetPixel(px + 1, py, colorHi);
+                        }
+                    }
+                    tileIndex++;
+                }
+            }
+
+            return bmp;
         }
 
         /// <summary>
