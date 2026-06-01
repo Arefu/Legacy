@@ -29,26 +29,29 @@
         private void InitializeComponent()
         {
             components = new System.ComponentModel.Container();
-            TreeNode treeNode1 = new TreeNode("Area 1");
-            TreeNode treeNode2 = new TreeNode("Area 2");
-            TreeNode treeNode3 = new TreeNode("Area 3");
-            TreeNode treeNode4 = new TreeNode("Area 4");
-            TreeNode treeNode5 = new TreeNode("Area 5");
-            TreeNode treeNode6 = new TreeNode("Area 6");
-            TreeNode treeNode7 = new TreeNode("Area 7");
-            TreeNode treeNode8 = new TreeNode("Zone 1", new TreeNode[] { treeNode1, treeNode2, treeNode3, treeNode4, treeNode5, treeNode6, treeNode7 });
-            TreeNode treeNode9 = new TreeNode("Zone 2");
-            TreeNode treeNode10 = new TreeNode("Zone 3");
-            TreeNode treeNode11 = new TreeNode("Zone 4");
-            TreeNode treeNode12 = new TreeNode("Zones", new TreeNode[] { treeNode8, treeNode9, treeNode10, treeNode11 });
+            TreeNode treeNode13 = new TreeNode("Area 1");
+            TreeNode treeNode14 = new TreeNode("Area 2");
+            TreeNode treeNode15 = new TreeNode("Area 3");
+            TreeNode treeNode16 = new TreeNode("Area 4");
+            TreeNode treeNode17 = new TreeNode("Area 5");
+            TreeNode treeNode18 = new TreeNode("Area 6");
+            TreeNode treeNode19 = new TreeNode("Area 7");
+            TreeNode treeNode20 = new TreeNode("Zone 1", new TreeNode[] { treeNode13, treeNode14, treeNode15, treeNode16, treeNode17, treeNode18, treeNode19 });
+            TreeNode treeNode21 = new TreeNode("Zone 2");
+            TreeNode treeNode22 = new TreeNode("Zone 3");
+            TreeNode treeNode23 = new TreeNode("Zone 4");
+            TreeNode treeNode24 = new TreeNode("Zones", new TreeNode[] { treeNode20, treeNode21, treeNode22, treeNode23 });
             DBZKit_TabControl = new TabControl();
             TabPage_PortraitViewer = new TabPage();
             ListView_PortraitViewer = new ListView();
             TabPage_ItemViewer = new TabPage();
             ListView_ItemViewer = new ListView();
+            TabPage_SpriteViewer = new TabPage();
+            ListView_SpriteViewer = new ListView();
             TapPage_MapViewer = new TabPage();
             treeView1 = new TreeView();
             TabPage_MiscAssetViewer = new TabPage();
+            ListView_MiscSprites = new ListView();
             TreeView_MiscAssetList = new TreeView();
             menuStrip1 = new MenuStrip();
             fileToolStripMenuItem = new ToolStripMenuItem();
@@ -59,15 +62,13 @@
             MenuEnableLOG2 = new ToolStripMenuItem();
             MenuEnableLOG3 = new ToolStripMenuItem();
             AssetContextMenu = new ContextMenuStrip(components);
-            TabPage_SpriteViewer = new TabPage();
-            ListView_SpriteViewer = new ListView();
             DBZKit_TabControl.SuspendLayout();
             TabPage_PortraitViewer.SuspendLayout();
             TabPage_ItemViewer.SuspendLayout();
+            TabPage_SpriteViewer.SuspendLayout();
             TapPage_MapViewer.SuspendLayout();
             TabPage_MiscAssetViewer.SuspendLayout();
             menuStrip1.SuspendLayout();
-            TabPage_SpriteViewer.SuspendLayout();
             SuspendLayout();
             // 
             // DBZKit_TabControl
@@ -123,6 +124,25 @@
             ListView_ItemViewer.TabIndex = 1;
             ListView_ItemViewer.UseCompatibleStateImageBehavior = false;
             // 
+            // TabPage_SpriteViewer
+            // 
+            TabPage_SpriteViewer.Controls.Add(ListView_SpriteViewer);
+            TabPage_SpriteViewer.Location = new Point(4, 24);
+            TabPage_SpriteViewer.Name = "TabPage_SpriteViewer";
+            TabPage_SpriteViewer.Size = new Size(1256, 629);
+            TabPage_SpriteViewer.TabIndex = 4;
+            TabPage_SpriteViewer.Text = "Sprite Viewer";
+            TabPage_SpriteViewer.UseVisualStyleBackColor = true;
+            // 
+            // ListView_SpriteViewer
+            // 
+            ListView_SpriteViewer.Dock = DockStyle.Fill;
+            ListView_SpriteViewer.Location = new Point(0, 0);
+            ListView_SpriteViewer.Name = "ListView_SpriteViewer";
+            ListView_SpriteViewer.Size = new Size(1256, 629);
+            ListView_SpriteViewer.TabIndex = 2;
+            ListView_SpriteViewer.UseCompatibleStateImageBehavior = false;
+            // 
             // TapPage_MapViewer
             // 
             TapPage_MapViewer.Controls.Add(treeView1);
@@ -138,36 +158,37 @@
             treeView1.Dock = DockStyle.Left;
             treeView1.Location = new Point(0, 0);
             treeView1.Name = "treeView1";
-            treeNode1.Name = "Area 1";
-            treeNode1.Text = "Area 1";
-            treeNode2.Name = "Area 2";
-            treeNode2.Text = "Area 2";
-            treeNode3.Name = "Area 3";
-            treeNode3.Text = "Area 3";
-            treeNode4.Name = "Area 4";
-            treeNode4.Text = "Area 4";
-            treeNode5.Name = "Area 5";
-            treeNode5.Text = "Area 5";
-            treeNode6.Name = "Area 6";
-            treeNode6.Text = "Area 6";
-            treeNode7.Name = "Area 7";
-            treeNode7.Text = "Area 7";
-            treeNode8.Name = "Zone 1";
-            treeNode8.Text = "Zone 1";
-            treeNode9.Name = "Zone 2";
-            treeNode9.Text = "Zone 2";
-            treeNode10.Name = "Zone 3";
-            treeNode10.Text = "Zone 3";
-            treeNode11.Name = "Zone 4";
-            treeNode11.Text = "Zone 4";
-            treeNode12.Name = "Zones";
-            treeNode12.Text = "Zones";
-            treeView1.Nodes.AddRange(new TreeNode[] { treeNode12 });
+            treeNode13.Name = "Area 1";
+            treeNode13.Text = "Area 1";
+            treeNode14.Name = "Area 2";
+            treeNode14.Text = "Area 2";
+            treeNode15.Name = "Area 3";
+            treeNode15.Text = "Area 3";
+            treeNode16.Name = "Area 4";
+            treeNode16.Text = "Area 4";
+            treeNode17.Name = "Area 5";
+            treeNode17.Text = "Area 5";
+            treeNode18.Name = "Area 6";
+            treeNode18.Text = "Area 6";
+            treeNode19.Name = "Area 7";
+            treeNode19.Text = "Area 7";
+            treeNode20.Name = "Zone 1";
+            treeNode20.Text = "Zone 1";
+            treeNode21.Name = "Zone 2";
+            treeNode21.Text = "Zone 2";
+            treeNode22.Name = "Zone 3";
+            treeNode22.Text = "Zone 3";
+            treeNode23.Name = "Zone 4";
+            treeNode23.Text = "Zone 4";
+            treeNode24.Name = "Zones";
+            treeNode24.Text = "Zones";
+            treeView1.Nodes.AddRange(new TreeNode[] { treeNode24 });
             treeView1.Size = new Size(192, 629);
             treeView1.TabIndex = 2;
             // 
             // TabPage_MiscAssetViewer
             // 
+            TabPage_MiscAssetViewer.Controls.Add(ListView_MiscSprites);
             TabPage_MiscAssetViewer.Controls.Add(TreeView_MiscAssetList);
             TabPage_MiscAssetViewer.Location = new Point(4, 24);
             TabPage_MiscAssetViewer.Name = "TabPage_MiscAssetViewer";
@@ -176,6 +197,15 @@
             TabPage_MiscAssetViewer.TabIndex = 0;
             TabPage_MiscAssetViewer.Text = "Misc Assets";
             TabPage_MiscAssetViewer.UseVisualStyleBackColor = true;
+            // 
+            // ListView_MiscSprites
+            // 
+            ListView_MiscSprites.Dock = DockStyle.Fill;
+            ListView_MiscSprites.Location = new Point(215, 3);
+            ListView_MiscSprites.Name = "ListView_MiscSprites";
+            ListView_MiscSprites.Size = new Size(1038, 623);
+            ListView_MiscSprites.TabIndex = 3;
+            ListView_MiscSprites.UseCompatibleStateImageBehavior = false;
             // 
             // TreeView_MiscAssetList
             // 
@@ -249,25 +279,6 @@
             AssetContextMenu.Name = "PortraitContextMenu";
             AssetContextMenu.Size = new Size(61, 4);
             // 
-            // TabPage_SpriteViewer
-            // 
-            TabPage_SpriteViewer.Controls.Add(ListView_SpriteViewer);
-            TabPage_SpriteViewer.Location = new Point(4, 24);
-            TabPage_SpriteViewer.Name = "TabPage_SpriteViewer";
-            TabPage_SpriteViewer.Size = new Size(1256, 629);
-            TabPage_SpriteViewer.TabIndex = 4;
-            TabPage_SpriteViewer.Text = "Sprite Viewer";
-            TabPage_SpriteViewer.UseVisualStyleBackColor = true;
-            // 
-            // ListView_SpriteViewer
-            // 
-            ListView_SpriteViewer.Dock = DockStyle.Fill;
-            ListView_SpriteViewer.Location = new Point(0, 0);
-            ListView_SpriteViewer.Name = "ListView_SpriteViewer";
-            ListView_SpriteViewer.Size = new Size(1256, 629);
-            ListView_SpriteViewer.TabIndex = 2;
-            ListView_SpriteViewer.UseCompatibleStateImageBehavior = false;
-            // 
             // DBZKit
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -282,11 +293,11 @@
             DBZKit_TabControl.ResumeLayout(false);
             TabPage_PortraitViewer.ResumeLayout(false);
             TabPage_ItemViewer.ResumeLayout(false);
+            TabPage_SpriteViewer.ResumeLayout(false);
             TapPage_MapViewer.ResumeLayout(false);
             TabPage_MiscAssetViewer.ResumeLayout(false);
             menuStrip1.ResumeLayout(false);
             menuStrip1.PerformLayout();
-            TabPage_SpriteViewer.ResumeLayout(false);
             ResumeLayout(false);
             PerformLayout();
         }
@@ -313,5 +324,6 @@
         private ListView ListView_ItemViewer;
         private TabPage TabPage_SpriteViewer;
         private ListView ListView_SpriteViewer;
+        private ListView ListView_MiscSprites;
     }
 }
