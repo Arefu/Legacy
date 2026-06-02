@@ -34,11 +34,12 @@
             Legacy_SaveROM = new ToolStripMenuItem();
             toolStripSeparator1 = new ToolStripSeparator();
             Legacy_QuitEditor = new ToolStripMenuItem();
+            toolsToolStripMenuItem = new ToolStripMenuItem();
+            ToolStripMenuItem_ScriptVisualizer = new ToolStripMenuItem();
+            ToolStripMenuItem_StringDecompressor = new ToolStripMenuItem();
             Legacy_AppContainer = new SplitContainer();
             Legacy_ScriptFunctions = new TreeView();
             Legacy_IDE = new ScintillaNET.Scintilla();
-            toolsToolStripMenuItem = new ToolStripMenuItem();
-            ToolStripMenuItem_ScriptVisualizer = new ToolStripMenuItem();
             Legacy_MenuStrip.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)Legacy_AppContainer).BeginInit();
             Legacy_AppContainer.Panel1.SuspendLayout();
@@ -90,6 +91,27 @@
             Legacy_QuitEditor.Text = "E&xit";
             Legacy_QuitEditor.Click += Legacy_QuitEditor_Click;
             // 
+            // toolsToolStripMenuItem
+            // 
+            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { ToolStripMenuItem_ScriptVisualizer, ToolStripMenuItem_StringDecompressor });
+            toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
+            toolsToolStripMenuItem.Size = new Size(47, 20);
+            toolsToolStripMenuItem.Text = "Tools";
+            // 
+            // ToolStripMenuItem_ScriptVisualizer
+            // 
+            ToolStripMenuItem_ScriptVisualizer.Name = "ToolStripMenuItem_ScriptVisualizer";
+            ToolStripMenuItem_ScriptVisualizer.Size = new Size(184, 22);
+            ToolStripMenuItem_ScriptVisualizer.Text = "Script Visualizer";
+            ToolStripMenuItem_ScriptVisualizer.Click += ToolStripMenuItem_ScriptVisualizer_Click;
+            // 
+            // ToolStripMenuItem_StringDecompressor
+            // 
+            ToolStripMenuItem_StringDecompressor.Name = "ToolStripMenuItem_StringDecompressor";
+            ToolStripMenuItem_StringDecompressor.Size = new Size(184, 22);
+            ToolStripMenuItem_StringDecompressor.Text = "String Decompressor";
+            ToolStripMenuItem_StringDecompressor.Click += ToolStripMenuItem_StringDecompressor_Click;
+            // 
             // Legacy_AppContainer
             // 
             Legacy_AppContainer.Dock = DockStyle.Fill;
@@ -124,20 +146,6 @@
             Legacy_IDE.Size = new Size(668, 705);
             Legacy_IDE.TabIndex = 0;
             // 
-            // toolsToolStripMenuItem
-            // 
-            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { ToolStripMenuItem_ScriptVisualizer });
-            toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
-            toolsToolStripMenuItem.Size = new Size(47, 20);
-            toolsToolStripMenuItem.Text = "Tools";
-            // 
-            // ToolStripMenuItem_ScriptVisualizer
-            // 
-            ToolStripMenuItem_ScriptVisualizer.Name = "ToolStripMenuItem_ScriptVisualizer";
-            ToolStripMenuItem_ScriptVisualizer.Size = new Size(180, 22);
-            ToolStripMenuItem_ScriptVisualizer.Text = "Script Visualizer";
-            ToolStripMenuItem_ScriptVisualizer.Click += ToolStripMenuItem_ScriptVisualizer_Click;
-            // 
             // Legacy
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -149,6 +157,7 @@
             MainMenuStrip = Legacy_MenuStrip;
             MaximizeBox = false;
             Name = "Legacy";
+            StartPosition = FormStartPosition.CenterParent;
             Text = "Legacy";
             Legacy_MenuStrip.ResumeLayout(false);
             Legacy_MenuStrip.PerformLayout();
@@ -173,5 +182,6 @@
         private ScintillaNET.Scintilla Legacy_IDE;
         private ToolStripMenuItem toolsToolStripMenuItem;
         private ToolStripMenuItem ToolStripMenuItem_ScriptVisualizer;
+        private ToolStripMenuItem ToolStripMenuItem_StringDecompressor;
     }
 }

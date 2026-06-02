@@ -27,5 +27,10 @@ namespace Legacy
         {
             new ScriptVisualizer().ShowDialog();
         }
+
+        private void ToolStripMenuItem_StringDecompressor_Click(object sender, EventArgs e)
+        {
+            new StringDecompressor().ShowDialog();
+        }
     }
 }

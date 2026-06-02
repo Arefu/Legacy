@@ -17,7 +17,7 @@
             return name;
         }
 
-        internal static bool TryParseHex(string input, out byte[]? bytes)
+        internal static bool TryParseHex(string input, out byte[]? bytes, bool isScript = true)
         {
             bytes = null;
 
@@ -53,7 +53,7 @@
 
                 result.Add(b);
 
-                if (b == 0x11)
+                if (b == 0x11 && isScript == true)
                     break;
             }
 
