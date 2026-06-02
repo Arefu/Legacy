@@ -26,10 +26,18 @@ namespace Legacy
                 return;
             }
 
-            var instructions = SView_Decoder.Decode(bytes);
+            try
+            {
+                var instructions = SView_Decoder.Decode(bytes);
 
-            RenderInstructions(instructions);
-            RenderMermaid(BuildMermaid(instructions));
+                RenderInstructions(instructions);
+                RenderMermaid(BuildMermaid(instructions));
+            }
+            catch
+            {
+                MessageBox.Show("Error in Parsing Instructions, Missing Data?");
+                return;
+            }
         }
 
         private void RenderInstructions(List<Instruction> instructions)
