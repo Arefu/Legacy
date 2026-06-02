@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace Legacy.Games
+﻿namespace Legacy.Games
 {
     internal class DBZLOG2 : IGame
     {
@@ -29,5 +25,7 @@ namespace Legacy.Games
         {
             throw new NotImplementedException();
         }
+
+
     }
 }

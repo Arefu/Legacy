@@ -22,5 +22,10 @@ namespace Legacy
         {
             Application.Exit();
         }
+
+        private void ToolStripMenuItem_ScriptVisualizer_Click(object sender, EventArgs e)
+        {
+            new ScriptVisualizer().ShowDialog();
+        }
     }
 }
