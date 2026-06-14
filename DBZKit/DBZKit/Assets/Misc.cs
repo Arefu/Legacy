@@ -11,7 +11,6 @@ namespace DBZKit.Assets
             0x083EC86C,
             0x083ED2B0,
         ];
-
         internal static void Load(byte[] rom, ImageList imageList, ListView listView, Dictionary<int, byte[]> rawData, Color[]? palette = null)
         {
 

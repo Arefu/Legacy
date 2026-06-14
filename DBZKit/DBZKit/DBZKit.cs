@@ -8,6 +8,7 @@ namespace DBZKit
         private readonly Dictionary<int, byte[]> _ItemData = [];
         private readonly Dictionary<int, byte[]> _SpriteData = [];
         private readonly Dictionary<int, byte[]> _AbilityData = [];
+        private readonly byte[] _MapData = [];
 
         private readonly ImageList _PortraitImageList;
         private readonly ImageList _AbilityImageList;
@@ -34,10 +35,9 @@ namespace DBZKit
 
             _SpriteImageList = new ImageList
             {
-                ImageSize = new Size(160, 64),
+                ImageSize = new Size(64, 128),
                 ColorDepth = ColorDepth.Depth32Bit
             };
-
 
             _AbilityImageList = new ImageList
             {
@@ -142,9 +142,11 @@ namespace DBZKit
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
             Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Misc.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, _SpriteData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            Sprites.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            Sprites.Load2(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Unknowns.Load(_GBARom, _AbilityImageList, ListView_MiscSprites, _SpriteData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
 
         }
+
     }
 }

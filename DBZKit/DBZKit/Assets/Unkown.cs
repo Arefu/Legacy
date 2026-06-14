@@ -26,9 +26,10 @@ namespace DBZKit.Assets
             (0x086D887C, 0x086D8A7C, "SwordBlast"),
         ];
 
-        internal static void Load(byte[] rom, ImageList imageList, ListView listView, Dictionary<int, byte[]> rawData, Color[]? palette = null)
+        internal record AbilitySprite(string Name, string Label, uint Address, byte[] Data, Bitmap Bitmap);
+
+        internal static IEnumerable<AbilitySprite> LoadSprites(byte[] rom, Color[]? palette = null)
         {
-            int index = 0;
             foreach (var (ready, cooling, name) in AbilityTable)
             {
                 foreach (var (address, label) in new[] { (ready, $"{name}_ready"), (cooling, $"{name}_cooling") })
@@ -43,15 +44,22 @@ namespace DBZKit.Assets
                     var bitmap = GBA.Render8bppTiled(data, SpriteWidthTiles, SpriteHeightTiles, palette);
                     var scaled = new Bitmap(bitmap, new Size(SpriteWidthTiles * 8, SpriteHeightTiles * 8));
 
-                    rawData[index] = data;
-                    imageList.Images.Add(label, scaled);
-                    listView.Items.Add(new ListViewItem(label, label));
-
-                    index++;
+                    yield return new AbilitySprite(name, label, address, data, scaled);
                 }
             }
         }
 
+        internal static void Load(byte[] rom, ImageList imageList, ListView listView, Dictionary<int, byte[]> rawData, Color[]? palette = null)
+        {
+            int index = 0;
+            foreach (var sprite in LoadSprites(rom, palette))
+            {
+                rawData[index] = sprite.Data;
+                imageList.Images.Add(sprite.Label, sprite.Bitmap);
+                listView.Items.Add(new ListViewItem(sprite.Label, sprite.Label));
+                index++;
+            }
+        }
 
         internal static void ExportPng(Bitmap bitmap, string path) => bitmap.Save(path, ImageFormat.Png);
 

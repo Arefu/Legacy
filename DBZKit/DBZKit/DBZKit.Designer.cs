@@ -29,26 +29,30 @@
         private void InitializeComponent()
         {
             components = new System.ComponentModel.Container();
-            TreeNode treeNode13 = new TreeNode("Area 1");
-            TreeNode treeNode14 = new TreeNode("Area 2");
-            TreeNode treeNode15 = new TreeNode("Area 3");
-            TreeNode treeNode16 = new TreeNode("Area 4");
-            TreeNode treeNode17 = new TreeNode("Area 5");
-            TreeNode treeNode18 = new TreeNode("Area 6");
-            TreeNode treeNode19 = new TreeNode("Area 7");
-            TreeNode treeNode20 = new TreeNode("Zone 1", new TreeNode[] { treeNode13, treeNode14, treeNode15, treeNode16, treeNode17, treeNode18, treeNode19 });
-            TreeNode treeNode21 = new TreeNode("Zone 2");
-            TreeNode treeNode22 = new TreeNode("Zone 3");
-            TreeNode treeNode23 = new TreeNode("Zone 4");
-            TreeNode treeNode24 = new TreeNode("Zones", new TreeNode[] { treeNode20, treeNode21, treeNode22, treeNode23 });
+            TreeNode treeNode1 = new TreeNode("Area 1");
+            TreeNode treeNode2 = new TreeNode("Area 2");
+            TreeNode treeNode3 = new TreeNode("Area 3");
+            TreeNode treeNode4 = new TreeNode("Area 4");
+            TreeNode treeNode5 = new TreeNode("Area 5");
+            TreeNode treeNode6 = new TreeNode("Area 6");
+            TreeNode treeNode7 = new TreeNode("Area 7");
+            TreeNode treeNode8 = new TreeNode("Zone 1", new TreeNode[] { treeNode1, treeNode2, treeNode3, treeNode4, treeNode5, treeNode6, treeNode7 });
+            TreeNode treeNode9 = new TreeNode("Zone 2");
+            TreeNode treeNode10 = new TreeNode("Zone 3");
+            TreeNode treeNode11 = new TreeNode("Zone 4");
+            TreeNode treeNode12 = new TreeNode("Zones", new TreeNode[] { treeNode8, treeNode9, treeNode10, treeNode11 });
             DBZKit_TabControl = new TabControl();
             TabPage_PortraitViewer = new TabPage();
             ListView_PortraitViewer = new ListView();
             TabPage_ItemViewer = new TabPage();
             ListView_ItemViewer = new ListView();
             TabPage_SpriteViewer = new TabPage();
+            treeView2 = new TreeView();
             ListView_SpriteViewer = new ListView();
             TapPage_MapViewer = new TabPage();
+            statusLabel = new Label();
+            shapeComboBox = new ComboBox();
+            pictureBox = new PictureBox();
             treeView1 = new TreeView();
             TabPage_MiscAssetViewer = new TabPage();
             ListView_MiscSprites = new ListView();
@@ -67,6 +71,7 @@
             TabPage_ItemViewer.SuspendLayout();
             TabPage_SpriteViewer.SuspendLayout();
             TapPage_MapViewer.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)pictureBox).BeginInit();
             TabPage_MiscAssetViewer.SuspendLayout();
             menuStrip1.SuspendLayout();
             SuspendLayout();
@@ -126,6 +131,7 @@
             // 
             // TabPage_SpriteViewer
             // 
+            TabPage_SpriteViewer.Controls.Add(treeView2);
             TabPage_SpriteViewer.Controls.Add(ListView_SpriteViewer);
             TabPage_SpriteViewer.Location = new Point(4, 24);
             TabPage_SpriteViewer.Name = "TabPage_SpriteViewer";
@@ -134,17 +140,28 @@
             TabPage_SpriteViewer.Text = "Sprite Viewer";
             TabPage_SpriteViewer.UseVisualStyleBackColor = true;
             // 
+            // treeView2
+            // 
+            treeView2.Dock = DockStyle.Left;
+            treeView2.Location = new Point(0, 0);
+            treeView2.Name = "treeView2";
+            treeView2.Size = new Size(256, 629);
+            treeView2.TabIndex = 1;
+            // 
             // ListView_SpriteViewer
             // 
-            ListView_SpriteViewer.Dock = DockStyle.Fill;
-            ListView_SpriteViewer.Location = new Point(0, 0);
+            ListView_SpriteViewer.Dock = DockStyle.Right;
+            ListView_SpriteViewer.Location = new Point(262, 0);
             ListView_SpriteViewer.Name = "ListView_SpriteViewer";
-            ListView_SpriteViewer.Size = new Size(1256, 629);
-            ListView_SpriteViewer.TabIndex = 2;
+            ListView_SpriteViewer.Size = new Size(994, 629);
+            ListView_SpriteViewer.TabIndex = 0;
             ListView_SpriteViewer.UseCompatibleStateImageBehavior = false;
             // 
             // TapPage_MapViewer
             // 
+            TapPage_MapViewer.Controls.Add(statusLabel);
+            TapPage_MapViewer.Controls.Add(shapeComboBox);
+            TapPage_MapViewer.Controls.Add(pictureBox);
             TapPage_MapViewer.Controls.Add(treeView1);
             TapPage_MapViewer.Location = new Point(4, 24);
             TapPage_MapViewer.Name = "TapPage_MapViewer";
@@ -153,36 +170,61 @@
             TapPage_MapViewer.Text = "Map Viewer";
             TapPage_MapViewer.UseVisualStyleBackColor = true;
             // 
+            // statusLabel
+            // 
+            statusLabel.AutoSize = true;
+            statusLabel.Location = new Point(923, 340);
+            statusLabel.Name = "statusLabel";
+            statusLabel.Size = new Size(38, 15);
+            statusLabel.TabIndex = 5;
+            statusLabel.Text = "label1";
+            // 
+            // shapeComboBox
+            // 
+            shapeComboBox.FormattingEnabled = true;
+            shapeComboBox.Location = new Point(923, 314);
+            shapeComboBox.Name = "shapeComboBox";
+            shapeComboBox.Size = new Size(121, 23);
+            shapeComboBox.TabIndex = 4;
+            // 
+            // pictureBox
+            // 
+            pictureBox.Location = new Point(198, 3);
+            pictureBox.Name = "pictureBox";
+            pictureBox.Size = new Size(1050, 618);
+            pictureBox.TabIndex = 3;
+            pictureBox.TabStop = false;
+            // 
             // treeView1
             // 
             treeView1.Dock = DockStyle.Left;
             treeView1.Location = new Point(0, 0);
             treeView1.Name = "treeView1";
-            treeNode13.Name = "Area 1";
-            treeNode13.Text = "Area 1";
-            treeNode14.Name = "Area 2";
-            treeNode14.Text = "Area 2";
-            treeNode15.Name = "Area 3";
-            treeNode15.Text = "Area 3";
-            treeNode16.Name = "Area 4";
-            treeNode16.Text = "Area 4";
-            treeNode17.Name = "Area 5";
-            treeNode17.Text = "Area 5";
-            treeNode18.Name = "Area 6";
-            treeNode18.Text = "Area 6";
-            treeNode19.Name = "Area 7";
-            treeNode19.Text = "Area 7";
-            treeNode20.Name = "Zone 1";
-            treeNode20.Text = "Zone 1";
-            treeNode21.Name = "Zone 2";
-            treeNode21.Text = "Zone 2";
-            treeNode22.Name = "Zone 3";
-            treeNode22.Text = "Zone 3";
-            treeNode23.Name = "Zone 4";
-            treeNode23.Text = "Zone 4";
-            treeNode24.Name = "Zones";
-            treeNode24.Text = "Zones";
-            treeView1.Nodes.AddRange(new TreeNode[] { treeNode24 });
+            treeNode1.Name = "Area 1";
+            treeNode1.Text = "Area 1";
+            treeNode2.Name = "Area 2";
+            treeNode2.Text = "Area 2";
+            treeNode3.Name = "Area 3";
+            treeNode3.Text = "Area 3";
+            treeNode4.Name = "Area 4";
+            treeNode4.Text = "Area 4";
+            treeNode5.Name = "Area 5";
+            treeNode5.Text = "Area 5";
+            treeNode6.Name = "Area 6";
+            treeNode6.Text = "Area 6";
+            treeNode7.Name = "Area 7";
+            treeNode7.Text = "Area 7";
+            treeNode8.Name = "Zone 1";
+            treeNode8.Text = "Zone 1";
+            treeNode9.Name = "Zone 2";
+            treeNode9.Text = "Zone 2";
+            treeNode10.Name = "Zone 3";
+            treeNode10.Text = "Zone 3";
+            treeNode11.Name = "Zone 4";
+            treeNode11.Text = "Zone 4";
+            treeNode12.Name = "Zones";
+            treeNode12.Text = "Zones";
+            treeView1.Nodes.AddRange(new TreeNode[] { treeNode12 });
             treeView1.Size = new Size(192, 629);
             treeView1.TabIndex = 2;
             // 
@@ -295,6 +337,8 @@
             TabPage_ItemViewer.ResumeLayout(false);
             TabPage_SpriteViewer.ResumeLayout(false);
             TapPage_MapViewer.ResumeLayout(false);
+            TapPage_MapViewer.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)pictureBox).EndInit();
             TabPage_MiscAssetViewer.ResumeLayout(false);
             menuStrip1.ResumeLayout(false);
             menuStrip1.PerformLayout();
@@ -323,7 +367,11 @@
         private TabPage TabPage_ItemViewer;
         private ListView ListView_ItemViewer;
         private TabPage TabPage_SpriteViewer;
-        private ListView ListView_SpriteViewer;
         private ListView ListView_MiscSprites;
+        private TreeView treeView2;
+        private ListView ListView_SpriteViewer;
+        private PictureBox pictureBox;
+        private ComboBox shapeComboBox;
+        private Label statusLabel;
     }
 }
