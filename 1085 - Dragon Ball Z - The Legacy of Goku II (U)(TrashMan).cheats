@@ -4,28 +4,21 @@
 !disabled
 # Math Book
 33000FE0 0001
-!disabled
 # Infinite HP
 83000F28 03E7
 # Infinite EP
 83000F2C 03E7
-!disabled
 # Max EXP (Lv. 50)
 83000F38 E0FF
 83000F3A 05F5
-!disabled
 # Trunks Infinite HP
 83000EF0 03E7
-!disabled
 # Gohan Infinite HP
 83000E9C 03E7
-!disabled
 # Gohan Infinite EP
 83000EA0 03E7
-!disabled
 # Club Sandwich
 33000FCE 0001
-!disabled
 # Piccolo Infinite HP
 83000EB8 03E7
 83000EC8 E0FF
