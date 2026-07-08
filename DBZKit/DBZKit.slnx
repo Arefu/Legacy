@@ -2,12 +2,12 @@
   <Configurations>
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="Bulma/Bulma.csproj" Id="0811f3db-a945-414f-98a3-09bb3de8185a" />
   <Project Path="DBZKit/DBZKit.csproj">
     <Platform Project="x86" />
   </Project>
-  <Project Path="DBZLOG2/DBZLOG2.csproj">
-    <Platform Project="x86" />
-  </Project>
+  <Project Path="Dragon Radar/Dragon Radar.csproj" Id="b4cae499-d47e-484b-b8b9-a94e03fd5d91" />
+  <Project Path="DrGero/DrGero.csproj" Id="c656f1b9-d5b0-411d-924a-f64499c8f999" />
   <Project Path="Legacy/Legacy.csproj" Id="bf2df121-1437-475f-9d2c-3b09e58e3032">
     <Platform Project="x86" />
   </Project>

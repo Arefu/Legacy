@@ -36,4 +36,12 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Dependencies\DBZLOG2\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DrGero\DrGero.csproj" />
+  </ItemGroup>
+
 </Project>

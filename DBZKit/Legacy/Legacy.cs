@@ -3,6 +3,8 @@ namespace Legacy
 {
     public partial class Legacy : Form
     {
+        byte[]? _rom;
+
         public Legacy()
         {
             InitializeComponent();
@@ -11,6 +13,12 @@ namespace Legacy
         private void Legacy_OpenROM_Click(object sender, EventArgs e)
         {
             //TODO: Hmm, how to work out which game it is?
+            using (var openRomDialog = new OpenFileDialog() { Filter = "GBA ROMs|*.gba", Title = "Select a GBA ROM" })
+            {
+                if (openRomDialog.ShowDialog() != DialogResult.OK)
+                    return;
+                _rom = File.ReadAllBytes(openRomDialog.FileName);
+            }
         }
 
         private void Legacy_SaveROM_Click(object sender, EventArgs e)
@@ -31,6 +39,11 @@ namespace Legacy
         private void ToolStripMenuItem_StringDecompressor_Click(object sender, EventArgs e)
         {
             new StringDecompressor().ShowDialog();
+        }
+
+        private void statViewToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            new StatView(_rom).ShowDialog();
         }
     }
 }

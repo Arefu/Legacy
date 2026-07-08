@@ -40,6 +40,8 @@
             Legacy_AppContainer = new SplitContainer();
             Legacy_ScriptFunctions = new TreeView();
             Legacy_IDE = new ScintillaNET.Scintilla();
+            toolStripSeparator2 = new ToolStripSeparator();
+            statViewToolStripMenuItem = new ToolStripMenuItem();
             Legacy_MenuStrip.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)Legacy_AppContainer).BeginInit();
             Legacy_AppContainer.Panel1.SuspendLayout();
@@ -93,7 +95,7 @@
             // 
             // toolsToolStripMenuItem
             // 
-            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { ToolStripMenuItem_ScriptVisualizer, ToolStripMenuItem_StringDecompressor });
+            toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { ToolStripMenuItem_ScriptVisualizer, ToolStripMenuItem_StringDecompressor, toolStripSeparator2, statViewToolStripMenuItem });
             toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
             toolsToolStripMenuItem.Size = new Size(47, 20);
             toolsToolStripMenuItem.Text = "Tools";
@@ -146,6 +148,18 @@
             Legacy_IDE.Size = new Size(668, 705);
             Legacy_IDE.TabIndex = 0;
             // 
+            // toolStripSeparator2
+            // 
+            toolStripSeparator2.Name = "toolStripSeparator2";
+            toolStripSeparator2.Size = new Size(181, 6);
+            // 
+            // statViewToolStripMenuItem
+            // 
+            statViewToolStripMenuItem.Name = "statViewToolStripMenuItem";
+            statViewToolStripMenuItem.Size = new Size(184, 22);
+            statViewToolStripMenuItem.Text = "Stat View";
+            statViewToolStripMenuItem.Click += statViewToolStripMenuItem_Click;
+            // 
             // Legacy
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -183,5 +197,7 @@
         private ToolStripMenuItem toolsToolStripMenuItem;
         private ToolStripMenuItem ToolStripMenuItem_ScriptVisualizer;
         private ToolStripMenuItem ToolStripMenuItem_StringDecompressor;
+        private ToolStripSeparator toolStripSeparator2;
+        private ToolStripMenuItem statViewToolStripMenuItem;
     }
 }
