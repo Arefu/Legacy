@@ -1,4 +1,6 @@
-﻿namespace DBZKit.Assets
+﻿using System.Diagnostics;
+
+namespace DBZKit.Assets
 {
     internal static class Sprites
     {
@@ -79,7 +81,49 @@
 
             }
         }
+        internal static void Load3(byte[] rom, ImageList imageList, ListView listView, Color[]? palette = null)
+        {
+            uint[] addresses = new uint[]
+            {
+        0x83B1F20,
+        0x0839D9E4, // NPC actionData=0x8E sprite, from g_CharacterSpriteIndex[142]
+            };
 
+            int bytesPerFrame = 2 * 4 * 64;
+
+            for (int i = 0; i < addresses.Length; i++)
+            {
+                uint addr = addresses[i];
+                string name = $"Sprite_{addr:X8}";
+
+                try
+                {
+
+                    int decompSize = GBA.ReadInt32(rom, addr + 4);
+                    int dataOffset = GBA.ToOffset(addr) + 8;
+                    Debug.WriteLine($"{name} header: isCompressed={GBA.ReadInt32(rom, addr)} decompSize={GBA.ReadInt32(rom, addr + 4)}");
+                    var result = Jcalg1Decompress.Decompress(rom, dataOffset, decompSize);
+                    int frameCount = result.Data.Length / bytesPerFrame;
+
+                    Console.WriteLine($"{name}: {result.Data.Length} bytes = {frameCount} frames");
+
+                    for (int f = 0; f < frameCount; f++)
+                    {
+                        var frameData = result.Data.Skip(f * bytesPerFrame).Take(bytesPerFrame).ToArray();
+                        var bmp = AssembleSprite(frameData, 2, 4, palette);
+                        var scaled = new Bitmap(bmp, new Size(64, 128));
+
+                        string key = $"{name}_f{f}";
+                        imageList.Images.Add(key, scaled);
+                        listView.Items.Add(new ListViewItem($"{name} Frame{f}", key));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Skipping {name}: {ex.Message}");
+                }
+            }
+        }
         internal static void Load2(byte[] rom, ImageList imageList, ListView listView, Color[]? palette = null)
         {
             uint[] addresses = new uint[]

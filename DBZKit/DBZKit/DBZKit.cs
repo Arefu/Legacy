@@ -140,10 +140,11 @@ namespace DBZKit
             }
 
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
+            Sprites.Load3(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Sprites.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Sprites.Load2(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            //    Sprites.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            //  Sprites.Load2(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Unknowns.Load(_GBARom, _AbilityImageList, ListView_MiscSprites, _SpriteData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
 
         }
