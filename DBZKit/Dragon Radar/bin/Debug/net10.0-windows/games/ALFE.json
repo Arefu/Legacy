@@ -1,0 +1,11 @@
+{
+    "GAME_CODE": "ALFE",
+    "MapEntriesOffset": "0x409368",
+    "MapEntryCount": 327,
+    "MapNameTableOffset": "0x0E2840",
+    "BGPaletteOffset": "0x1DA4C8",
+    "OBJPaletteOffset": "0x0",
+    "TileAtlasOffset": "0x4DF574",
+    "DefaultCharStats": "1D9548",
+    "DefaultExpThresholds": "1D9834"
+}
