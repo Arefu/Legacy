@@ -14,4 +14,8 @@
     <ProjectReference Include="..\DrGero\DrGero.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="games\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
