@@ -22,17 +22,23 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore DBZKit.slnx
+      - name: Restore DBZKit
+        run: dotnet restore DBZKit/DBZKit/DBZKit.csproj
+
+      - name: Restore Dragon Radar
+        run: dotnet restore "DBZKit/Dragon Radar/Dragon Radar.csproj"
+
+      - name: Restore Legacy
+        run: dotnet restore DBZKit/Legacy/Legacy.csproj
 
       - name: Publish DBZKit
-        run: dotnet publish DBZKit/DBZKit.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/DBZKit
+        run: dotnet publish DBZKit/DBZKit/DBZKit.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/DBZKit
 
       - name: Publish Dragon Radar
-        run: dotnet publish "Dragon Radar/Dragon Radar.csproj" -c Release -o publish/DragonRadar
+        run: dotnet publish "DBZKit/Dragon Radar/Dragon Radar.csproj" -c Release -o publish/DragonRadar
 
       - name: Publish Legacy
-        run: dotnet publish Legacy/Legacy.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/Legacy
+        run: dotnet publish DBZKit/Legacy/Legacy.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/Legacy
 
       - name: Zip artifacts
         shell: pwsh
