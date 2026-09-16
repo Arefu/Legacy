@@ -3,6 +3,7 @@ using DrGero.IO;
 using DrGero.Types;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Linq;
 using static DrGero.Types.MapEntry;
 
 namespace DrGero.Rendering
@@ -149,6 +150,35 @@ namespace DrGero.Rendering
         private const int CharacterSpawnHandlerOffset = 0x00D6DF;
         private const int MapScriptRecordSize = 32; // MapScriptSpawnMultiConditional
 
+        // CONFIRMED via IDA 2026-09-13 (disassembly-level, not decompiler
+        // pseudocode -- see MapScript_CreateSprite @0x800B710): a second
+        // mapScripts handler that spawns a CharacterSprite entity (a
+        // party-member-shaped sprite; ArenaAlloc 388 bytes) from the SAME
+        // MapScriptSpawnMultiConditional-shaped record as
+        // CharacterSpawnHandlerOffset, but reads the DISPLAY sprite from a
+        // different field: `LDR R0,[R0,#0x10]` -> Character_GetSpriteId, i.e.
+        // record+0x10 ('actionData'), not record+0xC. record+0xC is instead
+        // passed straight through into the entity (ends up at entity+0x180,
+        // confirmed via `STR R6,[R1,R4]` with R1=0x180) as a raw graphics
+        // pointer the entity's own vtable slot 0 dispatches through -- not a
+        // display id, so it's skipped here rather than misread as one.
+        //
+        // Also confirmed (same session): entities from this handler have NO
+        // working interactivity. Every collision type this entity's shared
+        // OnCollision (CharacterSprite_OnCollision, vtable slot 9 shared with
+        // PlayerObject_Create) doesn't special-case falls through to a no-op
+        // chain (Entity_HandleCollision_Shared -> _Ext1 -> _Ext2), and the
+        // record's own scriptFunc field (+0x14, passed by address into the
+        // entity's action-record like an interact/destroy callback would be)
+        // was a bare literal (e.g. `1`) in the one real example checked
+        // (Zone1/Area1's tutorial-area sprite), not a function pointer -- so
+        // these are decorative/background sprites, NOT talkable NPCs, even
+        // though they render as full character entities in-game. Still drawn
+        // here (as EntityKind.Character, same as CharacterSpawnHandlerOffset)
+        // because they're real spawned entities worth seeing on the map; the
+        // status bar's "spriteId" label is this handler's actionData value.
+        private const int SpriteSpawnHandlerOffset = 0x00B711;
+
         public static List<Entity> ReadMapScripts(ROM rom, MapEntry entry)
         {
             var result = new List<Entity>();
@@ -179,9 +209,20 @@ namespace DrGero.Rendering
 
                     result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress));
                 }
-                // Other handlers exist in mapScripts (enemies, effects, etc.)
-                // but haven't been identified yet -- skipped rather than
-                // guessing at their record layout/position.
+                else if (handler == SpriteSpawnHandlerOffset)
+                {
+                    rom.Skip(4); // flags/condition
+                    int coordAddress = recordAddress + 8;
+                    int x = rom.ReadShort();
+                    int y = rom.ReadShort();
+                    rom.Skip(4); // record+0xC -- passed through to the entity raw, not a display id (see comment above)
+                    int spriteId = rom.ReadInt(); // record+0x10 (actionData) -- feeds Character_GetSpriteId
+
+                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress));
+                }
+                // Other handlers may exist in mapScripts (enemies, effects,
+                // etc.) but haven't been identified yet -- skipped rather
+                // than guessing at their record layout/position.
 
                 rom.PopPosition();
             }
@@ -753,7 +794,7 @@ namespace DrGero.Rendering
             return icon;
         }
 
-        private static Bitmap RenderIndexed(byte[] data, int width, int height, Color[] palette)
+        internal static Bitmap RenderIndexed(byte[] data, int width, int height, Color[] palette)
         {
             var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             var rect = new Rectangle(0, 0, width, height);
@@ -826,7 +867,7 @@ namespace DrGero.Rendering
 
         // Per-game caches. Keyed by Game so switching ROMs doesn't serve stale tiles.
         private static readonly Dictionary<Game, Dictionary<int, Bitmap>> tilesetCaches = [];
-        private static readonly Dictionary<Game, Dictionary<int, (Bitmap bitmap, int priority, HashSet<Range> usedTilesets)>> layerCaches = [];
+        private static readonly Dictionary<Game, Dictionary<int, (Bitmap bitmap, int priority, HashSet<Range> usedTilesets, bool unsupported)>> layerCaches = [];
 
         public static void ResetCache(Game game)
         {
@@ -834,7 +875,7 @@ namespace DrGero.Rendering
             layerCaches.Remove(game);
         }
 
-        public static (Bitmap bitmap, Dictionary<Range, Bitmap> tilesets, HashSet<Range> usedTilesets) RenderMap(ROM rom, Game game, int mapOffset, MapRenderOptions options)
+        public static (Bitmap bitmap, Dictionary<Range, Bitmap> tilesets, HashSet<Range> usedTilesets, bool hasUnsupportedLayer, bool[,] collisionGrid) RenderMap(ROM rom, Game game, int mapOffset, MapRenderOptions options)
         {
             var tilesets = DrawTileset(rom, game, mapOffset);
             var usedTilesets = new HashSet<Range>();
@@ -856,12 +897,405 @@ namespace DrGero.Rendering
             g.InterpolationMode = InterpolationMode.NearestNeighbor;
             g.PixelOffsetMode = PixelOffsetMode.Half;
 
-            if (options.ShowBG3) g.DrawImage(layer3.bitmap, 0, 0);
-            if (options.ShowBG2) g.DrawImage(layer2.bitmap, 0, 0);
-            if (options.ShowBG1) g.DrawImage(layer1.bitmap, 0, 0);
-            if (options.ShowBG0) g.DrawImage(layer0.bitmap, 0, 0);
+            // CORRECTED 2026-09 (RE-VERIFIED via IDA, replaces the previous "BUG FOUND
+            // 2026-09-XX" fix below it, which was itself wrong): the per-layer priority
+            // this method used to read from DrawLayer (a byte inside each layer's OWN
+            // chunk-header blob, at +0x12) is NOT where real GBA priority comes from.
+            // CONFIRMED via raw disasm of Map_InitRenderer (0x8006152) and sub_8005F1A
+            // (0x8005F1A, the function that actually writes the hardware BG0CNT-BG3CNT
+            // registers): priority is stored as 4 consecutive bytes at
+            // Map_VariationEntry+0x04 ("field_4" in IDA's struct), ONE BYTE PER BG INDEX
+            // (byte0=BG0, byte1=BG1, byte2=BG2, byte3=BG3) -- `*(a1+120)=LOBYTE(field_4)`
+            // etc in Map_InitRenderer, then `BG0CNT = BGCNT_BaseValues[...] + *(a1+120)`
+            // etc in sub_8005F1A, and the low bits of a real BGCNT register ARE hardware
+            // priority. This is a MAP-level value indexed by BG number, not a per-layer-
+            // blob field at all. Empirically confirmed wrong before this fix: Zone4/Area1's
+            // real field_4 bytes are 03 01 03 03 (BG1 drawn on top of the other three), but
+            // the old per-layer-header read reported priority=0 for ALL FOUR layers on that
+            // map (a uniformly wrong value that collapses to pure BG-index tie-break
+            // ordering) -- a real, provable bug, not just an unconfirmed assumption. This
+            // was very likely a real contributor to the reported "missing rocks / wrong
+            // layer showing" symptom (whichever layer should have been on top per hardware
+            // priority could easily end up buried under the wrong one).
+            rom.PushPosition(mapOffset + 0x4);
+            int packedPriority = rom.ReadInt();
+            rom.PopPosition();
+            int[] realPriority =
+            [
+                packedPriority & 0xFF,
+                (packedPriority >> 8) & 0xFF,
+                (packedPriority >> 16) & 0xFF,
+                (packedPriority >> 24) & 0xFF,
+            ];
 
-            return (composite, tilesets, usedTilesets);
+            var layers = new[]
+            {
+                (bitmap: layer0.bitmap, priority: realPriority[0], index: 0, show: options.ShowBG0),
+                (bitmap: layer1.bitmap, priority: realPriority[1], index: 1, show: options.ShowBG1),
+                (bitmap: layer2.bitmap, priority: realPriority[2], index: 2, show: options.ShowBG2),
+                (bitmap: layer3.bitmap, priority: realPriority[3], index: 3, show: options.ShowBG3),
+            };
+
+            // Paint back-to-front: highest priority value (lowest on-screen) first,
+            // ties broken by highest BG index first, so the lowest priority / lowest
+            // BG index ends up painted last (on top) -- matching GBA hardware order.
+            //
+            // ANCHOR FIX 2026-09: a layer's own chunk grid (numCols/numRows * 256px) is
+            // frequently LARGER than the map's declared width/height (mapOffset+0x8),
+            // by design -- Camera_ClampToMapBounds (0x80060B0) clamps the real camera to
+            // the declared width/height, so the extra chunk-grid margin is scroll
+            // headroom the player's camera never actually reaches on real hardware.
+            // Previously this method always drew every layer top-left-anchored at (0,0),
+            // which for a VERTICALLY oversized layer shows exactly that never-visible
+            // margin as a blank band above the real terrain and pushes it out of
+            // alignment with the collision grid (which is sized/anchored from the
+            // declared height directly, not the raw chunk-grid size).
+            //
+            // Y-axis: bottom-anchor when the layer is taller than the composite (crop the
+            // excess from the TOP). Empirically verified against real renders: fixes the
+            // ~255px blank-top band on Z1A1/Z2A1 (declared 385x769 / 1025x1025, but their
+            // biggest layers' chunk grids are 512x1024 / etc) without affecting Z4A3
+            // (whose layers don't have this excess).
+            //
+            // X-axis: DELIBERATELY LEFT top-anchored (always drawX=0), NOT symmetric with
+            // Y. Tried bottom-right-anchoring both axes first and it was WRONG -- it broke
+            // Z4A3 (introduced a large blank patch that wasn't there before) and made
+            // Z1A1 worse on its right edge, proving horizontal excess is meant to be
+            // cropped from the right, not the left. So the two axes are NOT symmetric in
+            // this engine; only vertical excess is bottom-anchored. Not independently
+            // confirmed via ASM why the axes differ -- if a map shows a NEW horizontal
+            // misalignment, don't just make X symmetric with Y again, that was tried and
+            // disproven.
+            foreach (var layer in layers.OrderByDescending(l => l.priority).ThenByDescending(l => l.index))
+            {
+                if (!layer.show) continue;
+                int drawY = Math.Min(0, composite.Height - layer.bitmap.Height);
+                g.DrawImage(layer.bitmap, 0, drawY);
+            }
+
+            // CONFIRMED via IDA 2026-09 (raw disasm of sub_80073EA/sub_800733E, the
+            // graphicObjects constructors called from Map_InitTilemap): these records
+            // are NOT part of the BG tilemap at all -- they're separate OAM sprite
+            // decorations (trees, rocks, etc) layered on top of it, drawing from a
+            // real per-variation compressed spritesheet at Map_VariationEntry+0x2C.
+            // This is very likely why trees were rendering as canopy-only with no
+            // trunks: the trunk was in this never-drawn sprite layer, not missing data.
+            DrawGraphicObjects(rom, game, mapOffset, composite);
+
+            // CONFIRMED (2026-09, by the user checking in-game) that flat gray "void
+            // filler" patches on some maps (e.g. Zone2/Area1) are NOT a rendering bug --
+            // they're genuinely in the ROM and visible in actual gameplay too. They're
+            // real, but they make hand-editing harder to read at a glance, so tint them
+            // distinctly here (editor-only cosmetic overlay, doesn't touch what's
+            // actually rendered) rather than leave them looking like broken output.
+            TintVoidFillerTiles(composite);
+
+            // A map using the unrecognized 0x4FCD layer format (see DrawLayer) would
+            // otherwise just look like an ordinary, complete map with a blank/empty
+            // background where that layer's content should be -- misleading for an
+            // editor. Paint an unmissable hazard-stripe band instead, so it's obvious
+            // this map isn't fully rendered rather than genuinely being that empty.
+            bool hasUnsupportedLayer = layer0.unsupported || layer1.unsupported || layer2.unsupported || layer3.unsupported;
+            if (hasUnsupportedLayer)
+            {
+                DrawUnsupportedLayerWarning(g, composite.Width, composite.Height);
+            }
+
+            // CONFIRMED via IDA 2026-09 (raw disasm of Map_InitRenderer, 0x8006152): the buffer
+            // Collision_CheckRect (0x8005D6C) reads from at runtime (g_MapRenderer+0x6C, the
+            // global previously auto-named dword_30010FC by IDA -- it's really a field access
+            // through off_83ED214, not a standalone global) is filled by
+            // `Resource_LoadOrDecompress(src: Map_VariationEntry+0x34, dst: g_MapRenderer+0x6C)`.
+            // That's the SAME resource-header format (u32 format flag, u32 size, then
+            // stored-or-JCALG1 payload) already handled by JCALG1.Decompress, and the existing
+            // in-file comment on Map_InitRenderer calling this field "tilesetGraphicsData" was
+            // ALREADY marked unconfirmed there -- this is the correction: +0x34 is the
+            // collision bitmap, not tileset graphics. The consumer's own indexing
+            // (collisionMap[8*tileY + (tileX>>5)] & (1<<(tileX&0x1F))) fits an 8KB buffer
+            // exactly as a 256x256-tile (2048x2048px) 1-bit-per-tile grid, which is also the
+            // exact size Map_InitRenderer ArenaAllocs for it (0x2000 bytes = 8192 = 256*256/8).
+            var collisionGrid = ReadCollisionMap(rom, mapOffset);
+            if (options.ShowCollision)
+            {
+                DrawCollisionOverlay(collisionGrid, composite);
+            }
+
+            return (composite, tilesets, usedTilesets, hasUnsupportedLayer, collisionGrid);
+        }
+
+        // CONFIRMED via IDA 2026-09 (Map_InitRenderer @0x8006152: `LDR R0,[R5,#0x34]` / `BL
+        // Resource_LoadOrDecompress` into `g_MapRenderer+0x6C`; Collision_CheckRect @0x8005D6C:
+        // `collisionMap[8*tileY + (tileX>>5)] & (1 << (tileX & 0x1F))`). One bit per 8x8 tile,
+        // 32 tiles packed per 32-bit word, 8 words per tile-row -- supports up to 256x256 tiles
+        // (2048x2048px). A set bit means BLOCKED/solid (Collision_CheckRect treats a 0 bit run
+        // across the tested rect as ALLOWED and returns BLOCKED as soon as it finds a set bit
+        // in range). Returns a full 256x256 grid regardless of the map's real (usually smaller)
+        // pixel size -- callers should only look at [0..width/8, 0..height/8].
+        public static bool[,] ReadCollisionMap(ROM rom, int mapOffset)
+        {
+            const int tilesPerSide = 256;
+            var grid = new bool[tilesPerSide, tilesPerSide];
+
+            rom.PushPosition(mapOffset + 0x34);
+            int collisionPtr = rom.ReadPointer();
+            rom.PopPosition();
+
+            if (collisionPtr == 0)
+                return grid;
+
+            byte[] data;
+            try
+            {
+                data = JCALG1.Decompress(rom, collisionPtr);
+            }
+            catch
+            {
+                return grid; // corrupt/unsupported for this map -- report "all clear" rather than guess
+            }
+
+            for (int tileY = 0; tileY < tilesPerSide; tileY++)
+            {
+                for (int wordX = 0; wordX < 8; wordX++)
+                {
+                    int byteOffset = ((8 * tileY) + wordX) * 4;
+                    if (byteOffset + 4 > data.Length)
+                        continue;
+
+                    uint word = BitConverter.ToUInt32(data, byteOffset);
+                    if (word == 0) continue;
+
+                    for (int bit = 0; bit < 32; bit++)
+                    {
+                        if ((word & (1u << bit)) != 0)
+                            grid[(wordX * 32) + bit, tileY] = true;
+                    }
+                }
+            }
+
+            return grid;
+        }
+
+        /// <summary>
+        /// Editor-only overlay: tints solid/blocked tiles from <see cref="ReadCollisionMap"/>
+        /// semi-transparent red directly onto an already-rendered map bitmap (or a cropped
+        /// viewport of one -- pass <paramref name="originTileX"/>/<paramref name="originTileY"/>
+        /// to offset into the grid for a crop that doesn't start at tile 0,0).
+        /// </summary>
+        public static void DrawCollisionOverlay(bool[,] collisionGrid, Bitmap target, int originTileX = 0, int originTileY = 0, Color? color = null)
+        {
+            var tint = color ?? Color.FromArgb(110, 220, 30, 30);
+            int gridW = collisionGrid.GetLength(0);
+            int gridH = collisionGrid.GetLength(1);
+
+            int colsVisible = (target.Width / tile_size) + 1;
+            int rowsVisible = (target.Height / tile_size) + 1;
+
+            using var g = Graphics.FromImage(target);
+            using var brush = new SolidBrush(tint);
+
+            for (int ty = 0; ty < rowsVisible; ty++)
+            {
+                int gy = originTileY + ty;
+                if (gy < 0 || gy >= gridH) continue;
+
+                for (int tx = 0; tx < colsVisible; tx++)
+                {
+                    int gx = originTileX + tx;
+                    if (gx < 0 || gx >= gridW) continue;
+
+                    if (collisionGrid[gx, gy])
+                        g.FillRectangle(brush, tx * tile_size, ty * tile_size, tile_size, tile_size);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draws the OAM sprite decorations (trees, rocks, etc) that Map_InitTilemap
+        /// spawns from Map_VariationEntry.graphicObjects[] -- a layer entirely separate
+        /// from the BG tilemap DrawLayer produces. EXPERIMENTAL / best-effort: the
+        /// overall pipeline (source resource at +0x2C, decompressed the same way as
+        /// tilesetGraphicsData, uploaded to OBJ VRAM, records select a tile-offset into
+        /// it) is CONFIRMED via raw disasm of sub_80073EA/sub_800733E/sub_80072C4, but
+        /// several details are assumed rather than proven: 8bpp/1-byte-per-pixel tile
+        /// data (matches ItemIconReader's confirmed format for this game, not directly
+        /// verified for THIS resource), the record's unconfirmed +0x10..0x13 field is
+        /// skipped entirely, and tile packing within a multi-tile sprite is assumed
+        /// row-major starting at the record's frame offset. Verify visually; if it
+        /// looks wrong, one of these assumptions is the first thing to revisit.
+        /// </summary>
+        private static void DrawGraphicObjects(ROM rom, Game game, int mapOffset, Bitmap composite)
+        {
+            rom.PushPosition(mapOffset + 0x24);
+            int graphicObjectCount = rom.ReadInt();
+            int graphicObjectsBase = rom.ReadPointer();
+            rom.PopPosition();
+
+            if (graphicObjectCount <= 0 || graphicObjectsBase == 0) return;
+
+            // CONFIRMED via raw disasm (sub_80072C4): Resource_LoadOrDecompress reads
+            // directly from Map_VariationEntry+0x2C, the same decompression pipeline
+            // DrawTileset already uses for tilesetGraphicsData/the static tileset blob.
+            rom.PushPosition(mapOffset + 0x2C);
+            int sheetPtr = rom.ReadPointer();
+            rom.PopPosition();
+            if (sheetPtr == 0) return;
+
+            byte[] sheetData;
+            try
+            {
+                sheetData = JCALG1.Decompress(rom, sheetPtr);
+            }
+            catch
+            {
+                return; // unsupported/corrupt for this map -- skip decorations rather than guess
+            }
+
+            var palette = ItemIconReader.ReadOBJPalette(rom, game);
+            const int bytesPerTile = 64; // 8bpp 8x8 tile -- see method doc, not independently verified for this resource
+
+            using var g = Graphics.FromImage(composite);
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+
+            for (int i = 0; i < graphicObjectCount; i++)
+            {
+                int recordBase = graphicObjectsBase + (i * EntityReader.GraphicObjectRecordSize);
+                rom.PushPosition(recordBase);
+                int x0 = rom.ReadInt();
+                int y0 = rom.ReadInt();
+                int x1 = rom.ReadInt();
+                int y1 = rom.ReadInt();
+                rom.Skip(4); // +0x10..0x13, unconfirmed -- not needed for position/frame
+                int frameOffset = rom.ReadShort(); // +0x14, CONFIRMED u16 (raw disasm, sub_800733E: LDRH [record+0x14])
+                rom.PopPosition();
+
+                int width = x1 - x0;
+                int height = y1 - y0;
+                if (width <= 0 || height <= 0 || width > 256 || height > 256) continue; // sanity guard, not a confirmed bound
+
+                int tilesWide = Math.Max(1, width / tile_size);
+                int tilesTall = Math.Max(1, height / tile_size);
+
+                for (int ty = 0; ty < tilesTall; ty++)
+                {
+                    for (int tx = 0; tx < tilesWide; tx++)
+                    {
+                        int tileIndex = frameOffset + (ty * tilesWide) + tx;
+                        int srcOffset = tileIndex * bytesPerTile;
+                        if (srcOffset < 0 || srcOffset + bytesPerTile > sheetData.Length) continue;
+
+                        using var tileBmp = ItemIconReader.RenderIndexed(sheetData.AsSpan(srcOffset, bytesPerTile).ToArray(), tile_size, tile_size, palette);
+                        g.DrawImage(tileBmp, x0 + (tx * tile_size), y0 + (ty * tile_size));
+                    }
+                }
+            }
+        }
+
+        private static void DrawUnsupportedLayerWarning(Graphics g, int width, int height)
+        {
+            const int stripeHeight = 24;
+            using var stripeBrush = new HatchBrush(HatchStyle.WideUpwardDiagonal, Color.Magenta, Color.FromArgb(180, 0, 0, 0));
+            g.FillRectangle(stripeBrush, 0, 0, width, stripeHeight);
+            g.FillRectangle(stripeBrush, 0, Math.Max(0, height - stripeHeight), width, stripeHeight);
+
+            using var font = new Font(FontFamily.GenericSansSerif, 8f, FontStyle.Bold);
+            const string text = "UNSUPPORTED LAYER FORMAT (0x4FCD) -- this map is NOT fully rendered";
+            using var textBrush = new SolidBrush(Color.White);
+            g.DrawString(text, font, textBrush, 2, 2);
+        }
+
+        /// <summary>
+        /// Editor-only cosmetic pass: finds 8x8 tile cells that are a single, perfectly
+        /// flat color (real terrain/decoration tiles always have pixel-level texture;
+        /// a completely uniform tile is a strong signal of "void filler" rather than
+        /// designed content) and, when that exact color repeats often enough across the
+        /// map to look like a genuine filler pattern rather than a coincidental flat
+        /// design element, checkerboards it with a muted tint. Does not alter what's
+        /// actually decoded/rendered -- purely a readability aid layered on top.
+        /// </summary>
+        private static void TintVoidFillerTiles(Bitmap composite)
+        {
+            const int minFlatTilesToCountAsFiller = 8;
+            var tintColor = Color.FromArgb(140, 90, 60, 160); // muted violet, distinct from any real terrain palette
+
+            int cols = composite.Width / tile_size;
+            int rows = composite.Height / tile_size;
+            if (cols == 0 || rows == 0) return;
+
+            var rect = new Rectangle(0, 0, composite.Width, composite.Height);
+            var data = composite.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite, composite.PixelFormat);
+            int stride = data.Stride;
+            int byteCount = stride * composite.Height;
+            byte[] buffer = new byte[byteCount];
+            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, buffer, 0, byteCount);
+
+            int PixelOffset(int px, int py) => (py * stride) + (px * 4);
+
+            var flatTileColorCounts = new Dictionary<int, int>();
+            var flatTileCells = new List<(int col, int row, int argb)>();
+
+            for (int row = 0; row < rows; row++)
+            {
+                for (int col = 0; col < cols; col++)
+                {
+                    int baseX = col * tile_size;
+                    int baseY = row * tile_size;
+                    int first = PixelOffset(baseX, baseY);
+                    byte a0 = buffer[first + 3];
+                    if (a0 == 0) continue; // untouched/transparent cell, not a filler tile
+
+                    byte b0 = buffer[first + 0], g0 = buffer[first + 1], r0 = buffer[first + 2];
+                    bool flat = true;
+
+                    for (int y = 0; y < tile_size && flat; y++)
+                    {
+                        for (int x = 0; x < tile_size; x++)
+                        {
+                            int o = PixelOffset(baseX + x, baseY + y);
+                            if (buffer[o + 0] != b0 || buffer[o + 1] != g0 || buffer[o + 2] != r0 || buffer[o + 3] != a0)
+                            {
+                                flat = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!flat) continue;
+
+                    int argb = (a0 << 24) | (r0 << 16) | (g0 << 8) | b0;
+                    flatTileColorCounts[argb] = flatTileColorCounts.GetValueOrDefault(argb) + 1;
+                    flatTileCells.Add((col, row, argb));
+                }
+            }
+
+            var fillerColors = new HashSet<int>(
+                flatTileColorCounts.Where(kv => kv.Value >= minFlatTilesToCountAsFiller).Select(kv => kv.Key));
+
+            if (fillerColors.Count > 0)
+            {
+                foreach (var (col, row, argb) in flatTileCells)
+                {
+                    if (!fillerColors.Contains(argb)) continue;
+
+                    int baseX = col * tile_size;
+                    int baseY = row * tile_size;
+                    for (int y = 0; y < tile_size; y++)
+                    {
+                        for (int x = 0; x < tile_size; x++)
+                        {
+                            if (((x + y) & 1) != 0) continue; // checkerboard: only tint every other pixel
+                            int o = PixelOffset(baseX + x, baseY + y);
+                            float srcA = tintColor.A / 255f;
+                            buffer[o + 0] = (byte)((tintColor.B * srcA) + (buffer[o + 0] * (1 - srcA)));
+                            buffer[o + 1] = (byte)((tintColor.G * srcA) + (buffer[o + 1] * (1 - srcA)));
+                            buffer[o + 2] = (byte)((tintColor.R * srcA) + (buffer[o + 2] * (1 - srcA)));
+                        }
+                    }
+                }
+            }
+
+            System.Runtime.InteropServices.Marshal.Copy(buffer, 0, data.Scan0, byteCount);
+            composite.UnlockBits(data);
         }
 
         public static Dictionary<Range, Bitmap> DrawTileset(ROM rom, Game game, int mapOffset)
@@ -962,6 +1396,9 @@ namespace DrGero.Rendering
             for (int i = 0; i < tilesetBytes.Length; i += 2)
             {
                 // Delta-decode: advance the atlas tile index by the stored offset.
+                // Tried reinterpreting this as signed (2026-09) to explain a gray-patch
+                // rendering defect on Zone2/Area1 -- made no visible difference on that
+                // map, so it wasn't the cause. Reverted to unsigned; ruled out, not fixed.
                 int delta = tilesetBytes[i] | (tilesetBytes[i + 1] << 8);
                 currentTileIndex += delta;
 
@@ -1057,9 +1494,25 @@ namespace DrGero.Rendering
         // differ per ROM build even when the underlying format is identical.
         // These are this ROM's values (confirmed against real layer structs):
         //   tiled-grid layer -> 0x0056A1   (original LOGExtractor ROM: 0x8087)
+        //
+        // CONFIRMED via IDA 2026-09 that this is a SECOND, real, unrecognized
+        // format, not corrupt data: a full-ROM scan found 49 layer slots across
+        // 22 distinct maps (including major named locations -- West City,
+        // Capsule Corporation, Pepper Town, Snowy Highlands, the Cell Games
+        // Arena) whose leading dword is consistently 0x00004FCD instead of
+        // 0x00056A1. Both values resolve to real, distinct compiled functions
+        // in the ROM (sub_80056A0 / sub_8004FCC) matching the same "raw ROM
+        // data starts with a dispatch pointer" convention used throughout this
+        // engine (MapScript.handler, MapTrigger.function, MapItem.handler are
+        // all the same pattern) -- so 0x4FCD is a legitimate second layer
+        // format this renderer doesn't understand yet, NOT garbage. Chasing
+        // sub_8004FCC's actual field layout is future work; until then, this
+        // is flagged (`unsupported`) rather than silently rendered as empty,
+        // since a map editor silently hiding real content is worse than
+        // admitting it can't show something yet.
         private const int TiledLayerType = 0x0056A1;
 
-        public static (Bitmap bitmap, int priority) DrawLayer(ROM rom, Game game, int address, Dictionary<Range, Bitmap> tilesets, HashSet<Range> usedTilesets)
+        public static (Bitmap bitmap, int priority, bool unsupported) DrawLayer(ROM rom, Game game, int address, Dictionary<Range, Bitmap> tilesets, HashSet<Range> usedTilesets)
         {
             var cache = GetLayerCache(game);
 
@@ -1071,12 +1524,12 @@ namespace DrGero.Rendering
                 {
                     usedTilesets.Add(range);
                 }
-                return (cached.bitmap, cached.priority);
+                return (cached.bitmap, cached.priority, cached.unsupported);
             }
 
             if (address == 0x0)
             {
-                return (new Bitmap(1, 1), 0);
+                return (new Bitmap(1, 1), 0, false);
             }
 
             rom.PushPosition(address);
@@ -1085,14 +1538,19 @@ namespace DrGero.Rendering
             if (layerType != TiledLayerType)
             {
                 rom.PopPosition();
-                return (new Bitmap(1, 1), 0);
+                return (new Bitmap(1, 1), 0, true);
             }
 
             rom.Skip(0x9);
             int offX = rom.ReadShort() / 4;
             rom.Skip(0x2);
 
-            // +0x11 = scroll Y low byte, +0x12 = BG priority
+            // +0x11 = scroll Y low byte, +0x12 = unknown (NOT priority -- see the "CORRECTED
+            // 2026-09" comment in RenderMap: real GBA priority is a MAP-level field at
+            // Map_VariationEntry+0x04, one byte per BG index, confirmed via sub_8005F1A
+            // writing it straight into BG0CNT-BG3CNT. This byte is read here and returned
+            // as before so the tuple shape/cache format don't change, but RenderMap no
+            // longer uses it for compositing order -- its real meaning is still unconfirmed.
             int offYRaw = rom.ReadShort();
             int offY = (offYRaw & 0xFF) / 4;
             int priority = (offYRaw >> 8) & 0xFF;
@@ -1100,6 +1558,9 @@ namespace DrGero.Rendering
             rom.Skip(0x1);
             int numCols = rom.ReadByte();
             int numRows = rom.ReadByte();
+
+            if (Environment.GetEnvironmentVariable("DBGLAYER") == "1")
+                Console.WriteLine($"    [layer] addr=0x{address:X} offX(raw/4)={offX} offYRaw=0x{offYRaw:X} offY={offY} priorityByte={priority} numCols={numCols} numRows={numRows}");
 
             if (offX >= 0x3F00)
             {
@@ -1126,7 +1587,10 @@ namespace DrGero.Rendering
             {
                 for (int c = 0; c < numCols; c++)
                 {
-                    using var chunk = DrawChunk(rom, rom.ReadPointer(), tilesets, layerUsedTilesets);
+                    int chunkPtr = rom.ReadPointer();
+                    if (Environment.GetEnvironmentVariable("DBGLAYER") == "1")
+                        Console.WriteLine($"      [chunk] addr=0x{address:X} r={r} c={c} ptr=0x{chunkPtr:X}");
+                    using var chunk = DrawChunk(rom, chunkPtr, tilesets, layerUsedTilesets);
                     g.DrawImage(chunk, (chunk_size_pixels * c) - offX, (chunk_size_pixels * r) - offY);
                 }
             }
@@ -1136,11 +1600,11 @@ namespace DrGero.Rendering
                 usedTilesets.Add(range);
             }
 
-            var result = (layerImage, priority, layerUsedTilesets);
+            var result = (layerImage, priority, layerUsedTilesets, unsupported: false);
             cache.Add(address, result);
             rom.PopPosition();
 
-            return (result.layerImage, result.priority);
+            return (result.layerImage, result.priority, result.unsupported);
         }
         private static Bitmap DrawChunk(ROM rom, int address, Dictionary<Range, Bitmap> tilesets, HashSet<Range> usedTilesets)
         {
@@ -1254,7 +1718,7 @@ namespace DrGero.Rendering
             return cache;
         }
 
-        private static Dictionary<int, (Bitmap bitmap, int priority, HashSet<Range> usedTilesets)> GetLayerCache(Game game)
+        private static Dictionary<int, (Bitmap bitmap, int priority, HashSet<Range> usedTilesets, bool unsupported)> GetLayerCache(Game game)
         {
             if (!layerCaches.TryGetValue(game, out var cache))
             {
@@ -1273,6 +1737,7 @@ namespace DrGero.Rendering
         public bool ShowBG1 { get; init; } = true;
         public bool ShowBG2 { get; init; } = true;
         public bool ShowBG3 { get; init; } = true;
+        public bool ShowCollision { get; init; } = false;
         public MapRenderOptions() { }
     }
 }

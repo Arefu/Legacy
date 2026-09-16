@@ -22,6 +22,7 @@ namespace Dragon_Radar
             mapPictureBox.MouseDown += mapPictureBox_MouseDown;
             mapPictureBox.MouseMove += mapPictureBox_MouseMove;
             mapPictureBox.MouseUp += mapPictureBox_MouseUp;
+            previewCollisionCheckBox.Checked = toolStrip_ShowCollision.Checked;
             KeyPreview = true;
             KeyDown += DragonRadarUI_KeyDown;
         }
@@ -162,6 +163,9 @@ namespace Dragon_Radar
                 listView1.Items.Clear();
                 _tileThumbnails.Images.Clear();
                 _currentEntities.Clear();
+                _hasUnsupportedLayer = false;
+                _collisionGrid = null;
+                previewPictureBox.Image = null;
                 mapPictureBox.Invalidate();
                 UpdateStatusLabel();
                 return;
@@ -174,8 +178,18 @@ namespace Dragon_Radar
             _rom.PopPosition();
             _currentMapOffset = mapOffset;
 
-            var (bitmap, tilesets, usedTilesets) = MapRenderer.RenderMap(_rom, _game.Config, mapOffset, new MapRenderOptions());
+            var (bitmap, tilesets, usedTilesets, hasUnsupportedLayer, collisionGrid) = MapRenderer.RenderMap(_rom, _game.Config, mapOffset, new MapRenderOptions());
             _currentMapBitmap = bitmap;
+            _hasUnsupportedLayer = hasUnsupportedLayer;
+            _collisionGrid = collisionGrid;
+            _viewportOrigin = new Point(0, 0);
+
+            // mapPictureBox draws the bitmap manually (see mapPictureBox_Paint), not via
+            // the Image property, so it doesn't auto-size to the map's real dimensions --
+            // do it explicitly so mapScrollPanel's AutoScroll can reach every part of maps
+            // bigger than the visible viewport (previously silently clipped, which is what
+            // made entities/triggers near map edges look misplaced).
+            mapPictureBox.Size = bitmap.Size;
 
             _currentEntities = EntityReader.ReadLevelGates(_rom, entry);
             _currentEntities.AddRange(EntityReader.ReadMapTriggers(_rom, entry));
@@ -186,6 +200,7 @@ namespace Dragon_Radar
 
             mapPictureBox.Invalidate();
             UpdateStatusLabel();
+            RefreshPreview();
         }
 
         // Slices every used tileset sheet into individual TileSize x TileSize tiles
@@ -254,6 +269,17 @@ namespace Dragon_Radar
         private bool _dragging = false;
         private Point _dragGrabOffset; // cursor position relative to the entity's own X/Y at drag start
         private bool _dirty = false;
+        private bool _hasUnsupportedLayer = false; // see MapRenderer.DrawLayer's 0x4FCD comment
+
+        // GBA-screen (240x160) viewport preview state. The real hardware resolution --
+        // see MapRenderer.ReadCollisionMap's doc for how the collision grid this also
+        // uses was traced. _viewportOrigin is the top-left of the crop, in the same
+        // pixel space as _currentMapBitmap (map/world pixels, not screen/control pixels).
+        private const int GbaScreenWidth = 240;
+        private const int GbaScreenHeight = 160;
+        private bool[,]? _collisionGrid;
+        private Point _viewportOrigin;
+        private bool _draggingViewport;
 
         private static Color ColorFor(EntityKind kind) => kind switch
         {
@@ -279,6 +305,18 @@ namespace Dragon_Radar
             }
 
             g.DrawImage(_currentMapBitmap, 0, 0);
+
+            if (toolStrip_ShowCollision.Checked && _collisionGrid != null)
+            {
+                // Draw straight onto the screen via a throwaway same-size overlay bitmap rather
+                // than mutating _currentMapBitmap -- this runs on every repaint (e.g. while
+                // dragging the viewport), and the cached map bitmap must stay pristine for the
+                // preview crop (RefreshPreview) and tile list (which reads from the tilesets
+                // dictionary, not the composite, but best not to risk compounding tints anyway).
+                using var overlay = new Bitmap(_currentMapBitmap.Width, _currentMapBitmap.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                MapRenderer.DrawCollisionOverlay(_collisionGrid, overlay);
+                g.DrawImage(overlay, 0, 0);
+            }
 
             for (int i = 0; i < _currentEntities.Count; i++)
             {
@@ -311,7 +349,14 @@ namespace Dragon_Radar
                 }
                 else
                 {
-                    Bitmap? icon = (entity.Kind == EntityKind.Object || entity.Kind == EntityKind.Item) && _rom != null && _game != null
+                    // Object.TypeId is a real g_ItemsInGame id (see ReadObjectArray) --
+                    // safe to use as an icon lookup. Item.TypeId is NOT: it's MapItem's
+                    // itemIndex, an index into the map's decoration table (graphicObjects[],
+                    // see ReadMapItems), a completely different numbering. Feeding it into
+                    // ItemIconReader was drawing whatever pickup happened to share that
+                    // small index (e.g. index 0-2) instead of the actual rock/object --
+                    // confirmed against real ROM data for Zone1/Area1's three rocks.
+                    Bitmap? icon = entity.Kind == EntityKind.Object && _rom != null && _game != null
                         ? ItemIconReader.GetIcon(_rom, _game.Config, entity.TypeId)
                         : null;
 
@@ -334,6 +379,12 @@ namespace Dragon_Radar
                     g.DrawRectangle(selectPen, entity.X - w / 2, entity.Y - h / 2, w, h);
                 }
             }
+
+            // The draggable GBA-screen (240x160) viewport -- drag with the RIGHT mouse
+            // button anywhere on the map to move it (left button is entity select/drag,
+            // already used above). See RefreshPreview for what feeds previewPictureBox.
+            using var viewportPen = new Pen(Color.Yellow, 2);
+            g.DrawRectangle(viewportPen, _viewportOrigin.X, _viewportOrigin.Y, GbaScreenWidth, GbaScreenHeight);
         }
 
         private int HitTest(Point clickLocation)
@@ -365,6 +416,13 @@ namespace Dragon_Radar
         {
             if (_currentMapBitmap == null) return;
 
+            if (e.Button == MouseButtons.Right)
+            {
+                _draggingViewport = true;
+                MoveViewportTo(e.Location);
+                return;
+            }
+
             if (_placingItemId.HasValue)
             {
                 _currentEntities.Add(new Entity(EntityKind.Object, e.Location.X, e.Location.Y, _placingItemId.Value, SourceAddress: 0, OnPickup: _placingTemplate.OnPickup, CollectionMsg: _placingTemplate.CollectionMsg));
@@ -392,6 +450,12 @@ namespace Dragon_Radar
 
         private void mapPictureBox_MouseMove(object? sender, MouseEventArgs e)
         {
+            if (_draggingViewport)
+            {
+                MoveViewportTo(e.Location);
+                return;
+            }
+
             if (!_dragging || _selectedIndex < 0) return;
 
             var entity = _currentEntities[_selectedIndex];
@@ -410,13 +474,93 @@ namespace Dragon_Radar
         private void mapPictureBox_MouseUp(object? sender, MouseEventArgs e)
         {
             _dragging = false;
+            _draggingViewport = false;
+        }
+
+        // Centers the 240x160 GBA-screen viewport on the given map-pixel point (clamped so it
+        // never runs off the map bitmap), then repaints the map overlay and the preview crop.
+        private void MoveViewportTo(Point mapLocation)
+        {
+            if (_currentMapBitmap == null) return;
+
+            int maxX = Math.Max(0, _currentMapBitmap.Width - GbaScreenWidth);
+            int maxY = Math.Max(0, _currentMapBitmap.Height - GbaScreenHeight);
+
+            int x = Math.Clamp(mapLocation.X - (GbaScreenWidth / 2), 0, maxX);
+            int y = Math.Clamp(mapLocation.Y - (GbaScreenHeight / 2), 0, maxY);
+
+            if (x == _viewportOrigin.X && y == _viewportOrigin.Y) return;
+
+            _viewportOrigin = new Point(x, y);
+            mapPictureBox.Invalidate();
+            RefreshPreview();
+        }
+
+        /// <summary>
+        /// Crops _currentMapBitmap to the current 240x160 viewport (what you'd actually see on
+        /// real GBA hardware scrolled to that position, since MapRenderer.RenderMap already
+        /// composites layers in real GBA priority order -- see MapRenderer.RenderMap's comment)
+        /// and shows it in previewPictureBox, with the same optional collision overlay as the
+        /// main map view.
+        /// </summary>
+        private void RefreshPreview()
+        {
+            previewPictureBox.Image?.Dispose();
+            previewPictureBox.Image = null;
+
+            if (_currentMapBitmap == null) return;
+
+            int cropW = Math.Min(GbaScreenWidth, _currentMapBitmap.Width);
+            int cropH = Math.Min(GbaScreenHeight, _currentMapBitmap.Height);
+            var cropRect = new Rectangle(_viewportOrigin.X, _viewportOrigin.Y, cropW, cropH);
+
+            var crop = _currentMapBitmap.Clone(cropRect, _currentMapBitmap.PixelFormat);
+
+            if (toolStrip_ShowCollision.Checked && _collisionGrid != null)
+            {
+                int originTileX = _viewportOrigin.X / TileSize;
+                int originTileY = _viewportOrigin.Y / TileSize;
+                MapRenderer.DrawCollisionOverlay(_collisionGrid, crop, originTileX, originTileY);
+            }
+
+            previewPictureBox.Image = crop;
+            previewCoordLabel.Text = $"Viewport: ({_viewportOrigin.X}, {_viewportOrigin.Y})";
+        }
+
+        private void toolStrip_ShowCollision_CheckedChanged(object sender, EventArgs e)
+        {
+            previewCollisionCheckBox.CheckedChanged -= previewCollisionCheckBox_CheckedChanged;
+            previewCollisionCheckBox.Checked = toolStrip_ShowCollision.Checked;
+            previewCollisionCheckBox.CheckedChanged += previewCollisionCheckBox_CheckedChanged;
+
+            mapPictureBox.Invalidate();
+            RefreshPreview();
+        }
+
+        private void previewCollisionCheckBox_CheckedChanged(object sender, EventArgs e)
+        {
+            toolStrip_ShowCollision.CheckedChanged -= toolStrip_ShowCollision_CheckedChanged;
+            toolStrip_ShowCollision.Checked = previewCollisionCheckBox.Checked;
+            toolStrip_ShowCollision.CheckedChanged += toolStrip_ShowCollision_CheckedChanged;
+
+            mapPictureBox.Invalidate();
+            RefreshPreview();
+        }
+
+        private void toolStrip_ShowPreviewTab_Click(object sender, EventArgs e)
+        {
+            sidebarTabControl.SelectedTab = previewTabPage;
         }
 
         private void UpdateStatusLabel()
         {
+            string warning = _hasUnsupportedLayer
+                ? " -- WARNING: this map uses an unrecognized layer format (0x4FCD) and is not fully rendered"
+                : "";
+
             if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count)
             {
-                statusLabel.Text = _dirty ? "No entity selected (unsaved position edits pending)" : "No entity selected";
+                statusLabel.Text = (_dirty ? "No entity selected (unsaved position edits pending)" : "No entity selected") + warning;
                 return;
             }
 
@@ -433,7 +577,7 @@ namespace Dragon_Radar
 
             string addressLabel = entity.SourceAddress == 0 ? "new, not yet saved" : $"0x{entity.SourceAddress:X}";
             string dirtyMarker = _dirty ? " [unsaved]" : "";
-            statusLabel.Text = $"{entity.Kind} @ ({entity.X},{entity.Y}) — {detail} — {addressLabel}{dirtyMarker}";
+            statusLabel.Text = $"{entity.Kind} @ ({entity.X},{entity.Y}) — {detail} — {addressLabel}{dirtyMarker}{warning}";
         }
 
         private void toolStrip_OpenROM_Click(object sender, EventArgs e)

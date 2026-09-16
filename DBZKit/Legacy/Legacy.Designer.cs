@@ -42,22 +42,30 @@
             statViewToolStripMenuItem = new ToolStripMenuItem();
             Legacy_AppContainer = new SplitContainer();
             Legacy_ScriptFunctions = new TreeView();
+            Legacy_MainTabs = new TabControl();
+            Legacy_TabScriptEditor = new TabPage();
+            Legacy_IDE = new ScintillaNET.Scintilla();
+            Legacy_IDE_LBL_CompileStatus = new Label();
+            Legacy_IDE_BTN_Compile = new Button();
+            toolStrip1 = new ToolStrip();
+            toolStripButton1 = new ToolStripButton();
+            toolStripButton2 = new ToolStripButton();
+            Legacy_TabCharacterText = new TabPage();
             Legacy_CharacterUpDown = new NumericUpDown();
             Legacy_CharacterLabel = new Label();
             Legacy_CharacterPreview = new PictureBox();
             Legacy_TextBox = new TextBox();
-            toolStrip1 = new ToolStrip();
-            toolStripButton1 = new ToolStripButton();
-            toolStripButton2 = new ToolStripButton();
-            Legacy_IDE = new ScintillaNET.Scintilla();
             Legacy_MenuStrip.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)Legacy_AppContainer).BeginInit();
             Legacy_AppContainer.Panel1.SuspendLayout();
             Legacy_AppContainer.Panel2.SuspendLayout();
             Legacy_AppContainer.SuspendLayout();
+            Legacy_MainTabs.SuspendLayout();
+            Legacy_TabScriptEditor.SuspendLayout();
+            toolStrip1.SuspendLayout();
+            Legacy_TabCharacterText.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)Legacy_CharacterUpDown).BeginInit();
             ((System.ComponentModel.ISupportInitialize)Legacy_CharacterPreview).BeginInit();
-            toolStrip1.SuspendLayout();
             SuspendLayout();
             // 
             // Legacy_MenuStrip
@@ -149,12 +157,7 @@
             // 
             // Legacy_AppContainer.Panel2
             // 
-            Legacy_AppContainer.Panel2.Controls.Add(Legacy_CharacterUpDown);
-            Legacy_AppContainer.Panel2.Controls.Add(Legacy_CharacterLabel);
-            Legacy_AppContainer.Panel2.Controls.Add(Legacy_CharacterPreview);
-            Legacy_AppContainer.Panel2.Controls.Add(Legacy_TextBox);
-            Legacy_AppContainer.Panel2.Controls.Add(toolStrip1);
-            Legacy_AppContainer.Panel2.Controls.Add(Legacy_IDE);
+            Legacy_AppContainer.Panel2.Controls.Add(Legacy_MainTabs);
             Legacy_AppContainer.Size = new Size(1008, 705);
             Legacy_AppContainer.SplitterDistance = 336;
             Legacy_AppContainer.TabIndex = 3;
@@ -168,48 +171,71 @@
             Legacy_ScriptFunctions.TabIndex = 0;
             Legacy_ScriptFunctions.AfterSelect += Legacy_ScriptFunctions_AfterSelect;
             // 
-            // Legacy_CharacterUpDown
+            // Legacy_MainTabs
             // 
-            Legacy_CharacterUpDown.Location = new Point(137, 679);
-            Legacy_CharacterUpDown.Name = "Legacy_CharacterUpDown";
-            Legacy_CharacterUpDown.Size = new Size(120, 23);
-            Legacy_CharacterUpDown.TabIndex = 4;
-            Legacy_CharacterUpDown.ValueChanged += Legacy_CharacterUpDown_ValueChanged;
+            Legacy_MainTabs.Controls.Add(Legacy_TabScriptEditor);
+            Legacy_MainTabs.Controls.Add(Legacy_TabCharacterText);
+            Legacy_MainTabs.Dock = DockStyle.Fill;
+            Legacy_MainTabs.Location = new Point(0, 0);
+            Legacy_MainTabs.Name = "Legacy_MainTabs";
+            Legacy_MainTabs.SelectedIndex = 0;
+            Legacy_MainTabs.Size = new Size(668, 705);
+            Legacy_MainTabs.TabIndex = 0;
+            Legacy_MainTabs.SelectedIndexChanged += Legacy_MainTabs_SelectedIndexChanged;
             // 
-            // Legacy_CharacterLabel
+            // Legacy_TabScriptEditor
             // 
-            Legacy_CharacterLabel.AutoSize = true;
-            Legacy_CharacterLabel.Location = new Point(3, 681);
-            Legacy_CharacterLabel.Name = "Legacy_CharacterLabel";
-            Legacy_CharacterLabel.Size = new Size(38, 15);
-            Legacy_CharacterLabel.TabIndex = 3;
-            Legacy_CharacterLabel.Text = "label1";
+            Legacy_TabScriptEditor.Controls.Add(Legacy_IDE);
+            Legacy_TabScriptEditor.Controls.Add(Legacy_IDE_LBL_CompileStatus);
+            Legacy_TabScriptEditor.Controls.Add(Legacy_IDE_BTN_Compile);
+            Legacy_TabScriptEditor.Controls.Add(toolStrip1);
+            Legacy_TabScriptEditor.Location = new Point(4, 24);
+            Legacy_TabScriptEditor.Name = "Legacy_TabScriptEditor";
+            Legacy_TabScriptEditor.Padding = new Padding(3);
+            Legacy_TabScriptEditor.Size = new Size(660, 677);
+            Legacy_TabScriptEditor.TabIndex = 0;
+            Legacy_TabScriptEditor.Text = "Script Editor";
+            Legacy_TabScriptEditor.UseVisualStyleBackColor = true;
             // 
-            // Legacy_CharacterPreview
+            // Legacy_IDE
             // 
-            Legacy_CharacterPreview.Location = new Point(3, 545);
-            Legacy_CharacterPreview.Name = "Legacy_CharacterPreview";
-            Legacy_CharacterPreview.Size = new Size(128, 128);
-            Legacy_CharacterPreview.SizeMode = PictureBoxSizeMode.StretchImage;
-            Legacy_CharacterPreview.TabIndex = 0;
-            Legacy_CharacterPreview.TabStop = false;
+            Legacy_IDE.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            Legacy_IDE.AutoCMaxHeight = 9;
+            Legacy_IDE.Location = new Point(3, 28);
+            Legacy_IDE.Name = "Legacy_IDE";
+            Legacy_IDE.ScrollWidth = 256;
+            Legacy_IDE.Size = new Size(654, 610);
+            Legacy_IDE.TabIndex = 0;
+            Legacy_IDE.WrapMode = ScintillaNET.WrapMode.Word;
             // 
-            // Legacy_TextBox
+            // Legacy_IDE_LBL_CompileStatus
             // 
-            Legacy_TextBox.Location = new Point(137, 545);
-            Legacy_TextBox.Multiline = true;
-            Legacy_TextBox.Name = "Legacy_TextBox";
-            Legacy_TextBox.Size = new Size(256, 128);
-            Legacy_TextBox.TabIndex = 2;
+            Legacy_IDE_LBL_CompileStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            Legacy_IDE_LBL_CompileStatus.AutoSize = true;
+            Legacy_IDE_LBL_CompileStatus.Location = new Point(90, 649);
+            Legacy_IDE_LBL_CompileStatus.Name = "Legacy_IDE_LBL_CompileStatus";
+            Legacy_IDE_LBL_CompileStatus.Size = new Size(0, 15);
+            Legacy_IDE_LBL_CompileStatus.TabIndex = 2;
+            // 
+            // Legacy_IDE_BTN_Compile
+            // 
+            Legacy_IDE_BTN_Compile.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            Legacy_IDE_BTN_Compile.Location = new Point(3, 644);
+            Legacy_IDE_BTN_Compile.Name = "Legacy_IDE_BTN_Compile";
+            Legacy_IDE_BTN_Compile.Size = new Size(81, 27);
+            Legacy_IDE_BTN_Compile.TabIndex = 1;
+            Legacy_IDE_BTN_Compile.Text = "Compile";
+            Legacy_IDE_BTN_Compile.UseVisualStyleBackColor = true;
+            Legacy_IDE_BTN_Compile.Click += Legacy_IDE_BTN_Compile_Click;
             // 
             // toolStrip1
             // 
             toolStrip1.GripStyle = ToolStripGripStyle.Hidden;
             toolStrip1.Items.AddRange(new ToolStripItem[] { toolStripButton1, toolStripButton2 });
-            toolStrip1.Location = new Point(0, 0);
+            toolStrip1.Location = new Point(3, 3);
             toolStrip1.Name = "toolStrip1";
-            toolStrip1.Size = new Size(668, 25);
-            toolStrip1.TabIndex = 1;
+            toolStrip1.Size = new Size(654, 25);
+            toolStrip1.TabIndex = 3;
             toolStrip1.Text = "toolStrip1";
             // 
             // toolStripButton1
@@ -230,15 +256,53 @@
             toolStripButton2.Size = new Size(23, 22);
             toolStripButton2.Text = "toolStripButton2";
             // 
-            // Legacy_IDE
+            // Legacy_TabCharacterText
             // 
-            Legacy_IDE.AutoCMaxHeight = 9;
-            Legacy_IDE.Location = new Point(3, 28);
-            Legacy_IDE.Name = "Legacy_IDE";
-            Legacy_IDE.ScrollWidth = 256;
-            Legacy_IDE.Size = new Size(662, 516);
-            Legacy_IDE.TabIndex = 0;
-            Legacy_IDE.WrapMode = ScintillaNET.WrapMode.Word;
+            Legacy_TabCharacterText.Controls.Add(Legacy_CharacterUpDown);
+            Legacy_TabCharacterText.Controls.Add(Legacy_CharacterLabel);
+            Legacy_TabCharacterText.Controls.Add(Legacy_CharacterPreview);
+            Legacy_TabCharacterText.Controls.Add(Legacy_TextBox);
+            Legacy_TabCharacterText.Location = new Point(4, 24);
+            Legacy_TabCharacterText.Name = "Legacy_TabCharacterText";
+            Legacy_TabCharacterText.Padding = new Padding(3);
+            Legacy_TabCharacterText.Size = new Size(660, 677);
+            Legacy_TabCharacterText.TabIndex = 1;
+            Legacy_TabCharacterText.Text = "Character / Text";
+            Legacy_TabCharacterText.UseVisualStyleBackColor = true;
+            // 
+            // Legacy_CharacterUpDown
+            // 
+            Legacy_CharacterUpDown.Location = new Point(140, 140);
+            Legacy_CharacterUpDown.Name = "Legacy_CharacterUpDown";
+            Legacy_CharacterUpDown.Size = new Size(120, 23);
+            Legacy_CharacterUpDown.TabIndex = 4;
+            Legacy_CharacterUpDown.ValueChanged += Legacy_CharacterUpDown_ValueChanged;
+            // 
+            // Legacy_CharacterLabel
+            // 
+            Legacy_CharacterLabel.AutoSize = true;
+            Legacy_CharacterLabel.Location = new Point(6, 142);
+            Legacy_CharacterLabel.Name = "Legacy_CharacterLabel";
+            Legacy_CharacterLabel.Size = new Size(38, 15);
+            Legacy_CharacterLabel.TabIndex = 3;
+            Legacy_CharacterLabel.Text = "label1";
+            // 
+            // Legacy_CharacterPreview
+            // 
+            Legacy_CharacterPreview.Location = new Point(6, 6);
+            Legacy_CharacterPreview.Name = "Legacy_CharacterPreview";
+            Legacy_CharacterPreview.Size = new Size(128, 128);
+            Legacy_CharacterPreview.SizeMode = PictureBoxSizeMode.StretchImage;
+            Legacy_CharacterPreview.TabIndex = 0;
+            Legacy_CharacterPreview.TabStop = false;
+            // 
+            // Legacy_TextBox
+            // 
+            Legacy_TextBox.Location = new Point(140, 6);
+            Legacy_TextBox.Multiline = true;
+            Legacy_TextBox.Name = "Legacy_TextBox";
+            Legacy_TextBox.Size = new Size(256, 128);
+            Legacy_TextBox.TabIndex = 2;
             // 
             // Legacy
             // 
@@ -258,13 +322,17 @@
             Legacy_MenuStrip.PerformLayout();
             Legacy_AppContainer.Panel1.ResumeLayout(false);
             Legacy_AppContainer.Panel2.ResumeLayout(false);
-            Legacy_AppContainer.Panel2.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)Legacy_AppContainer).EndInit();
             Legacy_AppContainer.ResumeLayout(false);
-            ((System.ComponentModel.ISupportInitialize)Legacy_CharacterUpDown).EndInit();
-            ((System.ComponentModel.ISupportInitialize)Legacy_CharacterPreview).EndInit();
+            Legacy_MainTabs.ResumeLayout(false);
+            Legacy_TabScriptEditor.ResumeLayout(false);
+            Legacy_TabScriptEditor.PerformLayout();
             toolStrip1.ResumeLayout(false);
             toolStrip1.PerformLayout();
+            Legacy_TabCharacterText.ResumeLayout(false);
+            Legacy_TabCharacterText.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)Legacy_CharacterUpDown).EndInit();
+            ((System.ComponentModel.ISupportInitialize)Legacy_CharacterPreview).EndInit();
             ResumeLayout(false);
             PerformLayout();
         }
@@ -279,7 +347,12 @@
         private ToolStripMenuItem Legacy_QuitEditor;
         private SplitContainer Legacy_AppContainer;
         private TreeView Legacy_ScriptFunctions;
+        private TabControl Legacy_MainTabs;
+        private TabPage Legacy_TabScriptEditor;
         private ScintillaNET.Scintilla Legacy_IDE;
+        private Label Legacy_IDE_LBL_CompileStatus;
+        private Button Legacy_IDE_BTN_Compile;
+        private TabPage Legacy_TabCharacterText;
         private ToolStripMenuItem toolsToolStripMenuItem;
         private ToolStripMenuItem ToolStripMenuItem_ScriptVisualizer;
         private ToolStripMenuItem ToolStripMenuItem_StringDecompressor;

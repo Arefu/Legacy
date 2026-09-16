@@ -31,12 +31,16 @@
             SVisualizerTB = new TextBox();
             SVisualizerBTN_DecipherInput = new Button();
             SVisualizerBTN_ClearInput = new Button();
+            SVisualizerCB_ShowBytes = new CheckBox();
             groupBox1 = new GroupBox();
             groupBox2 = new GroupBox();
+            SVisualizerScriptTB = new ScintillaNET.Scintilla();
             SVisualizerLV = new ListView();
             OffsetHeader = new ColumnHeader();
             OpCodeHeader = new ColumnHeader();
             ArgumentsHeader = new ColumnHeader();
+            SVisualizerBTN_Compile = new Button();
+            SVisualizerLBL_CompileStatus = new Label();
             groupBox3 = new GroupBox();
             SVisualizerWB = new Microsoft.Web.WebView2.WinForms.WebView2();
             groupBox1.SuspendLayout();
@@ -72,41 +76,84 @@
             SVisualizerBTN_ClearInput.Text = "Clear Input";
             SVisualizerBTN_ClearInput.UseVisualStyleBackColor = true;
             SVisualizerBTN_ClearInput.Click += SVisualizerBTN_ClearInput_Click;
-            // 
+            //
+            // SVisualizerCB_ShowBytes
+            //
+            SVisualizerCB_ShowBytes.Location = new Point(150, 161);
+            SVisualizerCB_ShowBytes.Name = "SVisualizerCB_ShowBytes";
+            SVisualizerCB_ShowBytes.Size = new Size(240, 20);
+            SVisualizerCB_ShowBytes.TabIndex = 5;
+            SVisualizerCB_ShowBytes.Text = "Show bytes instead";
+            SVisualizerCB_ShowBytes.UseVisualStyleBackColor = true;
+            SVisualizerCB_ShowBytes.CheckedChanged += SVisualizerCB_ShowBytes_CheckedChanged;
+            //
             // groupBox1
-            // 
+            //
             groupBox1.Controls.Add(SVisualizerBTN_DecipherInput);
             groupBox1.Controls.Add(SVisualizerTB);
             groupBox1.Controls.Add(SVisualizerBTN_ClearInput);
+            groupBox1.Controls.Add(SVisualizerCB_ShowBytes);
             groupBox1.Location = new Point(12, 12);
             groupBox1.Name = "groupBox1";
             groupBox1.Size = new Size(528, 195);
             groupBox1.TabIndex = 7;
             groupBox1.TabStop = false;
             groupBox1.Text = "Hex Input";
-            // 
+            //
             // groupBox2
-            // 
+            //
+            groupBox2.Controls.Add(SVisualizerScriptTB);
             groupBox2.Controls.Add(SVisualizerLV);
+            groupBox2.Controls.Add(SVisualizerBTN_Compile);
+            groupBox2.Controls.Add(SVisualizerLBL_CompileStatus);
             groupBox2.Location = new Point(12, 213);
             groupBox2.Name = "groupBox2";
             groupBox2.Size = new Size(528, 456);
             groupBox2.TabIndex = 8;
             groupBox2.TabStop = false;
             groupBox2.Text = "Script Logic";
-            // 
+            //
+            // SVisualizerScriptTB (ScintillaNET editor - lexer/keyword/style setup lives in
+            // ScriptVisualizer.cs's ConfigureZenkaiEditor(), called from the constructor,
+            // since ScintillaNET's style API isn't Designer-serializable the way TextBox's
+            // simple properties are)
+            //
+            SVisualizerScriptTB.Location = new Point(6, 22);
+            SVisualizerScriptTB.Name = "SVisualizerScriptTB";
+            SVisualizerScriptTB.Size = new Size(516, 340);
+            SVisualizerScriptTB.TabIndex = 1;
+            //
             // SVisualizerLV
-            // 
+            //
             SVisualizerLV.Columns.AddRange(new ColumnHeader[] { OffsetHeader, OpCodeHeader, ArgumentsHeader });
             SVisualizerLV.FullRowSelect = true;
             SVisualizerLV.GridLines = true;
             SVisualizerLV.Location = new Point(6, 22);
             SVisualizerLV.Name = "SVisualizerLV";
-            SVisualizerLV.Size = new Size(516, 428);
+            SVisualizerLV.Size = new Size(516, 340);
             SVisualizerLV.TabIndex = 0;
             SVisualizerLV.UseCompatibleStateImageBehavior = false;
             SVisualizerLV.View = View.Details;
-            // 
+            SVisualizerLV.Visible = false;
+            //
+            // SVisualizerBTN_Compile
+            //
+            SVisualizerBTN_Compile.Location = new Point(6, 368);
+            SVisualizerBTN_Compile.Name = "SVisualizerBTN_Compile";
+            SVisualizerBTN_Compile.Size = new Size(125, 30);
+            SVisualizerBTN_Compile.TabIndex = 2;
+            SVisualizerBTN_Compile.Text = "Compile";
+            SVisualizerBTN_Compile.UseVisualStyleBackColor = true;
+            SVisualizerBTN_Compile.Click += SVisualizerBTN_Compile_Click;
+            //
+            // SVisualizerLBL_CompileStatus
+            //
+            SVisualizerLBL_CompileStatus.Location = new Point(137, 368);
+            SVisualizerLBL_CompileStatus.Name = "SVisualizerLBL_CompileStatus";
+            SVisualizerLBL_CompileStatus.Size = new Size(385, 48);
+            SVisualizerLBL_CompileStatus.TabIndex = 3;
+            SVisualizerLBL_CompileStatus.Text = "";
+            //
             // OffsetHeader
             // 
             OffsetHeader.Text = "Offset";
@@ -169,13 +216,17 @@
         private TextBox SVisualizerTB;
         private Button SVisualizerBTN_DecipherInput;
         private Button SVisualizerBTN_ClearInput;
+        private CheckBox SVisualizerCB_ShowBytes;
         private GroupBox groupBox1;
         private GroupBox groupBox2;
+        private ScintillaNET.Scintilla SVisualizerScriptTB;
         private GroupBox groupBox3;
         private ListView SVisualizerLV;
         private ColumnHeader OffsetHeader;
         private ColumnHeader OpCodeHeader;
         private ColumnHeader ArgumentsHeader;
+        private Button SVisualizerBTN_Compile;
+        private Label SVisualizerLBL_CompileStatus;
         private Microsoft.Web.WebView2.WinForms.WebView2 SVisualizerWB;
     }
 }
