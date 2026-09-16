@@ -33,6 +33,7 @@
             fileToolStripMenuItem = new ToolStripMenuItem();
             Legacy_OpenROM = new ToolStripMenuItem();
             Legacy_SaveROM = new ToolStripMenuItem();
+            Legacy_SaveROMAs = new ToolStripMenuItem();
             toolStripSeparator1 = new ToolStripSeparator();
             Legacy_QuitEditor = new ToolStripMenuItem();
             toolsToolStripMenuItem = new ToolStripMenuItem();
@@ -42,11 +43,11 @@
             statViewToolStripMenuItem = new ToolStripMenuItem();
             Legacy_AppContainer = new SplitContainer();
             Legacy_ScriptFunctions = new TreeView();
+            Legacy_ChkEndDialog = new CheckBox();
             Legacy_MainTabs = new TabControl();
             Legacy_TabScriptEditor = new TabPage();
             Legacy_IDE = new ScintillaNET.Scintilla();
             Legacy_IDE_LBL_CompileStatus = new Label();
-            Legacy_IDE_BTN_Compile = new Button();
             toolStrip1 = new ToolStrip();
             toolStripButton1 = new ToolStripButton();
             toolStripButton2 = new ToolStripButton();
@@ -55,6 +56,9 @@
             Legacy_CharacterLabel = new Label();
             Legacy_CharacterPreview = new PictureBox();
             Legacy_TextBox = new TextBox();
+            Legacy_PositionLabel = new Label();
+            Legacy_TextPositionCombo = new ComboBox();
+            Legacy_ChkCenterText = new CheckBox();
             Legacy_StatusStrip = new StatusStrip();
             Legacy_StatusLabel = new ToolStripStatusLabel();
             Legacy_MenuStrip.SuspendLayout();
@@ -81,7 +85,7 @@
             // 
             // fileToolStripMenuItem
             // 
-            fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { Legacy_OpenROM, Legacy_SaveROM, toolStripSeparator1, Legacy_QuitEditor });
+            fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { Legacy_OpenROM, Legacy_SaveROM, Legacy_SaveROMAs, toolStripSeparator1, Legacy_QuitEditor });
             fileToolStripMenuItem.Name = "fileToolStripMenuItem";
             fileToolStripMenuItem.Size = new Size(37, 20);
             fileToolStripMenuItem.Text = "&File";
@@ -95,13 +99,21 @@
             Legacy_OpenROM.Click += Legacy_OpenROM_Click;
             // 
             // Legacy_SaveROM
-            // 
+            //
             Legacy_SaveROM.Name = "Legacy_SaveROM";
             Legacy_SaveROM.ShortcutKeys = Keys.Control | Keys.S;
             Legacy_SaveROM.Size = new Size(146, 22);
             Legacy_SaveROM.Text = "&Save";
             Legacy_SaveROM.Click += Legacy_SaveROM_Click;
-            // 
+            //
+            // Legacy_SaveROMAs
+            //
+            Legacy_SaveROMAs.Name = "Legacy_SaveROMAs";
+            Legacy_SaveROMAs.ShortcutKeys = Keys.Control | Keys.Shift | Keys.S;
+            Legacy_SaveROMAs.Size = new Size(146, 22);
+            Legacy_SaveROMAs.Text = "Save &As...";
+            Legacy_SaveROMAs.Click += Legacy_SaveROMAs_Click;
+            //
             // toolStripSeparator1
             // 
             toolStripSeparator1.Name = "toolStripSeparator1";
@@ -154,42 +166,58 @@
             Legacy_AppContainer.Name = "Legacy_AppContainer";
             // 
             // Legacy_AppContainer.Panel1
-            // 
+            //
             Legacy_AppContainer.Panel1.Controls.Add(Legacy_ScriptFunctions);
-            // 
+            //
             // Legacy_AppContainer.Panel2
-            // 
+            //
             Legacy_AppContainer.Panel2.Controls.Add(Legacy_MainTabs);
+            Legacy_AppContainer.Panel2.Controls.Add(Legacy_ChkEndDialog);
             Legacy_AppContainer.Size = new Size(1008, 705);
             Legacy_AppContainer.SplitterDistance = 336;
             Legacy_AppContainer.TabIndex = 3;
-            // 
+            //
             // Legacy_ScriptFunctions
-            // 
+            //
             Legacy_ScriptFunctions.Dock = DockStyle.Fill;
             Legacy_ScriptFunctions.Location = new Point(0, 0);
             Legacy_ScriptFunctions.Name = "Legacy_ScriptFunctions";
             Legacy_ScriptFunctions.Size = new Size(336, 705);
             Legacy_ScriptFunctions.TabIndex = 0;
             Legacy_ScriptFunctions.AfterSelect += Legacy_ScriptFunctions_AfterSelect;
-            // 
+            //
+            // Legacy_ChkEndDialog
+            //
+            // Sits directly above the tab content (not tucked under the tree, where it read
+            // as an orphaned bar unrelated to what's being edited) -- applies to whichever
+            // dialog entry is currently selected, regardless of which tab is active.
+            Legacy_ChkEndDialog.Dock = DockStyle.Top;
+            Legacy_ChkEndDialog.Enabled = false;
+            Legacy_ChkEndDialog.Location = new Point(0, 0);
+            Legacy_ChkEndDialog.Name = "Legacy_ChkEndDialog";
+            Legacy_ChkEndDialog.Padding = new Padding(6, 6, 6, 4);
+            Legacy_ChkEndDialog.Size = new Size(668, 27);
+            Legacy_ChkEndDialog.TabIndex = 1;
+            Legacy_ChkEndDialog.Text = "End dialog after this entry";
+            Legacy_ChkEndDialog.UseVisualStyleBackColor = true;
+            Legacy_ChkEndDialog.CheckedChanged += Legacy_ChkEndDialog_CheckedChanged;
+            //
             // Legacy_MainTabs
-            // 
+            //
             Legacy_MainTabs.Controls.Add(Legacy_TabScriptEditor);
             Legacy_MainTabs.Controls.Add(Legacy_TabCharacterText);
             Legacy_MainTabs.Dock = DockStyle.Fill;
-            Legacy_MainTabs.Location = new Point(0, 0);
+            Legacy_MainTabs.Location = new Point(0, 27);
             Legacy_MainTabs.Name = "Legacy_MainTabs";
             Legacy_MainTabs.SelectedIndex = 0;
-            Legacy_MainTabs.Size = new Size(668, 705);
+            Legacy_MainTabs.Size = new Size(668, 678);
             Legacy_MainTabs.TabIndex = 0;
             Legacy_MainTabs.SelectedIndexChanged += Legacy_MainTabs_SelectedIndexChanged;
-            // 
+            //
             // Legacy_TabScriptEditor
-            // 
+            //
             Legacy_TabScriptEditor.Controls.Add(Legacy_IDE);
             Legacy_TabScriptEditor.Controls.Add(Legacy_IDE_LBL_CompileStatus);
-            Legacy_TabScriptEditor.Controls.Add(Legacy_IDE_BTN_Compile);
             Legacy_TabScriptEditor.Controls.Add(toolStrip1);
             Legacy_TabScriptEditor.Location = new Point(4, 24);
             Legacy_TabScriptEditor.Name = "Legacy_TabScriptEditor";
@@ -211,25 +239,16 @@
             Legacy_IDE.WrapMode = ScintillaNET.WrapMode.Word;
             // 
             // Legacy_IDE_LBL_CompileStatus
-            // 
+            //
+            // Compile is now the green "Test" arrow on toolStrip1 (toolStripButton1) instead
+            // of a dedicated button, so this label sits flush left where the button used to be.
             Legacy_IDE_LBL_CompileStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             Legacy_IDE_LBL_CompileStatus.AutoSize = true;
-            Legacy_IDE_LBL_CompileStatus.Location = new Point(90, 649);
+            Legacy_IDE_LBL_CompileStatus.Location = new Point(3, 649);
             Legacy_IDE_LBL_CompileStatus.Name = "Legacy_IDE_LBL_CompileStatus";
             Legacy_IDE_LBL_CompileStatus.Size = new Size(0, 15);
             Legacy_IDE_LBL_CompileStatus.TabIndex = 2;
-            // 
-            // Legacy_IDE_BTN_Compile
-            // 
-            Legacy_IDE_BTN_Compile.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
-            Legacy_IDE_BTN_Compile.Location = new Point(3, 644);
-            Legacy_IDE_BTN_Compile.Name = "Legacy_IDE_BTN_Compile";
-            Legacy_IDE_BTN_Compile.Size = new Size(81, 27);
-            Legacy_IDE_BTN_Compile.TabIndex = 1;
-            Legacy_IDE_BTN_Compile.Text = "Compile";
-            Legacy_IDE_BTN_Compile.UseVisualStyleBackColor = true;
-            Legacy_IDE_BTN_Compile.Click += Legacy_IDE_BTN_Compile_Click;
-            // 
+            //
             // toolStrip1
             // 
             toolStrip1.GripStyle = ToolStripGripStyle.Hidden;
@@ -264,6 +283,9 @@
             Legacy_TabCharacterText.Controls.Add(Legacy_CharacterLabel);
             Legacy_TabCharacterText.Controls.Add(Legacy_CharacterPreview);
             Legacy_TabCharacterText.Controls.Add(Legacy_TextBox);
+            Legacy_TabCharacterText.Controls.Add(Legacy_PositionLabel);
+            Legacy_TabCharacterText.Controls.Add(Legacy_TextPositionCombo);
+            Legacy_TabCharacterText.Controls.Add(Legacy_ChkCenterText);
             Legacy_TabCharacterText.Location = new Point(4, 24);
             Legacy_TabCharacterText.Name = "Legacy_TabCharacterText";
             Legacy_TabCharacterText.Padding = new Padding(3);
@@ -305,6 +327,44 @@
             Legacy_TextBox.Name = "Legacy_TextBox";
             Legacy_TextBox.Size = new Size(256, 128);
             Legacy_TextBox.TabIndex = 2;
+            //
+            // Legacy_PositionLabel
+            //
+            Legacy_PositionLabel.AutoSize = true;
+            Legacy_PositionLabel.Location = new Point(6, 175);
+            Legacy_PositionLabel.Name = "Legacy_PositionLabel";
+            Legacy_PositionLabel.Size = new Size(52, 15);
+            Legacy_PositionLabel.TabIndex = 5;
+            Legacy_PositionLabel.Text = "Position:";
+            //
+            // Legacy_TextPositionCombo
+            //
+            // Box Y position, controlled in-game by a leading '!'/'@'/'#' message character
+            // (Dialog_CreateTextBox, 0x800B1E2) -- stripped out of the text box below and
+            // edited here instead of left inline for the user to hand-edit/typo.
+            Legacy_TextPositionCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            Legacy_TextPositionCombo.Enabled = false;
+            Legacy_TextPositionCombo.FormattingEnabled = true;
+            Legacy_TextPositionCombo.Items.AddRange(new object[] { "(unspecified)", "Top", "Middle", "Bottom" });
+            Legacy_TextPositionCombo.Location = new Point(64, 172);
+            Legacy_TextPositionCombo.Name = "Legacy_TextPositionCombo";
+            Legacy_TextPositionCombo.Size = new Size(120, 23);
+            Legacy_TextPositionCombo.TabIndex = 6;
+            Legacy_TextPositionCombo.SelectedIndexChanged += Legacy_TextPositionCombo_SelectedIndexChanged;
+            //
+            // Legacy_ChkCenterText
+            //
+            // '^' leading message character (DialogTextBox_State_OpenAnim_CheckCenterFlag,
+            // 0x800BA84) -- confirmed via IDA and in-game testing to center the message text.
+            Legacy_ChkCenterText.AutoSize = true;
+            Legacy_ChkCenterText.Enabled = false;
+            Legacy_ChkCenterText.Location = new Point(196, 174);
+            Legacy_ChkCenterText.Name = "Legacy_ChkCenterText";
+            Legacy_ChkCenterText.Size = new Size(120, 19);
+            Legacy_ChkCenterText.TabIndex = 7;
+            Legacy_ChkCenterText.Text = "Center text (^)";
+            Legacy_ChkCenterText.UseVisualStyleBackColor = true;
+            Legacy_ChkCenterText.CheckedChanged += Legacy_ChkCenterText_CheckedChanged;
             //
             // Legacy_StatusStrip
             //
@@ -362,15 +422,16 @@
         private ToolStripMenuItem fileToolStripMenuItem;
         private ToolStripMenuItem Legacy_OpenROM;
         private ToolStripMenuItem Legacy_SaveROM;
+        private ToolStripMenuItem Legacy_SaveROMAs;
         private ToolStripSeparator toolStripSeparator1;
         private ToolStripMenuItem Legacy_QuitEditor;
         private SplitContainer Legacy_AppContainer;
         private TreeView Legacy_ScriptFunctions;
+        private CheckBox Legacy_ChkEndDialog;
         private TabControl Legacy_MainTabs;
         private TabPage Legacy_TabScriptEditor;
         private ScintillaNET.Scintilla Legacy_IDE;
         private Label Legacy_IDE_LBL_CompileStatus;
-        private Button Legacy_IDE_BTN_Compile;
         private TabPage Legacy_TabCharacterText;
         private ToolStripMenuItem toolsToolStripMenuItem;
         private ToolStripMenuItem ToolStripMenuItem_ScriptVisualizer;
@@ -384,6 +445,9 @@
         private PictureBox Legacy_CharacterPreview;
         private Label Legacy_CharacterLabel;
         private NumericUpDown Legacy_CharacterUpDown;
+        private Label Legacy_PositionLabel;
+        private ComboBox Legacy_TextPositionCombo;
+        private CheckBox Legacy_ChkCenterText;
         private StatusStrip Legacy_StatusStrip;
         private ToolStripStatusLabel Legacy_StatusLabel;
     }

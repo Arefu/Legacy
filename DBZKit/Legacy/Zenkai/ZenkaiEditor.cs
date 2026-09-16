@@ -5,8 +5,9 @@ namespace Legacy.Zenkai
     /// <summary>
     /// Turns a plain ScintillaNET editor into a small Zenkai IDE: syntax highlighting
     /// (Scintilla's built-in Cpp lexer, a reasonable fit for Zenkai's C-like call syntax),
-    /// Ctrl+Space opcode autocomplete with hints sourced from OpcodeDocs.xml, call tips on
-    /// "(", and red squiggle underlines on syntax errors (debounced, via
+    /// Ctrl+Space opcode autocomplete (with a Visual-Studio-style description call tip that
+    /// follows the highlighted entry) sourced from OpcodeDocs.xml, call tips on "(" and on
+    /// hover, and red squiggle underlines on syntax errors (debounced, via
     /// ZenkaiAssembler.Validate). Shared by every editor that edits Zenkai source so they
     /// can't drift out of sync with each other.
     /// </summary>
@@ -42,18 +43,114 @@ namespace Legacy.Zenkai
             sc.Indicators[SquiggleIndicator].Style = IndicatorStyle.Squiggle;
             sc.Indicators[SquiggleIndicator].ForeColor = Color.Red;
 
-            sc.AutoCIgnoreCase = false;
+            // Case-insensitive search (typing "pick" finds "PickUpItem"), but Scintilla still
+            // inserts the list's own canonical casing on selection, not what was typed.
+            sc.AutoCIgnoreCase = true;
             sc.AutoCMaxHeight = 9;
 
-            // Hover call tips: CharAdded('(') below only fires right after typing - once
-            // you've moved on, mousing back over an existing call needs its own trigger.
-            sc.MouseDwellTime = 500;
-            sc.DwellStart += (s, e) =>
+            // Where the current autocomplete word started - used both to re-anchor the
+            // description call tip (AutoCSelection below) and, for the "(" case, to show
+            // a call tip at the right spot.
+            int autoCAnchor = -1;
+
+            string AllNames() => string.Join(" ",
+                OpcodeTable.ByIndex.Select(o => o.Name).Concat(JumpFamily).Distinct()
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+
+            void ShowAutoComplete()
             {
-                if (e.Position >= 0)
-                    ShowCallTipForWordAt(sc, e.Position, e.Position);
+                int currentPos = sc.CurrentPosition;
+                int wordStart = sc.WordStartPosition(currentPos, true);
+                autoCAnchor = wordStart;
+                int lenEntered = currentPos - wordStart;
+                sc.AutoCShow(lenEntered, AllNames());
+            }
+
+            string? FindDocByOpName(string opName)
+            {
+                OpcodeDocs.OpcodeDoc? doc = OpcodeTable.NameMap.TryGetValue(opName, out var op)
+                    ? OpcodeDocs.Find(op)
+                    : OpcodeDocs.Find(opName);
+                if (doc == null) return null;
+
+                string tip = doc.Summary;
+                if (doc.Params.Count > 0)
+                    tip += "\n" + string.Join("\n", doc.Params.Select(p => $"  {p.Name} - {p.Description}"));
+                return tip;
+            }
+
+            // wordPos: any position inside (or at the end of) the opcode name's word.
+            // anchorPos: where Scintilla anchors the tip popup (caret for the type-"(" case,
+            // the mouse position for hover).
+            void ShowCallTipForWordAt(int wordPos, int anchorPos)
+            {
+                int nameStart = sc.WordStartPosition(wordPos, true);
+                int nameEnd = sc.WordEndPosition(wordPos, true);
+                if (nameStart >= nameEnd) { sc.CallTipCancel(); return; }
+
+                string opName = sc.GetTextRange(nameStart, nameEnd - nameStart);
+                string? tip = FindDocByOpName(opName);
+                if (tip == null) { sc.CallTipCancel(); return; }
+
+                sc.CallTipShow(anchorPos, tip);
+            }
+
+            void ShowCallTip()
+            {
+                int pos = sc.CurrentPosition;
+                int nameEnd = pos - 1; // position of the "(" just typed - end of the word before it
+                ShowCallTipForWordAt(nameEnd, pos);
+            }
+
+            // Hover call tips, driven off our own mouse-move + timer rather than Scintilla's
+            // native SCN_DWELLSTART notification - the native dwell event turned out to not
+            // reliably fire for this control/host combination, so polling
+            // CharPositionFromPointClose ourselves is the version that actually works.
+            int hoverPos = -1;
+            var hoverTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            hoverTimer.Tick += (s, e) =>
+            {
+                hoverTimer.Stop();
+                if (hoverPos >= 0)
+                    ShowCallTipForWordAt(hoverPos, hoverPos);
             };
-            sc.DwellEnd += (s, e) => sc.CallTipCancel();
+            sc.MouseMove += (s, e) =>
+            {
+                int pos = sc.CharPositionFromPointClose(e.X, e.Y);
+                if (pos != hoverPos)
+                {
+                    hoverTimer.Stop();
+                    sc.CallTipCancel();
+                }
+                hoverPos = pos;
+                if (pos >= 0)
+                    hoverTimer.Start();
+            };
+            sc.MouseLeave += (s, e) =>
+            {
+                hoverTimer.Stop();
+                hoverPos = -1;
+                sc.CallTipCancel();
+            };
+
+            // Visual-Studio-style description alongside the Ctrl+Space list: as the
+            // highlighted entry changes (arrow keys or further typing narrowing the list),
+            // show its doc summary as a call tip anchored at the word being completed.
+            sc.AutoCSelection += (s, e) =>
+            {
+                string? tip = FindDocByOpName(e.Text);
+                if (tip == null) { sc.CallTipCancel(); return; }
+                sc.CallTipShow(autoCAnchor >= 0 ? autoCAnchor : e.Position, tip);
+            };
+            // After insertion, swap the description tip for the arg-template one (same
+            // content "(" would trigger) so you immediately see what to type next.
+            sc.AutoCCompleted += (s, e) =>
+            {
+                string? tip = FindDocByOpName(e.Text);
+                if (tip == null) { sc.CallTipCancel(); return; }
+                sc.CallTipShow(sc.CurrentPosition, tip);
+            };
+            sc.AutoCCancelled += (s, e) => sc.CallTipCancel();
 
             var validateTimer = new System.Windows.Forms.Timer { Interval = 400 };
             validateTimer.Tick += (s, e) =>
@@ -62,11 +159,25 @@ namespace Legacy.Zenkai
                 Revalidate(sc);
             };
 
+            // Tab is a WinForms dialog-navigation key by default, so it never reaches
+            // KeyDown unless we claim it first - without this, Tab while the autocomplete
+            // list is open just moved focus to the next control instead of inserting.
+            sc.PreviewKeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Tab && sc.AutoCActive)
+                    e.IsInputKey = true;
+            };
+
             sc.KeyDown += (s, e) =>
             {
                 if (e.Control && e.KeyCode == Keys.Space)
                 {
-                    ShowAutoComplete(sc);
+                    ShowAutoComplete();
+                    e.SuppressKeyPress = true;
+                }
+                else if (e.KeyCode == Keys.Tab && sc.AutoCActive)
+                {
+                    sc.AutoCComplete();
                     e.SuppressKeyPress = true;
                 }
             };
@@ -74,9 +185,9 @@ namespace Legacy.Zenkai
             sc.CharAdded += (s, e) =>
             {
                 if (char.IsLetter((char)e.Char) || e.Char == '_')
-                    ShowAutoComplete(sc);
+                    ShowAutoComplete();
                 else if (e.Char == '(')
-                    ShowCallTip(sc);
+                    ShowCallTip();
                 else if (e.Char == ')')
                     sc.CallTipCancel();
             };
@@ -88,47 +199,6 @@ namespace Legacy.Zenkai
             };
 
             Revalidate(sc);
-        }
-
-        private static void ShowAutoComplete(Scintilla sc)
-        {
-            int currentPos = sc.CurrentPosition;
-            int wordStart = sc.WordStartPosition(currentPos, true);
-            int lenEntered = currentPos - wordStart;
-
-            string names = string.Join(" ",
-                OpcodeTable.ByIndex.Select(o => o.Name).Concat(JumpFamily).Distinct().OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
-            sc.AutoCShow(lenEntered, names);
-        }
-
-        private static void ShowCallTip(Scintilla sc)
-        {
-            int pos = sc.CurrentPosition;
-            int nameEnd = pos - 1; // position of the "(" just typed - end of the word before it
-            ShowCallTipForWordAt(sc, nameEnd, pos);
-        }
-
-        // wordPos: any position inside (or at the end of) the opcode name's word.
-        // anchorPos: where Scintilla anchors the tip popup (caret for the type-"(" case,
-        // the mouse position for hover).
-        private static void ShowCallTipForWordAt(Scintilla sc, int wordPos, int anchorPos)
-        {
-            int nameStart = sc.WordStartPosition(wordPos, true);
-            int nameEnd = sc.WordEndPosition(wordPos, true);
-            if (nameStart >= nameEnd) return;
-
-            string opName = sc.GetTextRange(nameStart, nameEnd - nameStart);
-            OpcodeTable.OpcodeInfo? op = null;
-            if (OpcodeTable.NameMap.TryGetValue(opName, out var found)) op = found;
-
-            OpcodeDocs.OpcodeDoc? doc = op != null ? OpcodeDocs.Find(op) : OpcodeDocs.Find(opName);
-            if (doc == null) return;
-
-            string tip = doc.Summary;
-            if (doc.Params.Count > 0)
-                tip += "\n" + string.Join("\n", doc.Params.Select(p => $"  {p.Name} - {p.Description}"));
-
-            sc.CallTipShow(anchorPos, tip);
         }
 
         private static void Revalidate(Scintilla sc)

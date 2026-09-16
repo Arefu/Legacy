@@ -11,7 +11,6 @@ namespace Legacy
         public Legacy()
         {
             InitializeComponent();
-            Zenkai.ZenkaiEditor.Configure(Legacy_IDE);
         }
 
         const uint RomBase = 0x08000000;
@@ -200,6 +199,67 @@ namespace Legacy
             // anything larger is appended to the ROM extension like an edited text entry.
             public uint ScriptAddr;
             public int OriginalScriptLength;
+
+            // CONFIRMED via IDA 2026-09-16 (Dialog_ProcessNext, 0x800B520): dialog sequencing
+            // is index-chained, not positional -- after processing sequence[currentIndex], the
+            // engine sets currentIndex = thisEntry.Index (the same u16 header field above) for
+            // the NEXT call. A slot whose stored value's top 16 bits are zero (not a real
+            // pointer) ends the sequence -- that's the table's own trailing terminator slot.
+            // So "end the dialog after this entry" means: point Index at that terminator slot
+            // instead of wherever it naturally continues. EntryAddr is the entry struct's own
+            // address (Index lives at EntryAddr+0, 2 bytes) so this can be patched in place
+            // independently of the text/script body edit above.
+            public uint EntryAddr;
+            public int TerminatorSlotIndex; // shared by every entry from the same table
+            public bool EndsDialogHere;     // current desired state (starts = whether Index already equals the terminator)
+            public bool EndsDialogDirty;    // true once the user has toggled EndsDialogHere away from its loaded state
+
+            // Mode 1/2 (text) only: leading format characters confirmed via IDA
+            // (Dialog_CreateTextBox, 0x800B1E2) and, for Center, via in-game testing.
+            // These are stripped off Text on load and re-prepended on save rather than
+            // being left inline for the user to hand-edit/typo.
+            public TextPosition Position = TextPosition.Unspecified; // '!'/'@'/'#' -> box Y position
+            public bool CenterText;                                  // '^' -> centers the message text
+        }
+
+        // Leading message character controlling the text box's vertical position
+        // (Dialog_CreateTextBox, 0x800B1E2): '!'=40 (top), '@'=80 (middle), '#'=120 (bottom).
+        internal enum TextPosition { Unspecified, Top, Middle, Bottom }
+
+        // Splits a message's leading format characters (position, then '^') off into their
+        // own fields so the text box shows only the actual dialog text. Order matters: the
+        // engine consumes any position prefix first (Dialog_CreateTextBox), then checks for
+        // '^' as the next character (the per-frame box-open state machine, sub_800BA84).
+        private static (string Text, TextPosition Position, bool Center) ExtractTextFormat(string raw)
+        {
+            TextPosition position = TextPosition.Unspecified;
+            if (raw.Length > 0)
+            {
+                switch (raw[0])
+                {
+                    case '!': position = TextPosition.Top; raw = raw[1..]; break;
+                    case '@': position = TextPosition.Middle; raw = raw[1..]; break;
+                    case '#': position = TextPosition.Bottom; raw = raw[1..]; break;
+                }
+            }
+
+            bool center = raw.Length > 0 && raw[0] == '^';
+            if (center) raw = raw[1..];
+
+            return (raw, position, center);
+        }
+
+        private static string ApplyTextFormat(string text, TextPosition position, bool center)
+        {
+            string prefix = position switch
+            {
+                TextPosition.Top => "!",
+                TextPosition.Middle => "@",
+                TextPosition.Bottom => "#",
+                _ => "",
+            };
+            if (center) prefix += "^";
+            return prefix + text;
         }
 
         // MapItem struct (16 bytes): flags/condition(4), itemIndex(1), itemCount(1),
@@ -242,6 +302,7 @@ namespace Legacy
 
             int seq = 0;
             uint tableCursor = dialogArrayPtr;
+            var createdInfos = new List<DialogNodeInfo>();
             while (true)
             {
                 uint dialogPtr = ReadU32(tableCursor);
@@ -264,6 +325,9 @@ namespace Legacy
                 uint scriptAddr = 0;
                 int scriptLen = 0;
 
+                TextPosition position = TextPosition.Unspecified;
+                bool centerText = false;
+
                 if (mode == 0x0) // DIALOG_SCRIPT
                 {
                     scriptAddr = dialogPtr + ScriptHeaderSize;
@@ -272,12 +336,12 @@ namespace Legacy
                 }
                 else if (mode == 0x1) // DIALOG_TEXT
                 {
-                    text = ReadNullTerminatedString(dialogPtr + DialogHeaderSize);
+                    (text, position, centerText) = ExtractTextFormat(ReadNullTerminatedString(dialogPtr + DialogHeaderSize));
                     editable = true;
                 }
                 else if (mode == 0x2) // DIALOG_TEXT_JCALG1
                 {
-                    text = ReadJcalg1String(dialogPtr + DialogHeaderSize);
+                    (text, position, centerText) = ExtractTextFormat(ReadJcalg1String(dialogPtr + DialogHeaderSize));
                     editable = true;
                 }
                 else if (mode == 0x5) // DIALOG_JUMP
@@ -303,12 +367,28 @@ namespace Legacy
                     Editable = editable,
                     Dirty = false,
                     ScriptAddr = scriptAddr,
-                    OriginalScriptLength = scriptLen
+                    OriginalScriptLength = scriptLen,
+                    EntryAddr = dialogPtr,
+                    Position = position,
+                    CenterText = centerText
                 };
 
                 target.Add(($"{labelPrefix} - Dialog #{seq}", info));
+                createdInfos.Add(info);
 
                 tableCursor += DialogSequenceTableEntrySize;
+            }
+
+            // tableCursor now sits on the table's own terminator slot (dialogPtr read there
+            // was 0, or a >=0x1E small value would also have IsValidPtr()==false and been
+            // skipped as filler above rather than ending the loop -- only a literal 0 breaks
+            // it here, matching WalkDialogArray's own termination check). Its slot index is
+            // what every entry's Index field must equal to end the dialog right after it.
+            int terminatorSlotIndex = (int)((tableCursor - dialogArrayPtr) / DialogSequenceTableEntrySize);
+            foreach (var info in createdInfos)
+            {
+                info.TerminatorSlotIndex = terminatorSlotIndex;
+                info.EndsDialogHere = info.Index == terminatorSlotIndex;
             }
 
             return seq;
@@ -428,6 +508,16 @@ namespace Legacy
             Legacy_IDE.Text = "";
             Legacy_TextBox.Text = "";
             ClearCharacterPreview();
+            _suppressEndDialogChanged = true;
+            Legacy_ChkEndDialog.Enabled = false;
+            Legacy_ChkEndDialog.Checked = false;
+            _suppressEndDialogChanged = false;
+            _suppressTextFormatChanged = true;
+            Legacy_TextPositionCombo.Enabled = false;
+            Legacy_TextPositionCombo.SelectedIndex = -1;
+            Legacy_ChkCenterText.Enabled = false;
+            Legacy_ChkCenterText.Checked = false;
+            _suppressTextFormatChanged = false;
 
             if (_rom != null)
                 RenderTreeForActiveTab();
@@ -454,6 +544,19 @@ namespace Legacy
                     Legacy_IDE.Text = ""; // clear the unused control
                     UpdateCharacterPreview(info.Character);
                 }
+
+                _suppressEndDialogChanged = true;
+                Legacy_ChkEndDialog.Enabled = info.Editable;
+                Legacy_ChkEndDialog.Checked = info.EndsDialogHere;
+                _suppressEndDialogChanged = false;
+
+                bool isText = info.Mode == 0x1 || info.Mode == 0x2;
+                _suppressTextFormatChanged = true;
+                Legacy_TextPositionCombo.Enabled = isText;
+                Legacy_TextPositionCombo.SelectedIndex = isText ? (int)info.Position : -1;
+                Legacy_ChkCenterText.Enabled = isText;
+                Legacy_ChkCenterText.Checked = isText && info.CenterText;
+                _suppressTextFormatChanged = false;
             }
             else
             {
@@ -461,7 +564,51 @@ namespace Legacy
                 Legacy_IDE.Text = "";
                 Legacy_TextBox.Text = "";
                 ClearCharacterPreview();
+
+                _suppressEndDialogChanged = true;
+                Legacy_ChkEndDialog.Enabled = false;
+                Legacy_ChkEndDialog.Checked = false;
+                _suppressEndDialogChanged = false;
+                _suppressTextFormatChanged = true;
+                Legacy_TextPositionCombo.Enabled = false;
+                Legacy_TextPositionCombo.SelectedIndex = -1;
+                Legacy_ChkCenterText.Enabled = false;
+                Legacy_ChkCenterText.Checked = false;
+                _suppressTextFormatChanged = false;
             }
+        }
+
+        private bool _suppressEndDialogChanged = false;
+        private bool _suppressTextFormatChanged = false;
+
+        private void Legacy_ChkEndDialog_CheckedChanged(object sender, EventArgs e)
+        {
+            if (_suppressEndDialogChanged) return;
+            if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable) return;
+
+            bool desired = Legacy_ChkEndDialog.Checked;
+            bool loadedState = info.Index == info.TerminatorSlotIndex;
+            info.EndsDialogHere = desired;
+            info.EndsDialogDirty = desired != loadedState;
+        }
+
+        private void Legacy_TextPositionCombo_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (_suppressTextFormatChanged) return;
+            if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable) return;
+            if (Legacy_TextPositionCombo.SelectedIndex < 0) return;
+
+            info.Position = (TextPosition)Legacy_TextPositionCombo.SelectedIndex;
+            info.Dirty = true;
+        }
+
+        private void Legacy_ChkCenterText_CheckedChanged(object sender, EventArgs e)
+        {
+            if (_suppressTextFormatChanged) return;
+            if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable) return;
+
+            info.CenterText = Legacy_ChkCenterText.Checked;
+            info.Dirty = true;
         }
 
         private void CommitPendingEdit()
@@ -487,14 +634,22 @@ namespace Legacy
                 _rom = File.ReadAllBytes(openRomDialog.FileName);
             }
 
+            _saveTargetPath = null; // freshly opened ROM - next Save prompts for a destination again
             PopulateDialogTree();
         }
 
         private void Legacy_Load(object sender, EventArgs e)
         {
+            // Configuring here (not the constructor) so Legacy_IDE's native window handle
+            // already exists - MouseDwellTime and other native Scintilla calls silently
+            // no-op if sent before the control has a real HWND, which broke hover call tips.
+            Zenkai.ZenkaiEditor.Configure(Legacy_IDE);
+
             toolStripButton1.Image = RenderGlyphIcon('\uE768', Color.Green, 32); // play
             toolStripButton2.Image = RenderGlyphIcon('\uE74E', Color.SteelBlue, 32); // save
+            toolStripButton1.ToolTipText = "Test (compile-check the current script)";
             toolStripButton2.ToolTipText = "Save ROM";
+            toolStripButton1.Click += (s, e2) => Legacy_IDE_BTN_Compile_Click(s, e2);
             toolStripButton2.Click += (s, e2) => Legacy_SaveROM_Click(s, e2);
         }
 
@@ -521,7 +676,13 @@ namespace Legacy
             return bmp;
         }
 
-        private void Legacy_SaveROM_Click(object sender, EventArgs e)
+        private string? _saveTargetPath;
+
+        private void Legacy_SaveROM_Click(object sender, EventArgs e) => PerformSave(forceSaveAs: false);
+
+        private void Legacy_SaveROMAs_Click(object sender, EventArgs e) => PerformSave(forceSaveAs: true);
+
+        private void PerformSave(bool forceSaveAs)
         {
             if (_rom == null)
             {
@@ -536,7 +697,7 @@ namespace Legacy
             // missing dirty nodes edited on the other tab.
             var dirtyInfos = _dialogModel
                 .SelectMany(z => z.Children)
-                .Where(c => c.Info.Editable && c.Info.Dirty)
+                .Where(c => c.Info.Editable && (c.Info.Dirty || c.Info.EndsDialogDirty))
                 .Select(c => c.Info)
                 .ToList();
 
@@ -547,11 +708,12 @@ namespace Legacy
             }
 
             // Compile every dirty script up front (before touching any ROM bytes) so a bad
-            // edit aborts the whole save instead of leaving the ROM half-patched.
+            // edit aborts the whole save instead of leaving the ROM half-patched. Entries only
+            // toggling EndsDialogDirty (no body edit) skip this - see the Index-only patch path below.
             var compiledScripts = new Dictionary<DialogNodeInfo, byte[]>();
             foreach (var info in dirtyInfos)
             {
-                if (info.Mode != 0x0) continue;
+                if (info.Mode != 0x0 || !info.Dirty) continue;
 
                 try
                 {
@@ -569,6 +731,19 @@ namespace Legacy
                 }
             }
 
+            // First save (or an explicit "Save As") prompts for a destination -- that
+            // prompt is the backup: the original loaded ROM is never touched. Every save
+            // after that silently overwrites the same chosen file, same as any normal
+            // editor's Ctrl+S, until the user explicitly picks a new target via Save As.
+            string? targetPath = _saveTargetPath;
+            if (forceSaveAs || targetPath == null)
+            {
+                using var openSaveDialog = new SaveFileDialog() { Filter = "GBA ROMs|*.gba", Title = "Save ROM As" };
+                if (openSaveDialog.ShowDialog() != DialogResult.OK)
+                    return;
+                targetPath = openSaveDialog.FileName;
+            }
+
             // Build the new ROM: original bytes (with any script edits that fit in place
             // applied and zero-padded) + appended entries for edited text and any script
             // that outgrew its original allocation.
@@ -576,13 +751,23 @@ namespace Legacy
             Array.Copy(_rom, newRom, _rom.Length);
             var extension = new List<byte>();
 
-            using (var openSaveDialog = new SaveFileDialog() { Filter = "GBA ROMs|*.gba", Title = "Save ROM As" })
+            foreach (var info in dirtyInfos)
             {
-                if (openSaveDialog.ShowDialog() != DialogResult.OK)
-                    return;
+                    // If EndsDialogHere was toggled, this entry's Index header field (2 bytes,
+                    // always in place - it never changes layout/size) needs to end up pointing
+                    // at TerminatorSlotIndex instead of its original next-entry slot.
+                    ushort desiredIndex = info.EndsDialogHere ? (ushort)info.TerminatorSlotIndex : info.Index;
 
-                foreach (var info in dirtyInfos)
-                {
+                    if (!info.Dirty)
+                    {
+                        // Only EndsDialogHere changed - no body edit, so just patch the header
+                        // in place rather than appending a duplicate entry to the ROM.
+                        uint entryOffset = info.EntryAddr - RomBase;
+                        newRom[entryOffset] = (byte)(desiredIndex & 0xFF);
+                        newRom[entryOffset + 1] = (byte)((desiredIndex >> 8) & 0xFF);
+                        continue;
+                    }
+
                     if (info.Mode == 0x0)
                     {
                         byte[] compiled = compiledScripts[info];
@@ -597,6 +782,13 @@ namespace Legacy
                             Array.Copy(compiled, 0, newRom, scriptOffset, compiled.Length);
                             for (int i = compiled.Length; i < info.OriginalScriptLength; i++)
                                 newRom[scriptOffset + i] = 0x00;
+
+                            if (info.EndsDialogDirty)
+                            {
+                                uint entryOffset = info.EntryAddr - RomBase;
+                                newRom[entryOffset] = (byte)(desiredIndex & 0xFF);
+                                newRom[entryOffset + 1] = (byte)((desiredIndex >> 8) & 0xFF);
+                            }
                         }
                         else
                         {
@@ -609,8 +801,8 @@ namespace Legacy
                             // Header is [u16 Index][u8 Mode] ONLY for scripts (ScriptHeaderSize,
                             // 3 bytes) - no Character byte, confirmed against
                             // Dialog_CreateScriptedElement_Impl's `pc: entryPtr + 3`.
-                            extension.Add((byte)(info.Index & 0xFF));
-                            extension.Add((byte)((info.Index >> 8) & 0xFF));
+                            extension.Add((byte)(desiredIndex & 0xFF));
+                            extension.Add((byte)((desiredIndex >> 8) & 0xFF));
                             extension.Add(0x0); // DIALOG_SCRIPT
                             extension.AddRange(compiled);
 
@@ -625,32 +817,42 @@ namespace Legacy
                     uint textEntryAddr = RomBase + (uint)(newRom.Length + extension.Count);
 
                     // Header: Index(u16) + Mode=0x1(u8, force plain text) + Character(u8)
-                    extension.Add((byte)(info.Index & 0xFF));
-                    extension.Add((byte)((info.Index >> 8) & 0xFF));
+                    extension.Add((byte)(desiredIndex & 0xFF));
+                    extension.Add((byte)((desiredIndex >> 8) & 0xFF));
                     extension.Add(0x1); // force DIALOG_TEXT, no re-compression
                     extension.Add(info.Character);
 
-                    // Message bytes + null terminator
-                    extension.AddRange(Encoding.UTF8.GetBytes(info.Text));
+                    // Message bytes (with the Position/Center format prefix re-applied - see
+                    // ExtractTextFormat/ApplyTextFormat) + null terminator
+                    extension.AddRange(Encoding.UTF8.GetBytes(ApplyTextFormat(info.Text, info.Position, info.CenterText)));
                     extension.Add(0x00);
 
                     // Patch the table slot (in the ORIGINAL rom region) to point at the new entry
                     uint textSlotOffset = info.TableSlotAddr - RomBase;
                     byte[] textPtrBytes = BitConverter.GetBytes(textEntryAddr);
                     Array.Copy(textPtrBytes, 0, newRom, textSlotOffset, 4);
-                }
-
-                byte[] finalRom = new byte[newRom.Length + extension.Count];
-                Array.Copy(newRom, finalRom, newRom.Length);
-                Array.Copy(extension.ToArray(), 0, finalRom, newRom.Length, extension.Count);
-
-                File.WriteAllBytes(openSaveDialog.FileName, finalRom);
-
-                foreach (var info in dirtyInfos)
-                    info.Dirty = false;
-
-                ShowStatus($"Saved {dirtyInfos.Count} edited entries to {Path.GetFileName(openSaveDialog.FileName)}.");
             }
+
+            byte[] finalRom = new byte[newRom.Length + extension.Count];
+            Array.Copy(newRom, finalRom, newRom.Length);
+            Array.Copy(extension.ToArray(), 0, finalRom, newRom.Length, extension.Count);
+
+            File.WriteAllBytes(targetPath, finalRom);
+            _saveTargetPath = targetPath;
+
+            // The tool now keeps editing the ROM it just wrote, not the one it originally
+            // opened. Without this, a second Save would rebuild newRom from the ORIGINAL
+            // _rom bytes again -- silently discarding the first save's changes (and
+            // leaving TableSlotAddr/ScriptAddr stale for anything that got appended).
+            // Rebuilding the whole model is the simplest way to keep every address correct.
+            _rom = finalRom;
+            _currentNode = null;
+            Legacy_IDE.Text = "";
+            Legacy_TextBox.Text = "";
+            ClearCharacterPreview();
+            PopulateDialogTree();
+
+            ShowStatus($"Saved {dirtyInfos.Count} edited entries to {Path.GetFileName(targetPath)}.");
         }
 
         private void Legacy_QuitEditor_Click(object sender, EventArgs e)
