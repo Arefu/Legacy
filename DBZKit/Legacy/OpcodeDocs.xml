@@ -338,8 +338,8 @@
       <param name="a">Popped first.</param>
       <param name="b">Popped second.</param>
     </member>
-    <member name="SetCharacterFlag_Bit0" arity="1" confidence="medium" originalName="BytecodeVM_SetCharacterFlag_Bit0" index="79">
-      <summary>Sets bit 0 of characters[charIdx].flags.</summary>
+    <member name="SetCharacterInPartyFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_SetCharacterInPartyFlag" index="79">
+      <summary>Sets bit 0 of characters[charIdx].flags — confirmed via Character_GetActiveCount (0x8003E00), which tests exactly this bit to count active party members.</summary>
       <param name="charIdx">Character roster index.</param>
     </member>
     <member name="SetCharacterFlag_Bit1" arity="1" confidence="medium" originalName="BytecodeVM_SetCharacterFlag_Bit1" index="80">
@@ -393,7 +393,7 @@
       <param name="b">Popped second.</param>
       <param name="a">Popped first.</param>
     </member>
-    <member name="ClearCharacterFlag_Bit0" arity="1" confidence="confirmed" originalName="BytecodeVM_ClearCharacterFlag_Bit0" index="91">
+    <member name="ClearCharacterInPartyFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_ClearCharacterInPartyFlag" index="91">
       <summary>Clears bit 0 of characters[charIdx].flags.</summary>
       <param name="charIdx">Character roster index.</param>
     </member>
@@ -496,10 +496,10 @@
       <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
       <param name="value">Popped first.</param>
     </member>
-    <member name="SetSaveExistsFlag_Bit2" arity="0" confidence="medium" originalName="BytecodeVM_SetSaveExistsFlag_Bit2" index="113">
+    <member name="EnableMenuAccess" arity="0" confidence="medium" originalName="BytecodeVM_EnableMenuAccess" index="113">
       <summary>No arguments.</summary>
     </member>
-    <member name="SetSaveExistsFlag_Bit3" arity="0" confidence="medium" originalName="BytecodeVM_SetSaveExistsFlag_Bit3" index="114">
+    <member name="EnableDragonRadar" arity="0" confidence="medium" originalName="BytecodeVM_EnableDragonRadar" index="114">
       <summary>No arguments.</summary>
     </member>
     <member name="SetActiveCharacterNoReset" arity="1" confidence="medium" originalName="BytecodeVM_SetActiveCharacterNoReset" index="115">

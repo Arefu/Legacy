@@ -100,7 +100,10 @@ namespace Legacy.Zenkai
             new(76, "RemoveItem", 1),
             new(77, "RemoveItems", 2),
             new(78, "op_unk78", 2, "sub_8009688"),
-            new(79, "SetCharacterFlag_Bit0", 1),
+            // RENAMED 2026-09-16: was SetCharacterFlag_Bit0. CONFIRMED via IDA
+            // (Character_GetActiveCount, 0x8003E00, tests exactly this bit) -- bit0
+            // marks a character as an active party member.
+            new(79, "SetCharacterInPartyFlag", 1),
             new(80, "SetCharacterFlag_Bit1", 1),
             new(81, "ClearCharacterFlag_Bit1", 1),
             new(82, "SetCharacterFlag_Bit5", 1),
@@ -112,7 +115,8 @@ namespace Legacy.Zenkai
             new(88, "op_unk88", 0, "sub_800AC00"),
             new(89, "op_unk89", 4, "sub_8009D94"),
             new(90, "op_unk90", 3, "sub_800AB44"),
-            new(91, "ClearCharacterFlag_Bit0", 1),
+            // RENAMED 2026-09-16: was ClearCharacterFlag_Bit0 -- inverse of SetCharacterInPartyFlag.
+            new(91, "ClearCharacterInPartyFlag", 1),
             new(92, "SpawnItem", 3),
             new(93, "op_unk93", 1, "sub_800A49A"),
             new(94, "op_unk94", 3, "sub_800A526"),
@@ -134,8 +138,12 @@ namespace Legacy.Zenkai
             new(110, "SetCharEP", 2),
             new(111, "PlayAudioVolume", 2),
             new(112, "op_unk112", 2, "sub_800AE76"),
-            new(113, "SetSaveExistsFlag_Bit2", 0),
-            new(114, "SetSaveExistsFlag_Bit3", 0),
+            // RENAMED 2026-09-16 (medium confidence, unverified in-game): were
+            // SetSaveExistsFlag_Bit2/Bit3. IDA readers: sub_8004CAC gates the overworld
+            // pause-menu shortcuts on bit2; sub_8017ACC (world map draw) gates location
+            // marker highlighting on bit3 -- see opcode_data.js for details.
+            new(113, "EnableMenuAccess", 0),
+            new(114, "EnableDragonRadar", 0),
             new(115, "SetActiveCharacterNoReset", 1),
             new(116, "ResetNonActiveSprites", 0),
             new(117, "op_unk117", 4, "sub_800A850"),
