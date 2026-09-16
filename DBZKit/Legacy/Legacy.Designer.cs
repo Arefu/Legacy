@@ -55,6 +55,8 @@
             Legacy_CharacterLabel = new Label();
             Legacy_CharacterPreview = new PictureBox();
             Legacy_TextBox = new TextBox();
+            Legacy_StatusStrip = new StatusStrip();
+            Legacy_StatusLabel = new ToolStripStatusLabel();
             Legacy_MenuStrip.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)Legacy_AppContainer).BeginInit();
             Legacy_AppContainer.Panel1.SuspendLayout();
@@ -303,13 +305,30 @@
             Legacy_TextBox.Name = "Legacy_TextBox";
             Legacy_TextBox.Size = new Size(256, 128);
             Legacy_TextBox.TabIndex = 2;
-            // 
+            //
+            // Legacy_StatusStrip
+            //
+            Legacy_StatusStrip.Items.AddRange(new ToolStripItem[] { Legacy_StatusLabel });
+            Legacy_StatusStrip.Location = new Point(0, 707);
+            Legacy_StatusStrip.Name = "Legacy_StatusStrip";
+            Legacy_StatusStrip.Size = new Size(1008, 22);
+            Legacy_StatusStrip.TabIndex = 4;
+            Legacy_StatusStrip.Text = "statusStrip1";
+            //
+            // Legacy_StatusLabel
+            //
+            Legacy_StatusLabel.Name = "Legacy_StatusLabel";
+            Legacy_StatusLabel.Size = new Size(0, 17);
+            Legacy_StatusLabel.Spring = true;
+            Legacy_StatusLabel.TextAlign = ContentAlignment.MiddleLeft;
+            //
             // Legacy
-            // 
+            //
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1008, 729);
             Controls.Add(Legacy_AppContainer);
+            Controls.Add(Legacy_StatusStrip);
             Controls.Add(Legacy_MenuStrip);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MainMenuStrip = Legacy_MenuStrip;
@@ -365,5 +384,7 @@
         private PictureBox Legacy_CharacterPreview;
         private Label Legacy_CharacterLabel;
         private NumericUpDown Legacy_CharacterUpDown;
+        private StatusStrip Legacy_StatusStrip;
+        private ToolStripStatusLabel Legacy_StatusLabel;
     }
 }

@@ -494,6 +494,17 @@ namespace Legacy
         {
             toolStripButton1.Image = RenderGlyphIcon('\uE768', Color.Green, 32); // play
             toolStripButton2.Image = RenderGlyphIcon('\uE74E', Color.SteelBlue, 32); // save
+            toolStripButton2.ToolTipText = "Save ROM";
+            toolStripButton2.Click += (s, e2) => Legacy_SaveROM_Click(s, e2);
+        }
+
+        // Non-blocking status strip message, replacing MessageBox popups for routine
+        // save feedback (errors and confirmations alike) so they don't interrupt the flow
+        // of editing. isError just tints the text - both cases stay visible until replaced.
+        private void ShowStatus(string message, bool isError = false)
+        {
+            Legacy_StatusLabel.Text = message;
+            Legacy_StatusLabel.ForeColor = isError ? Color.Firebrick : SystemColors.ControlText;
         }
         private Bitmap RenderGlyphIcon(char glyph, Color color, int size)
         {
@@ -514,7 +525,7 @@ namespace Legacy
         {
             if (_rom == null)
             {
-                MessageBox.Show("No ROM loaded.");
+                ShowStatus("No ROM loaded.", isError: true);
                 return;
             }
 
@@ -531,7 +542,7 @@ namespace Legacy
 
             if (dirtyInfos.Count == 0)
             {
-                MessageBox.Show("No changes to save.");
+                ShowStatus("No changes to save.");
                 return;
             }
 
@@ -548,12 +559,12 @@ namespace Legacy
                 }
                 catch (Zenkai.ZenkaiAssemblerException ex)
                 {
-                    MessageBox.Show($"Script for {info.TableSlotAddr:X8} failed to compile - fix it before saving:\n\n{ex.Message}", "Compile Error");
+                    ShowStatus($"Save aborted - script for {info.TableSlotAddr:X8} failed to compile: {ex.Message}", isError: true);
                     return;
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Script for {info.TableSlotAddr:X8} failed to compile - fix it before saving:\n\n{ex.Message}", "Compile Error");
+                    ShowStatus($"Save aborted - script for {info.TableSlotAddr:X8} failed to compile: {ex.Message}", isError: true);
                     return;
                 }
             }
@@ -638,7 +649,7 @@ namespace Legacy
                 foreach (var info in dirtyInfos)
                     info.Dirty = false;
 
-                MessageBox.Show($"Saved {dirtyInfos.Count} edited entries to {Path.GetFileName(openSaveDialog.FileName)}.");
+                ShowStatus($"Saved {dirtyInfos.Count} edited entries to {Path.GetFileName(openSaveDialog.FileName)}.");
             }
         }
 

@@ -84,7 +84,9 @@ namespace Legacy.Zenkai
             new(62, "op_unk62", 3, "sub_800A44E"),
             new(63, "BeginCommandBatch", 0),
             new(64, "CommitCommandBatch", 0),
-            new(65, "PlayAudioBlocking", 1),
+            // ARITY CORRECTED 2026-09-16: was 1, confirmed via IDA decompile (0x800A5BE)
+            // it pops 2 values -- see opcode_data.js for details (semantics still unclear).
+            new(65, "PlayAudioBlocking", 2),
             new(66, "Deprecated_ShowImage", 0),
             new(67, "op_unk67", 0, "sub_800A622"),
             new(68, "op_unk68", 1, "sub_800A638"),

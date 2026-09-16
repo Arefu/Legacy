@@ -45,6 +45,16 @@ namespace Legacy.Zenkai
             sc.AutoCIgnoreCase = false;
             sc.AutoCMaxHeight = 9;
 
+            // Hover call tips: CharAdded('(') below only fires right after typing - once
+            // you've moved on, mousing back over an existing call needs its own trigger.
+            sc.MouseDwellTime = 500;
+            sc.DwellStart += (s, e) =>
+            {
+                if (e.Position >= 0)
+                    ShowCallTipForWordAt(sc, e.Position, e.Position);
+            };
+            sc.DwellEnd += (s, e) => sc.CallTipCancel();
+
             var validateTimer = new System.Windows.Forms.Timer { Interval = 400 };
             validateTimer.Tick += (s, e) =>
             {
@@ -94,8 +104,17 @@ namespace Legacy.Zenkai
         private static void ShowCallTip(Scintilla sc)
         {
             int pos = sc.CurrentPosition;
-            int nameEnd = pos - 1; // position of the "(" just typed
-            int nameStart = sc.WordStartPosition(nameEnd, true);
+            int nameEnd = pos - 1; // position of the "(" just typed - end of the word before it
+            ShowCallTipForWordAt(sc, nameEnd, pos);
+        }
+
+        // wordPos: any position inside (or at the end of) the opcode name's word.
+        // anchorPos: where Scintilla anchors the tip popup (caret for the type-"(" case,
+        // the mouse position for hover).
+        private static void ShowCallTipForWordAt(Scintilla sc, int wordPos, int anchorPos)
+        {
+            int nameStart = sc.WordStartPosition(wordPos, true);
+            int nameEnd = sc.WordEndPosition(wordPos, true);
             if (nameStart >= nameEnd) return;
 
             string opName = sc.GetTextRange(nameStart, nameEnd - nameStart);
@@ -109,7 +128,7 @@ namespace Legacy.Zenkai
             if (doc.Params.Count > 0)
                 tip += "\n" + string.Join("\n", doc.Params.Select(p => $"  {p.Name} - {p.Description}"));
 
-            sc.CallTipShow(pos, tip);
+            sc.CallTipShow(anchorPos, tip);
         }
 
         private static void Revalidate(Scintilla sc)
