@@ -64,6 +64,65 @@ namespace DrGero.Rendering
             return result;
         }
 
+        // CONFIRMED via IDA 2026-09 (Map_InitTriggers -> MapRenderer_LoadVariationTriggers ->
+        // TriggerList_AddFromArray): triggers don't only come from MapEntry.mapTriggers (read
+        // above) -- Map_VariationEntry has a SECOND, entirely separate trigger source at
+        // +0x40 (count) / +0x44 (array), loaded every time a map loads regardless of which
+        // MapEntry variation is active. TriggerList_AddFromArray's call convention
+        // (a1=*(array+4*i), a2=**(array+4*i)) exactly matches Map_InitTriggers' own
+        // (a1=trigger->function, a2=*trigger->function), so each array slot is a DIRECT
+        // pointer to a trigger record -- same shape as ReadMapTriggers' dataPtr (skip 8
+        // bytes, then x1/y1/x2/y2 as signed int16 corners at +8), just missing the outer
+        // {vTable,dataPtr} wrapper mapTriggers[] uses. The map editor previously only read
+        // mapTriggers[], so anything registered exclusively here (a strong candidate for the
+        // reported "save point renders as two halves" symptom, if one half lives in each
+        // array) was invisible. Not independently confirmed that SavePoint specifically lives
+        // here vs. mapTriggers -- confirmed only that this array exists, is real, and was
+        // previously unread.
+        public static List<Entity> ReadVariationTriggers(ROM rom, int mapOffset)
+        {
+            var result = new List<Entity>();
+
+            rom.PushPosition(mapOffset + 0x40);
+            int count = rom.ReadInt();
+            int arrayPtr = rom.ReadPointer();
+            rom.PopPosition();
+
+            if (arrayPtr == 0 || count <= 0)
+                return result;
+
+            rom.PushPosition(arrayPtr);
+
+            for (int i = 0; i < count; i++)
+            {
+                int entryAddress = arrayPtr + (i * 4);
+                int dataPtr = rom.ReadPointer();
+
+                if (dataPtr != 0)
+                {
+                    rom.PushPosition(dataPtr);
+                    rom.Skip(8); // condition + function pointers, same layout as MapTriggerDialog
+                    int coordAddress = dataPtr + 8;
+
+                    int x1 = (short)rom.ReadShort();
+                    int y1 = (short)rom.ReadShort();
+                    int x2 = (short)rom.ReadShort();
+                    int y2 = (short)rom.ReadShort();
+                    rom.PopPosition();
+
+                    int left = Math.Min(x1, x2);
+                    int top = Math.Min(y1, y2);
+                    int width = Math.Abs(x2 - x1);
+                    int height = Math.Abs(y2 - y1);
+
+                    result.Add(new Entity(EntityKind.Trigger, left, top, 0, entryAddress, width, height, coordAddress));
+                }
+            }
+
+            rom.PopPosition();
+            return result;
+        }
+
         public static List<Entity> ReadObjectArray(ROM rom, MapEntry entry)
         {
             var result = new List<Entity>();
@@ -147,8 +206,8 @@ namespace DrGero.Rendering
         // at `position`. This constant is this ROM build's compiled address
         // for that function (thumb-bit set, as stored in ROM data) -- same
         // caveat as TiledLayerType below: will differ per ROM build.
-        private const int CharacterSpawnHandlerOffset = 0x00D6DF;
-        private const int MapScriptRecordSize = 32; // MapScriptSpawnMultiConditional
+        internal const int CharacterSpawnHandlerOffset = 0x00D6DF;
+        internal const int MapScriptRecordSize = 32; // MapScriptSpawnMultiConditional
 
         // CONFIRMED via IDA 2026-09-13 (disassembly-level, not decompiler
         // pseudocode -- see MapScript_CreateSprite @0x800B710): a second
@@ -339,6 +398,46 @@ namespace DrGero.Rendering
             rom.PopPosition();
             return result;
         }
+
+        // CONFIRMED via IDA 2026-09 (raw disasm of sub_80073EA/sub_800733E, Map_InitTilemap's
+        // graphicObjects constructors): every entry in Map_VariationEntry.graphicObjects[] is
+        // spawned as a real, visible OAM sprite decoration (trees, rocks, flight pads, etc),
+        // entirely separate from mapItems/mapObjects. Previously these were baked straight
+        // into the static map bitmap (see MapRenderer.RenderGraphicObjectSprites' doc) with no
+        // way to select or move them -- read as real Entity records instead, same as pickups.
+        // X/Y is the box's top-left (x0,y0), matching how the record's own [x0,y0,x1,y1] is
+        // used directly as a draw position elsewhere, not a center point like EntityKind.Item.
+        public static List<Entity> ReadGraphicObjects(ROM rom, int mapOffset)
+        {
+            var result = new List<Entity>();
+
+            rom.PushPosition(mapOffset + 0x24);
+            int graphicObjectCount = rom.ReadInt();
+            int graphicObjectsBase = rom.ReadPointer();
+            rom.PopPosition();
+
+            if (graphicObjectCount <= 0 || graphicObjectsBase == 0)
+                return result;
+
+            for (int i = 0; i < graphicObjectCount; i++)
+            {
+                int recordBase = graphicObjectsBase + (i * GraphicObjectRecordSize);
+                rom.PushPosition(recordBase);
+                int x0 = rom.ReadInt();
+                int y0 = rom.ReadInt();
+                int x1 = rom.ReadInt();
+                int y1 = rom.ReadInt();
+                rom.PopPosition();
+
+                int width = x1 - x0;
+                int height = y1 - y0;
+                if (width <= 0 || height <= 0) continue; // out of range -- don't guess a position
+
+                result.Add(new Entity(EntityKind.Decoration, x0, y0, i, recordBase, width, height, recordBase));
+            }
+
+            return result;
+        }
     }
 
     /// <summary>
@@ -383,6 +482,16 @@ namespace DrGero.Rendering
                     rom.PatchInt16(entity.PositionAddress + 2, (short)newY);
                     rom.PatchInt16(entity.PositionAddress + 4, (short)(newX + entity.Width));
                     rom.PatchInt16(entity.PositionAddress + 6, (short)(newY + entity.Height));
+                    break;
+
+                case EntityKind.Decoration:
+                    // [x0,y0,x1,y1] box -- newX/newY is the top-left (x0,y0), so x1/y1 shift
+                    // by the same delta to keep the box's own width/height (and therefore
+                    // which tiles/how many tiles get drawn) unchanged.
+                    rom.PatchInt32(entity.PositionAddress + 0, newX);
+                    rom.PatchInt32(entity.PositionAddress + 4, newY);
+                    rom.PatchInt32(entity.PositionAddress + 8, newX + entity.Width);
+                    rom.PatchInt32(entity.PositionAddress + 12, newY + entity.Height);
                     break;
 
                 default:
@@ -662,6 +771,94 @@ namespace DrGero.Rendering
 
             return newObjects.Count;
         }
+
+        /// <summary>
+        /// Persists newly-placed EntityKind.Character entities (SourceAddress == 0) into the
+        /// ROM by growing mapScripts[], the pointer array MapScript_CreateCharacter-handled
+        /// records already live in (see EntityReader.ReadMapScripts). Each 32-byte record is
+        /// only CONFIRMED for its first 16 bytes (handler, flags/condition, x, y, spriteId) --
+        /// bytes +0x10..+0x1F are unconfirmed, the exact same situation PersistNewItems hit
+        /// with graphicObjects' tail bytes, which a real crash report traced to zeroing an
+        /// unconfirmed field the game's spawn code still reads unconditionally. Applying the
+        /// same fix here pre-emptively rather than waiting for the same crash to recur: copy
+        /// those 16 bytes from an existing CharacterSpawnHandlerOffset record on the SAME map
+        /// (a real, already-working record) instead of zeroing them, and REFUSE to place a
+        /// character on a map with no such existing record to copy from, rather than guess.
+        /// Uses ROM.AllocateFreeSpace, matching PersistNewObjects.
+        /// </summary>
+        public static int PersistNewCharacters(ROM rom, MapEntry entry, int mapEntryAddress, List<Entity> entities)
+        {
+            var newCharacters = entities.Where(e => e.Kind == EntityKind.Character && e.SourceAddress == 0).ToList();
+            if (newCharacters.Count == 0)
+                return 0;
+
+            byte[]? tailTemplate = null;
+            var existingRecordPtrs = new List<int>();
+
+            if (entry.MapScripts != 0 && entry.ScriptCount > 0)
+            {
+                rom.PushPosition(entry.MapScripts);
+                for (int i = 0; i < entry.ScriptCount; i++)
+                    existingRecordPtrs.Add(rom.ReadInt()); // raw, already-encoded pointer value
+                rom.PopPosition();
+
+                foreach (int rawPtr in existingRecordPtrs)
+                {
+                    int recordAddr = rawPtr & 0x00FFFFFF;
+                    if (recordAddr == 0) continue;
+
+                    rom.PushPosition(recordAddr);
+                    int handler = rom.ReadPointer();
+                    if (handler == EntityReader.CharacterSpawnHandlerOffset)
+                    {
+                        tailTemplate = rom.ReadBytesAt(recordAddr + 0x10, EntityReader.MapScriptRecordSize - 0x10);
+                        rom.PopPosition();
+                        break;
+                    }
+                    rom.PopPosition();
+                }
+            }
+
+            if (tailTemplate == null)
+            {
+                throw new InvalidOperationException(
+                    "This map has no pre-existing character spawn (MapScript_CreateCharacter) record to use as a " +
+                    "template for the new character's unconfirmed tail bytes, and PersistNewItems already hit a real " +
+                    "crash from zeroing an analogous unconfirmed field elsewhere. Placing NPCs is only supported on " +
+                    "maps that already have at least one character.");
+            }
+
+            var newRecordAddresses = new List<int>();
+            foreach (var character in newCharacters)
+            {
+                var record = new List<byte>();
+                record.AddRange(BitConverter.GetBytes(0x08000000 | EntityReader.CharacterSpawnHandlerOffset)); // handler
+                record.AddRange(BitConverter.GetBytes(0));               // flags/condition = null -> Condition_Evaluate always true
+                record.AddRange(BitConverter.GetBytes((short)character.X));
+                record.AddRange(BitConverter.GetBytes((short)character.Y));
+                record.AddRange(BitConverter.GetBytes(character.TypeId)); // spriteId
+                record.AddRange(tailTemplate);
+
+                int addr = rom.AllocateFreeSpace(record.Count);
+                rom.WriteBytesAt(addr, record.ToArray());
+                newRecordAddresses.Add(addr);
+            }
+
+            var ptrArrayBytes = new List<byte>();
+            foreach (int ptr in existingRecordPtrs)
+                ptrArrayBytes.AddRange(BitConverter.GetBytes(ptr));
+            foreach (int addr in newRecordAddresses)
+                ptrArrayBytes.AddRange(BitConverter.GetBytes(0x08000000 | addr));
+
+            int newPtrArrayAddr = rom.AllocateFreeSpace(ptrArrayBytes.Count);
+            rom.WriteBytesAt(newPtrArrayAddr, ptrArrayBytes.ToArray());
+            // Old mapScripts[] storage intentionally left in place, not zeroed.
+
+            rom.PatchInt32(mapEntryAddress + 0x14, 0x08000000 | newPtrArrayAddr); // mapScripts
+            rom.PatchByte(mapEntryAddress + 0x04, (byte)Math.Min(255, entry.ScriptCount + newCharacters.Count)); // scriptCount
+
+            return newCharacters.Count;
+        }
     }
 
     /// <summary>
@@ -887,12 +1084,27 @@ namespace DrGero.Rendering
             var layer3 = DrawLayer(rom, game, rom.ReadPointer(), tilesets, usedTilesets);
             rom.PopPosition();
 
-            rom.PushPosition(mapOffset + 0x8);
-            int width = rom.ReadShort() + 240;
-            int height = rom.ReadShort() + 160;
-            rom.PopPosition();
+            // FIXED 2026-09 (found by diffing against the original LOGExtractor
+            // MapViewer.MainForm, which this compositing was ported from): the original
+            // NEVER sizes or crops the map bitmap using the declared width/height
+            // (mapOffset+0x8) at all -- it draws every layer's own natural, uncropped
+            // bitmap directly at (0,0) onto a canvas, full stop. Declared width/height is
+            // only ever used there to draw a decorative boundary rectangle (the reachable
+            // camera/viewport bounds), never to size or clip the actual tile content. A
+            // prior version of this port instead built a composite sized to
+            // declared+240/+160 and cropped every oversized layer into it, which is what
+            // produced the reported black bands / misaligned terrain -- there is no crop
+            // to get right here; the fix is to not crop at all. The composite is sized to
+            // whatever the largest layer actually needs.
+            int width = 1;
+            int height = 1;
+            foreach (var l in new[] { layer0, layer1, layer2, layer3 })
+            {
+                width = Math.Max(width, l.bitmap.Width);
+                height = Math.Max(height, l.bitmap.Height);
+            }
 
-            var composite = new Bitmap(Math.Max(1, width), Math.Max(1, height));
+            var composite = new Bitmap(width, height);
             using var g = Graphics.FromImage(composite);
             g.InterpolationMode = InterpolationMode.NearestNeighbor;
             g.PixelOffsetMode = PixelOffsetMode.Half;
@@ -901,22 +1113,45 @@ namespace DrGero.Rendering
             // 2026-09-XX" fix below it, which was itself wrong): the per-layer priority
             // this method used to read from DrawLayer (a byte inside each layer's OWN
             // chunk-header blob, at +0x12) is NOT where real GBA priority comes from.
-            // CONFIRMED via raw disasm of Map_InitRenderer (0x8006152) and sub_8005F1A
-            // (0x8005F1A, the function that actually writes the hardware BG0CNT-BG3CNT
-            // registers): priority is stored as 4 consecutive bytes at
-            // Map_VariationEntry+0x04 ("field_4" in IDA's struct), ONE BYTE PER BG INDEX
-            // (byte0=BG0, byte1=BG1, byte2=BG2, byte3=BG3) -- `*(a1+120)=LOBYTE(field_4)`
-            // etc in Map_InitRenderer, then `BG0CNT = BGCNT_BaseValues[...] + *(a1+120)`
-            // etc in sub_8005F1A, and the low bits of a real BGCNT register ARE hardware
-            // priority. This is a MAP-level value indexed by BG number, not a per-layer-
-            // blob field at all. Empirically confirmed wrong before this fix: Zone4/Area1's
-            // real field_4 bytes are 03 01 03 03 (BG1 drawn on top of the other three), but
-            // the old per-layer-header read reported priority=0 for ALL FOUR layers on that
-            // map (a uniformly wrong value that collapses to pure BG-index tie-break
-            // ordering) -- a real, provable bug, not just an unconfirmed assumption. This
-            // was very likely a real contributor to the reported "missing rocks / wrong
-            // layer showing" symptom (whichever layer should have been on top per hardware
-            // priority could easily end up buried under the wrong one).
+            // CONFIRMED via raw disasm of Map_InitRenderer (0x8006152) and
+            // MapRenderer_ApplyDisplayRegisters (0x8005F1A, the function that actually
+            // writes the hardware BG0CNT-BG3CNT registers): priority is stored as 4
+            // consecutive bytes at Map_VariationEntry.bgPriorityPacked (+0x04), ONE BYTE
+            // PER BG INDEX (byte0=BG0, byte1=BG1, byte2=BG2, byte3=BG3) --
+            // `*(a1+120)=LOBYTE(bgPriorityPacked)` etc in Map_InitRenderer, then
+            // `BG0CNT = BGCNT_BaseValues[...] + *(a1+120)` etc in
+            // MapRenderer_ApplyDisplayRegisters, and the low bits of a real BGCNT register
+            // ARE hardware priority. This is a MAP-level value indexed by BG number, not a
+            // per-layer-blob field at all. Empirically confirmed wrong before this fix:
+            // Zone4/Area1's real bgPriorityPacked bytes are 03 01 03 03 (BG1 drawn on top of
+            // the other three), but the old per-layer-header read reported priority=0 for
+            // ALL FOUR layers on that map (a uniformly wrong value that collapses to pure
+            // BG-index tie-break ordering) -- a real, provable bug, not just an unconfirmed
+            // assumption. This was very likely a real contributor to the reported "missing
+            // rocks / wrong layer showing" symptom (whichever layer should have been on top
+            // per hardware priority could easily end up buried under the wrong one).
+            // CONFIRMED via IDA 2026-09 (MapRenderer_ApplyDisplayRegisters, formerly sub_8005F1A,
+            // called from Map_InitRenderer): BLDCNT/BLDALPHA -- the GBA alpha-blend registers --
+            // are sourced directly from Map_VariationEntry.bgBlendConfig (mapOffset+0x0), NOT
+            // computed at runtime. Low 16 bits = BLDCNT (bits0-5 = target1 layer mask [BG0..BG3,
+            // OBJ, backdrop], bits6-7 = blend mode [0=none,1=alpha,2=inc,3=dec], bits8-13 =
+            // target2 layer mask). High 16 bits = BLDALPHA (bits0-4 = EVA, bits8-12 = EVB,
+            // packed one byte per nibble the same way -- low byte of the high word = EVA byte,
+            // high byte of the high word = EVB byte). This is the "light source" alpha-blend
+            // effect some maps use that previously wasn't read at all, so a blended BG layer
+            // just drew fully opaque (the reported gray-smudge symptom) instead of translucent.
+            rom.PushPosition(mapOffset + 0x0);
+            int packedBlend = rom.ReadInt();
+            rom.PopPosition();
+
+            int bldcnt = packedBlend & 0xFFFF;
+            int blendMode = (bldcnt >> 6) & 0x3;
+            int blendTarget1Mask = bldcnt & 0x3F; // bit index == BG index for bits 0-3
+            int evaRaw = (packedBlend >> 16) & 0x1F; // EVA -- weight applied to the target1/top layer's own color
+            int evbRaw = (packedBlend >> 24) & 0x1F; // EVB -- weight applied to whatever's already composited beneath it
+            float eva = Math.Min(16, evaRaw) / 16f;
+            float evb = Math.Min(16, evbRaw) / 16f;
+
             rom.PushPosition(mapOffset + 0x4);
             int packedPriority = rom.ReadInt();
             rom.PopPosition();
@@ -939,48 +1174,40 @@ namespace DrGero.Rendering
             // Paint back-to-front: highest priority value (lowest on-screen) first,
             // ties broken by highest BG index first, so the lowest priority / lowest
             // BG index ends up painted last (on top) -- matching GBA hardware order.
-            //
-            // ANCHOR FIX 2026-09: a layer's own chunk grid (numCols/numRows * 256px) is
-            // frequently LARGER than the map's declared width/height (mapOffset+0x8),
-            // by design -- Camera_ClampToMapBounds (0x80060B0) clamps the real camera to
-            // the declared width/height, so the extra chunk-grid margin is scroll
-            // headroom the player's camera never actually reaches on real hardware.
-            // Previously this method always drew every layer top-left-anchored at (0,0),
-            // which for a VERTICALLY oversized layer shows exactly that never-visible
-            // margin as a blank band above the real terrain and pushes it out of
-            // alignment with the collision grid (which is sized/anchored from the
-            // declared height directly, not the raw chunk-grid size).
-            //
-            // Y-axis: bottom-anchor when the layer is taller than the composite (crop the
-            // excess from the TOP). Empirically verified against real renders: fixes the
-            // ~255px blank-top band on Z1A1/Z2A1 (declared 385x769 / 1025x1025, but their
-            // biggest layers' chunk grids are 512x1024 / etc) without affecting Z4A3
-            // (whose layers don't have this excess).
-            //
-            // X-axis: DELIBERATELY LEFT top-anchored (always drawX=0), NOT symmetric with
-            // Y. Tried bottom-right-anchoring both axes first and it was WRONG -- it broke
-            // Z4A3 (introduced a large blank patch that wasn't there before) and made
-            // Z1A1 worse on its right edge, proving horizontal excess is meant to be
-            // cropped from the right, not the left. So the two axes are NOT symmetric in
-            // this engine; only vertical excess is bottom-anchored. Not independently
-            // confirmed via ASM why the axes differ -- if a map shows a NEW horizontal
-            // misalignment, don't just make X symmetric with Y again, that was tried and
-            // disproven.
+            // Every layer is drawn at its own natural, uncropped size at (0,0) -- see the
+            // composite-sizing comment above for why there's no per-layer crop/anchor here.
             foreach (var layer in layers.OrderByDescending(l => l.priority).ThenByDescending(l => l.index))
             {
                 if (!layer.show) continue;
-                int drawY = Math.Min(0, composite.Height - layer.bitmap.Height);
-                g.DrawImage(layer.bitmap, 0, drawY);
+                int drawY = 0;
+
+                // Real hardware blends this layer (as the alpha-blend "top"/target1 layer)
+                // against whatever's already on screen beneath it as dst' = src*EVA +
+                // dst*EVB -- two INDEPENDENT coefficients, not a complementary pair. An
+                // earlier version of this approximated it with GDI+ ColorMatrix alpha
+                // scaling, which implicitly assumes EVB == 1-EVA; that overweights the
+                // source layer's own (often near-black, e.g. a light-source gradient's
+                // unlit fringe) color and underweights the destination whenever the ROM's
+                // real EVB is larger than 1-EVA, producing exactly the reported
+                // "overly black at the edges" look. DrawBlendedLayer below does the real
+                // dual-coefficient math per-pixel instead.
+                bool isBlendedTop = blendMode == 1 && ((blendTarget1Mask >> layer.index) & 1) != 0;
+                if (isBlendedTop)
+                {
+                    DrawBlendedLayer(layer.bitmap, composite, drawY, eva, evb);
+                }
+                else
+                {
+                    g.DrawImage(layer.bitmap, 0, drawY);
+                }
             }
 
-            // CONFIRMED via IDA 2026-09 (raw disasm of sub_80073EA/sub_800733E, the
-            // graphicObjects constructors called from Map_InitTilemap): these records
-            // are NOT part of the BG tilemap at all -- they're separate OAM sprite
-            // decorations (trees, rocks, etc) layered on top of it, drawing from a
-            // real per-variation compressed spritesheet at Map_VariationEntry+0x2C.
-            // This is very likely why trees were rendering as canopy-only with no
-            // trunks: the trunk was in this never-drawn sprite layer, not missing data.
-            DrawGraphicObjects(rom, game, mapOffset, composite);
+            // MOVED 2026-09: graphicObjects decorations (trees, rocks, flight pads, etc)
+            // used to be baked directly into this static composite bitmap here. They're
+            // now read as real, selectable/draggable Entity records instead (see
+            // EntityReader.ReadGraphicObjects + RenderGraphicObjectSprites) and drawn
+            // per-frame by the editor's own entity-overlay code, the same way item
+            // pickups already work -- baked-in pixels can't be dragged or written back.
 
             // CONFIRMED (2026-09, by the user checking in-game) that flat gray "void
             // filler" patches on some maps (e.g. Zone2/Area1) are NOT a rendering bug --
@@ -1021,6 +1248,55 @@ namespace DrGero.Rendering
             }
 
             return (composite, tilesets, usedTilesets, hasUnsupportedLayer, collisionGrid);
+        }
+
+        /// <summary>
+        /// Composites a real GBA alpha-blend "target1" layer onto <paramref name="composite"/>
+        /// as dst' = src*eva + dst*evb per pixel, matching hardware exactly (two independent
+        /// coefficients, not a complementary alpha pair) -- see RenderMap's isBlendedTop
+        /// comment for why a GDI+ ColorMatrix approximation isn't good enough. Pixels where
+        /// the source is fully transparent (the GBA's single transparent palette index, tile
+        /// ID 0 in DrawChunk) are left untouched -- on real hardware a transparent BG pixel
+        /// doesn't participate in blending at all, the next visible layer underneath becomes
+        /// the effective blend surface instead, which this only approximates by leaving
+        /// whatever's already composited beneath it as-is.
+        /// </summary>
+        private static void DrawBlendedLayer(Bitmap layer, Bitmap composite, int drawY, float eva, float evb)
+        {
+            var srcRect = new Rectangle(0, 0, layer.Width, layer.Height);
+            var srcData = layer.LockBits(srcRect, System.Drawing.Imaging.ImageLockMode.ReadOnly, layer.PixelFormat);
+            int srcStride = srcData.Stride;
+            byte[] srcBuffer = new byte[srcStride * layer.Height];
+            System.Runtime.InteropServices.Marshal.Copy(srcData.Scan0, srcBuffer, 0, srcBuffer.Length);
+            layer.UnlockBits(srcData);
+
+            var dstRect = new Rectangle(0, 0, composite.Width, composite.Height);
+            var dstData = composite.LockBits(dstRect, System.Drawing.Imaging.ImageLockMode.ReadWrite, composite.PixelFormat);
+            int dstStride = dstData.Stride;
+            byte[] dstBuffer = new byte[dstStride * composite.Height];
+            System.Runtime.InteropServices.Marshal.Copy(dstData.Scan0, dstBuffer, 0, dstBuffer.Length);
+
+            for (int y = 0; y < layer.Height; y++)
+            {
+                int dy = y + drawY;
+                if (dy < 0 || dy >= composite.Height) continue;
+
+                for (int x = 0; x < layer.Width && x < composite.Width; x++)
+                {
+                    int so = (y * srcStride) + (x * 4);
+                    byte srcAlpha = srcBuffer[so + 3];
+                    if (srcAlpha == 0) continue; // transparent tile pixel -- not a blend surface
+
+                    int doff = (dy * dstStride) + (x * 4);
+                    dstBuffer[doff + 0] = (byte)Math.Clamp((srcBuffer[so + 0] * eva) + (dstBuffer[doff + 0] * evb), 0, 255);
+                    dstBuffer[doff + 1] = (byte)Math.Clamp((srcBuffer[so + 1] * eva) + (dstBuffer[doff + 1] * evb), 0, 255);
+                    dstBuffer[doff + 2] = (byte)Math.Clamp((srcBuffer[so + 2] * eva) + (dstBuffer[doff + 2] * evb), 0, 255);
+                    dstBuffer[doff + 3] = 255;
+                }
+            }
+
+            System.Runtime.InteropServices.Marshal.Copy(dstBuffer, 0, dstData.Scan0, dstBuffer.Length);
+            composite.UnlockBits(dstData);
         }
 
         // CONFIRMED via IDA 2026-09 (Map_InitRenderer @0x8006152: `LDR R0,[R5,#0x34]` / `BL
@@ -1110,27 +1386,54 @@ namespace DrGero.Rendering
         }
 
         /// <summary>
-        /// Draws the OAM sprite decorations (trees, rocks, etc) that Map_InitTilemap
-        /// spawns from Map_VariationEntry.graphicObjects[] -- a layer entirely separate
-        /// from the BG tilemap DrawLayer produces. EXPERIMENTAL / best-effort: the
-        /// overall pipeline (source resource at +0x2C, decompressed the same way as
-        /// tilesetGraphicsData, uploaded to OBJ VRAM, records select a tile-offset into
-        /// it) is CONFIRMED via raw disasm of sub_80073EA/sub_800733E/sub_80072C4, but
-        /// several details are assumed rather than proven: 8bpp/1-byte-per-pixel tile
-        /// data (matches ItemIconReader's confirmed format for this game, not directly
-        /// verified for THIS resource), the record's unconfirmed +0x10..0x13 field is
-        /// skipped entirely, and tile packing within a multi-tile sprite is assumed
-        /// row-major starting at the record's frame offset. Verify visually; if it
-        /// looks wrong, one of these assumptions is the first thing to revisit.
+        /// Renders one Bitmap per OAM sprite decoration (trees, rocks, flight pads, etc)
+        /// that Map_InitTilemap spawns from Map_VariationEntry.graphicObjects[] -- a layer
+        /// entirely separate from the BG tilemap DrawLayer produces. Keyed by each
+        /// record's ROM address, matching EntityReader.ReadGraphicObjects' Entity.SourceAddress,
+        /// so the editor can draw/drag them as real entities instead of baking them into
+        /// the static map bitmap (which is what this used to do, before decorations became
+        /// selectable -- see MapRenderer.RenderMap's "MOVED 2026-09" comment).
+        ///
+        /// EXPERIMENTAL / best-effort: the overall pipeline (source resource at +0x2C,
+        /// decompressed the same way as tilesetGraphicsData, uploaded to OBJ VRAM, records
+        /// select a tile-offset into it) is CONFIRMED via raw disasm of
+        /// sub_80073EA/sub_800733E/sub_80072C4.
+        ///
+        /// Bit depth is 8bpp/1-byte-per-pixel (matches ItemIconReader's confirmed format for
+        /// this game) -- CONFIRMED empirically 2026-09: an actual test run of this exact
+        /// method against Z1A1's ROM data rendered a clean, coherent rock at 8bpp, and pure
+        /// noise at 4bpp (the 32-byte VRAM DMA stride theory tried twice before this was
+        /// wrong -- that granularity is just the GBA's fixed OBJ tile-*slot* size regardless
+        /// of bit depth, not a format indicator).
+        ///
+        /// frameOffset unit CONFIRMED 2026-09 via full disasm of sub_80067AC (the VRAM
+        /// tile-slot allocator reached through the tileBase lookup both graphicObjects
+        /// constructors perform): every return path is `2 * slotIndex` -- it allocates in
+        /// 64-byte (one 8bpp tile) granularity internally but reports the result in native
+        /// OAM tile-index units, which are 32-byte granularity (an 8bpp tile spans two such
+        /// units). Confirmed empirically too: Z1A1 has 3 identical rock decorations, one at
+        /// frameOffset=0 (renders fine either way) and two at frameOffset=32, which is
+        /// already out of bounds for the map's actual 32-tile (2048-byte) sprite sheet under
+        /// a direct/undivided read -- exactly the reported "rocks invisible" bug. Dividing
+        /// frameOffset by 2 before using it as a local (64-byte-tile) index puts it at tile
+        /// 16, well within range, and renders the identical clean rock as frameOffset=0.
+        ///
+        /// Tile packing within a multi-tile sprite is still assumed row-major from that
+        /// local tile base (`localBase + ty*tilesWide + tx`) -- confirmed correct for a 4x4
+        /// single-row-of-itself block (Z1A1's rocks), but not independently re-verified for
+        /// a wider, multi-row sprite (e.g. save points) now that the /2 fix changes which
+        /// tiles such a sprite actually reads -- worth re-checking those next.
         /// </summary>
-        private static void DrawGraphicObjects(ROM rom, Game game, int mapOffset, Bitmap composite)
+        public static Dictionary<int, Bitmap> RenderGraphicObjectSprites(ROM rom, Game game, int mapOffset)
         {
+            var sprites = new Dictionary<int, Bitmap>();
+
             rom.PushPosition(mapOffset + 0x24);
             int graphicObjectCount = rom.ReadInt();
             int graphicObjectsBase = rom.ReadPointer();
             rom.PopPosition();
 
-            if (graphicObjectCount <= 0 || graphicObjectsBase == 0) return;
+            if (graphicObjectCount <= 0 || graphicObjectsBase == 0) return sprites;
 
             // CONFIRMED via raw disasm (sub_80072C4): Resource_LoadOrDecompress reads
             // directly from Map_VariationEntry+0x2C, the same decompression pipeline
@@ -1138,7 +1441,7 @@ namespace DrGero.Rendering
             rom.PushPosition(mapOffset + 0x2C);
             int sheetPtr = rom.ReadPointer();
             rom.PopPosition();
-            if (sheetPtr == 0) return;
+            if (sheetPtr == 0) return sprites;
 
             byte[] sheetData;
             try
@@ -1147,15 +1450,11 @@ namespace DrGero.Rendering
             }
             catch
             {
-                return; // unsupported/corrupt for this map -- skip decorations rather than guess
+                return sprites; // unsupported/corrupt for this map -- skip decorations rather than guess
             }
 
             var palette = ItemIconReader.ReadOBJPalette(rom, game);
-            const int bytesPerTile = 64; // 8bpp 8x8 tile -- see method doc, not independently verified for this resource
-
-            using var g = Graphics.FromImage(composite);
-            g.InterpolationMode = InterpolationMode.NearestNeighbor;
-            g.PixelOffsetMode = PixelOffsetMode.Half;
+            const int bytesPerTile = 64; // see method doc -- 8bpp; the 32-byte DMA stride theory was wrong (see doc)
 
             for (int i = 0; i < graphicObjectCount; i++)
             {
@@ -1176,19 +1475,35 @@ namespace DrGero.Rendering
                 int tilesWide = Math.Max(1, width / tile_size);
                 int tilesTall = Math.Max(1, height / tile_size);
 
-                for (int ty = 0; ty < tilesTall; ty++)
-                {
-                    for (int tx = 0; tx < tilesWide; tx++)
-                    {
-                        int tileIndex = frameOffset + (ty * tilesWide) + tx;
-                        int srcOffset = tileIndex * bytesPerTile;
-                        if (srcOffset < 0 || srcOffset + bytesPerTile > sheetData.Length) continue;
+                // /2: frameOffset is in native OAM tile-index units (32-byte granularity,
+                // CONFIRMED via sub_80067AC's `2 * slotIndex` return), but this buffer is
+                // indexed in 64-byte (8bpp) tile units -- see method doc.
+                int localTileBase = frameOffset / 2;
 
-                        using var tileBmp = ItemIconReader.RenderIndexed(sheetData.AsSpan(srcOffset, bytesPerTile).ToArray(), tile_size, tile_size, palette);
-                        g.DrawImage(tileBmp, x0 + (tx * tile_size), y0 + (ty * tile_size));
+                var sprite = new Bitmap(tilesWide * tile_size, tilesTall * tile_size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                using (var g = Graphics.FromImage(sprite))
+                {
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+
+                    for (int ty = 0; ty < tilesTall; ty++)
+                    {
+                        for (int tx = 0; tx < tilesWide; tx++)
+                        {
+                            int tileIndex = localTileBase + (ty * tilesWide) + tx;
+                            int srcOffset = tileIndex * bytesPerTile;
+                            if (srcOffset < 0 || srcOffset + bytesPerTile > sheetData.Length) continue;
+
+                            using var tileBmp = ItemIconReader.RenderIndexed(sheetData.AsSpan(srcOffset, bytesPerTile).ToArray(), tile_size, tile_size, palette);
+                            g.DrawImage(tileBmp, tx * tile_size, ty * tile_size);
+                        }
                     }
                 }
+
+                sprites[recordBase] = sprite;
             }
+
+            return sprites;
         }
 
         private static void DrawUnsupportedLayerWarning(Graphics g, int width, int height)
@@ -1545,22 +1860,28 @@ namespace DrGero.Rendering
             int offX = rom.ReadShort() / 4;
             rom.Skip(0x2);
 
-            // +0x11 = scroll Y low byte, +0x12 = unknown (NOT priority -- see the "CORRECTED
-            // 2026-09" comment in RenderMap: real GBA priority is a MAP-level field at
-            // Map_VariationEntry+0x04, one byte per BG index, confirmed via sub_8005F1A
-            // writing it straight into BG0CNT-BG3CNT. This byte is read here and returned
-            // as before so the tuple shape/cache format don't change, but RenderMap no
-            // longer uses it for compositing order -- its real meaning is still unconfirmed.
+            // FIXED 2026-09 (found by diffing against the original LOGExtractor
+            // MapViewer.MapRenderer.DrawLayer, which this was ported from): this is a
+            // plain 16-bit scroll-Y value, `rom.ReadShort() / 4`, exactly like offX --
+            // there never was a separate "priority" byte packed in here. A prior version
+            // of this port incorrectly masked it to `(offYRaw & 0xFF) / 4` and treated the
+            // discarded high byte as an unconfirmed "priority" field. That silently zeroed
+            // offY on every real map that had a nonzero high byte (confirmed against real
+            // ROM data: Z1A1/Z2A1's layers have raw offY values of 256/512/768, i.e. real
+            // offY of 64/128/192 px -- this port was computing 0 for all of them), which is
+            // what produced the reported vertical misalignment between BG layers and the
+            // collision grid. GBA hardware priority is unrelated and unaffected -- it's
+            // still the confirmed MAP-level Map_VariationEntry.bgPriorityPacked (+0x04)
+            // field used by RenderMap, one byte per BG index.
             int offYRaw = rom.ReadShort();
-            int offY = (offYRaw & 0xFF) / 4;
-            int priority = (offYRaw >> 8) & 0xFF;
+            int offY = offYRaw / 4;
 
             rom.Skip(0x1);
             int numCols = rom.ReadByte();
             int numRows = rom.ReadByte();
 
             if (Environment.GetEnvironmentVariable("DBGLAYER") == "1")
-                Console.WriteLine($"    [layer] addr=0x{address:X} offX(raw/4)={offX} offYRaw=0x{offYRaw:X} offY={offY} priorityByte={priority} numCols={numCols} numRows={numRows}");
+                Console.WriteLine($"    [layer] addr=0x{address:X} offX(raw/4)={offX} offYRaw=0x{offYRaw:X} offY={offY} numCols={numCols} numRows={numRows}");
 
             if (offX >= 0x3F00)
             {
@@ -1600,7 +1921,7 @@ namespace DrGero.Rendering
                 usedTilesets.Add(range);
             }
 
-            var result = (layerImage, priority, layerUsedTilesets, unsupported: false);
+            var result = (layerImage, priority: 0, layerUsedTilesets, unsupported: false); // priority field is dead -- see offY fix comment above; real priority comes from RenderMap's bgPriorityPacked
             cache.Add(address, result);
             rom.PopPosition();
 
@@ -1706,6 +2027,112 @@ namespace DrGero.Rendering
             }
 
             return tile_image;
+        }
+
+        /// <summary>
+        /// Walks every BG layer's chunks the same way DrawLayer/DrawChunk do, but only
+        /// records where each tile ID appears (world/composite pixel coordinates) instead
+        /// of decoding pixels -- lets the editor highlight every occurrence of a tile the
+        /// user clicked in the tile list. Kept separate from DrawLayer/DrawChunk (some
+        /// duplicated parsing) rather than threading an output dictionary through their
+        /// cached, pixel-decoding path, since that path has already been a source of
+        /// subtle bugs and this is cheap enough to just re-walk on its own.
+        /// </summary>
+        public static Dictionary<int, List<Point>> BuildTileUsageIndex(ROM rom, int mapOffset)
+        {
+            var index = new Dictionary<int, List<Point>>();
+
+            rom.PushPosition(mapOffset + 0x14);
+            for (int i = 0; i < 4; i++)
+            {
+                int address = rom.ReadPointer();
+                IndexLayerTiles(rom, address, index);
+            }
+            rom.PopPosition();
+
+            return index;
+        }
+
+        private static void IndexLayerTiles(ROM rom, int address, Dictionary<int, List<Point>> index)
+        {
+            if (address == 0x0) return;
+
+            rom.PushPosition(address);
+
+            int layerType = rom.ReadPointer();
+            if (layerType != TiledLayerType)
+            {
+                rom.PopPosition();
+                return;
+            }
+
+            rom.Skip(0x9);
+            int offX = rom.ReadShort() / 4;
+            rom.Skip(0x2);
+            int offYRaw = rom.ReadShort();
+            int offY = offYRaw / 4;
+            rom.Skip(0x1);
+            int numCols = rom.ReadByte();
+            int numRows = rom.ReadByte();
+
+            if (offX >= 0x3F00) { offX -= 0x3F00; offX *= -1; }
+            if (offY >= 0x3F00) { offY -= 0x3F00; offY *= -1; }
+
+            rom.Skip(0x2);
+
+            for (int r = 0; r < numRows; r++)
+            {
+                for (int c = 0; c < numCols; c++)
+                {
+                    int chunkPtr = rom.ReadPointer();
+                    IndexChunkTiles(rom, chunkPtr, (chunk_size_pixels * c) - offX, (chunk_size_pixels * r) - offY, index);
+                }
+            }
+
+            rom.PopPosition();
+        }
+
+        private static void IndexChunkTiles(ROM rom, int address, int originX, int originY, Dictionary<int, List<Point>> index)
+        {
+            if (address == 0x0) return;
+
+            byte[] bytes;
+            try
+            {
+                bytes = JCALG1.Decompress(rom, address);
+            }
+            catch
+            {
+                return;
+            }
+
+            int x = 0;
+            int y = 0;
+
+            for (int i = 0; i < bytes.Length; i += 2)
+            {
+                byte lsb = bytes[i];
+                byte msb = bytes[i + 1];
+                int entry = (msb << 8) + lsb;
+                int tileId = entry & 0x3FF;
+
+                if (tileId != 0)
+                {
+                    if (!index.TryGetValue(tileId, out var list))
+                    {
+                        list = [];
+                        index[tileId] = list;
+                    }
+                    list.Add(new Point(originX + x, originY + y));
+                }
+
+                x += tile_size;
+                if (x >= chunk_size_pixels)
+                {
+                    x = 0;
+                    y += tile_size;
+                }
+            }
         }
 
         private static Dictionary<int, Bitmap> GetTilesetCache(Game game)

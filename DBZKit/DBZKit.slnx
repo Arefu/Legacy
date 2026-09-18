@@ -2,6 +2,9 @@
   <Configurations>
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+  </Folder>
   <Project Path="Bulma/Bulma.csproj" Id="0811f3db-a945-414f-98a3-09bb3de8185a" />
   <Project Path="DBZKit/DBZKit.csproj">
     <Platform Project="x86" />

@@ -138,10 +138,10 @@ namespace Legacy.Zenkai
             new(110, "SetCharEP", 2),
             new(111, "PlayAudioVolume", 2),
             new(112, "op_unk112", 2, "sub_800AE76"),
-            // RENAMED 2026-09-16 (medium confidence, unverified in-game): were
-            // SetSaveExistsFlag_Bit2/Bit3. IDA readers: sub_8004CAC gates the overworld
-            // pause-menu shortcuts on bit2; sub_8017ACC (world map draw) gates location
-            // marker highlighting on bit3 -- see opcode_data.js for details.
+            // RENAMED 2026-09-16: were SetSaveExistsFlag_Bit2/Bit3. IDA readers: sub_8004CAC
+            // gates the overworld pause-menu shortcuts on bit2 (medium confidence, unverified);
+            // sub_8017ACC (world map draw) gates location marker highlighting on bit3 --
+            // CONFIRMED in-game. See opcode_data.js for details.
             new(113, "EnableMenuAccess", 0),
             new(114, "EnableDragonRadar", 0),
             new(115, "SetActiveCharacterNoReset", 1),

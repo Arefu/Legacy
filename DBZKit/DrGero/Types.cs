@@ -43,7 +43,8 @@ namespace DrGero.Types
             SpawnScript,
             Trigger,
             Character,
-            Item
+            Item,
+            Decoration
         }
 
         // Width/Height default to 0 for point-like entities (level gates, objects,

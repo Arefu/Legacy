@@ -499,7 +499,7 @@
     <member name="EnableMenuAccess" arity="0" confidence="medium" originalName="BytecodeVM_EnableMenuAccess" index="113">
       <summary>No arguments.</summary>
     </member>
-    <member name="EnableDragonRadar" arity="0" confidence="medium" originalName="BytecodeVM_EnableDragonRadar" index="114">
+    <member name="EnableDragonRadar" arity="0" confidence="confirmed" originalName="BytecodeVM_EnableDragonRadar" index="114">
       <summary>No arguments.</summary>
     </member>
     <member name="SetActiveCharacterNoReset" arity="1" confidence="medium" originalName="BytecodeVM_SetActiveCharacterNoReset" index="115">

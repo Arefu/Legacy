@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
+    <OutputPath>$(MSBuildThisFileDirectory)Build\$(Configuration)\</OutputPath>
+  </PropertyGroup>
+</Project>

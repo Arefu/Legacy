@@ -765,6 +765,7 @@ namespace Legacy
                         uint entryOffset = info.EntryAddr - RomBase;
                         newRom[entryOffset] = (byte)(desiredIndex & 0xFF);
                         newRom[entryOffset + 1] = (byte)((desiredIndex >> 8) & 0xFF);
+                        info.Index = desiredIndex;
                         continue;
                     }
 
@@ -789,6 +790,7 @@ namespace Legacy
                                 newRom[entryOffset] = (byte)(desiredIndex & 0xFF);
                                 newRom[entryOffset + 1] = (byte)((desiredIndex >> 8) & 0xFF);
                             }
+                            info.Index = desiredIndex;
                         }
                         else
                         {
@@ -809,6 +811,14 @@ namespace Legacy
                             uint slotOffset = info.TableSlotAddr - RomBase;
                             byte[] ptrBytes = BitConverter.GetBytes(newEntryAddr);
                             Array.Copy(ptrBytes, 0, newRom, slotOffset, 4);
+
+                            // Entry physically moved to the appended region - keep this node's
+                            // addresses in sync so further edits (and the next Save) don't
+                            // write to/measure against the old, now-dead location.
+                            info.EntryAddr = newEntryAddr;
+                            info.ScriptAddr = newEntryAddr + ScriptHeaderSize;
+                            info.OriginalScriptLength = compiled.Length;
+                            info.Index = desiredIndex;
                         }
 
                         continue;
@@ -831,6 +841,11 @@ namespace Legacy
                     uint textSlotOffset = info.TableSlotAddr - RomBase;
                     byte[] textPtrBytes = BitConverter.GetBytes(textEntryAddr);
                     Array.Copy(textPtrBytes, 0, newRom, textSlotOffset, 4);
+
+                    // Text entries always append fresh - keep the node in sync with where it
+                    // actually lives now (see the matching comment in the mode-0 branch above).
+                    info.EntryAddr = textEntryAddr;
+                    info.Index = desiredIndex;
             }
 
             byte[] finalRom = new byte[newRom.Length + extension.Count];
@@ -841,16 +856,21 @@ namespace Legacy
             _saveTargetPath = targetPath;
 
             // The tool now keeps editing the ROM it just wrote, not the one it originally
-            // opened. Without this, a second Save would rebuild newRom from the ORIGINAL
-            // _rom bytes again -- silently discarding the first save's changes (and
-            // leaving TableSlotAddr/ScriptAddr stale for anything that got appended).
-            // Rebuilding the whole model is the simplest way to keep every address correct.
+            // opened - otherwise a second Save would rebuild from the ORIGINAL _rom bytes
+            // again, silently discarding the first save's changes. Every dirty DialogNodeInfo
+            // had its addresses patched in place above (see the "info.EntryAddr = ..." lines),
+            // so - unlike an earlier version of this method - there's no need to re-walk the
+            // whole ROM and rebuild the tree: that wiped the user's scroll position, expanded
+            // nodes, and current selection on every single save.
             _rom = finalRom;
-            _currentNode = null;
-            Legacy_IDE.Text = "";
-            Legacy_TextBox.Text = "";
-            ClearCharacterPreview();
-            PopulateDialogTree();
+            _originalRomLength = _rom.Length;
+            _extension.Clear();
+
+            foreach (var info in dirtyInfos)
+            {
+                info.Dirty = false;
+                info.EndsDialogDirty = false;
+            }
 
             ShowStatus($"Saved {dirtyInfos.Count} edited entries to {Path.GetFileName(targetPath)}.");
         }

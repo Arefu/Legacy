@@ -37,17 +37,30 @@
             toolStrip_SaveROM = new ToolStripMenuItem();
             viewportToolStrip = new ToolStrip();
             toolStrip_ShowCollision = new ToolStripButton();
-            toolStrip_ShowPreviewTab = new ToolStripButton();
             sidebarTabControl = new TabControl();
             tilesTabPage = new TabPage();
             listView1 = new ListView();
             itemsTabPage = new TabPage();
             itemsListView = new ListView();
-            previewTabPage = new TabPage();
-            previewPictureBox = new PictureBox();
-            previewCoordLabel = new Label();
-            previewCollisionCheckBox = new CheckBox();
-            previewHintLabel = new Label();
+            objectsTabPage = new TabPage();
+            objectsListView = new ListView();
+            colObjZone = new ColumnHeader();
+            colObjArea = new ColumnHeader();
+            colObjMap = new ColumnHeader();
+            colObjItemId = new ColumnHeader();
+            colObjX = new ColumnHeader();
+            colObjY = new ColumnHeader();
+            objectsButtonPanel = new Panel();
+            objectsGoToButton = new Button();
+            objectsPlaceNewButton = new Button();
+            npcsTabPage = new TabPage();
+            npcSpriteIdLabel = new Label();
+            npcSpriteIdInput = new NumericUpDown();
+            npcPlaceButton = new Button();
+            npcHintLabel = new Label();
+            propertiesTabPage = new TabPage();
+            propertiesGroupBox = new GroupBox();
+            propertiesLabel = new Label();
             statusStrip1 = new StatusStrip();
             statusLabel = new ToolStripStatusLabel();
             mapScrollPanel.SuspendLayout();
@@ -57,8 +70,12 @@
             sidebarTabControl.SuspendLayout();
             tilesTabPage.SuspendLayout();
             itemsTabPage.SuspendLayout();
-            previewTabPage.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)previewPictureBox).BeginInit();
+            objectsTabPage.SuspendLayout();
+            objectsButtonPanel.SuspendLayout();
+            npcsTabPage.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)npcSpriteIdInput).BeginInit();
+            propertiesTabPage.SuspendLayout();
+            propertiesGroupBox.SuspendLayout();
             statusStrip1.SuspendLayout();
             SuspendLayout();
             //
@@ -125,7 +142,7 @@
             //
             // viewportToolStrip
             //
-            viewportToolStrip.Items.AddRange(new ToolStripItem[] { toolStrip_ShowCollision, toolStrip_ShowPreviewTab });
+            viewportToolStrip.Items.AddRange(new ToolStripItem[] { toolStrip_ShowCollision });
             viewportToolStrip.Location = new Point(0, 24);
             viewportToolStrip.Name = "viewportToolStrip";
             viewportToolStrip.Size = new Size(1500, 28);
@@ -139,24 +156,17 @@
             toolStrip_ShowCollision.Name = "toolStrip_ShowCollision";
             toolStrip_ShowCollision.Size = new Size(97, 25);
             toolStrip_ShowCollision.Text = "Show Collision";
-            toolStrip_ShowCollision.ToolTipText = "Overlay solid/blocked tiles (red) on the map and GBA viewport preview";
+            toolStrip_ShowCollision.ToolTipText = "Overlay solid/blocked tiles (red) on the map";
             toolStrip_ShowCollision.CheckedChanged += toolStrip_ShowCollision_CheckedChanged;
-            //
-            // toolStrip_ShowPreviewTab
-            //
-            toolStrip_ShowPreviewTab.DisplayStyle = ToolStripItemDisplayStyle.Text;
-            toolStrip_ShowPreviewTab.Name = "toolStrip_ShowPreviewTab";
-            toolStrip_ShowPreviewTab.Size = new Size(100, 25);
-            toolStrip_ShowPreviewTab.Text = "GBA Preview >>";
-            toolStrip_ShowPreviewTab.ToolTipText = "Jump to the GBA-screen viewport preview tab";
-            toolStrip_ShowPreviewTab.Click += toolStrip_ShowPreviewTab_Click;
             //
             // sidebarTabControl
             //
             sidebarTabControl.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             sidebarTabControl.Controls.Add(tilesTabPage);
             sidebarTabControl.Controls.Add(itemsTabPage);
-            sidebarTabControl.Controls.Add(previewTabPage);
+            sidebarTabControl.Controls.Add(objectsTabPage);
+            sidebarTabControl.Controls.Add(npcsTabPage);
+            sidebarTabControl.Controls.Add(propertiesTabPage);
             sidebarTabControl.Location = new Point(1276, 55);
             sidebarTabControl.Name = "sidebarTabControl";
             sidebarTabControl.SelectedIndex = 0;
@@ -200,56 +210,156 @@
             itemsListView.UseCompatibleStateImageBehavior = false;
             itemsListView.MouseDown += itemsListView_MouseDown;
             //
-            // previewTabPage
+            // objectsTabPage
             //
-            previewTabPage.Controls.Add(previewHintLabel);
-            previewTabPage.Controls.Add(previewCollisionCheckBox);
-            previewTabPage.Controls.Add(previewCoordLabel);
-            previewTabPage.Controls.Add(previewPictureBox);
-            previewTabPage.Location = new Point(4, 24);
-            previewTabPage.Name = "previewTabPage";
-            previewTabPage.Size = new Size(204, 614);
-            previewTabPage.TabIndex = 2;
-            previewTabPage.Text = "GBA Preview";
+            objectsTabPage.Controls.Add(objectsListView);
+            objectsTabPage.Controls.Add(objectsButtonPanel);
+            objectsTabPage.Location = new Point(4, 24);
+            objectsTabPage.Name = "objectsTabPage";
+            objectsTabPage.Size = new Size(204, 614);
+            objectsTabPage.TabIndex = 3;
+            objectsTabPage.Text = "Objects";
             //
-            // previewPictureBox
+            // objectsListView
             //
-            // Shows a 240x160 crop (the real GBA screen resolution) of the fully-rendered map,
-            // at the position the draggable viewport rectangle on the main map view is
-            // currently over -- i.e. what you'd actually see on hardware at that scroll
-            // position. SizeMode=Zoom fits it into the sidebar's available width while keeping
-            // the real 240:160 aspect ratio (no distortion), even though it's necessarily shown
-            // smaller than 1:1 pixels in this panel.
-            previewPictureBox.BackColor = Color.Black;
-            previewPictureBox.BorderStyle = BorderStyle.FixedSingle;
-            previewPictureBox.Dock = DockStyle.Top;
-            previewPictureBox.Height = 200;
-            previewPictureBox.Name = "previewPictureBox";
-            previewPictureBox.SizeMode = PictureBoxSizeMode.Zoom;
-            previewPictureBox.TabStop = false;
+            // Every EntityKind.Object across every map, scanned up front -- see
+            // PopulateObjectsList -- not just whatever's on the currently-open map.
+            objectsListView.Columns.AddRange(new ColumnHeader[] { colObjZone, colObjArea, colObjMap, colObjItemId, colObjX, colObjY });
+            objectsListView.Dock = DockStyle.Fill;
+            objectsListView.FullRowSelect = true;
+            objectsListView.GridLines = true;
+            objectsListView.Location = new Point(0, 0);
+            objectsListView.MultiSelect = false;
+            objectsListView.Name = "objectsListView";
+            objectsListView.Size = new Size(204, 574);
+            objectsListView.TabIndex = 0;
+            objectsListView.UseCompatibleStateImageBehavior = false;
+            objectsListView.View = View.Details;
+            objectsListView.MouseDoubleClick += objectsListView_MouseDoubleClick;
             //
-            // previewCoordLabel
+            // colObjZone
             //
-            previewCoordLabel.Dock = DockStyle.Top;
-            previewCoordLabel.Height = 20;
-            previewCoordLabel.Name = "previewCoordLabel";
-            previewCoordLabel.Text = "Viewport: (0, 0)";
-            previewCoordLabel.TextAlign = ContentAlignment.MiddleCenter;
+            colObjZone.Text = "Zn";
+            colObjZone.Width = 30;
             //
-            // previewCollisionCheckBox
+            // colObjArea
             //
-            previewCollisionCheckBox.Dock = DockStyle.Top;
-            previewCollisionCheckBox.Height = 24;
-            previewCollisionCheckBox.Name = "previewCollisionCheckBox";
-            previewCollisionCheckBox.Text = "Show Collision";
-            previewCollisionCheckBox.CheckedChanged += previewCollisionCheckBox_CheckedChanged;
+            colObjArea.Text = "Ar";
+            colObjArea.Width = 30;
             //
-            // previewHintLabel
+            // colObjMap
             //
-            previewHintLabel.Dock = DockStyle.Top;
-            previewHintLabel.Height = 60;
-            previewHintLabel.Name = "previewHintLabel";
-            previewHintLabel.Text = "Drag on the map with the right mouse button to move the GBA-screen (240x160) viewport shown here.";
+            colObjMap.Text = "Map";
+            colObjMap.Width = 70;
+            //
+            // colObjItemId
+            //
+            colObjItemId.Text = "Item";
+            colObjItemId.Width = 34;
+            //
+            // colObjX
+            //
+            colObjX.Text = "X";
+            colObjX.Width = 40;
+            //
+            // colObjY
+            //
+            colObjY.Text = "Y";
+            colObjY.Width = 40;
+            //
+            // objectsButtonPanel
+            //
+            objectsButtonPanel.Controls.Add(objectsGoToButton);
+            objectsButtonPanel.Controls.Add(objectsPlaceNewButton);
+            objectsButtonPanel.Dock = DockStyle.Bottom;
+            objectsButtonPanel.Height = 40;
+            objectsButtonPanel.Name = "objectsButtonPanel";
+            //
+            // objectsGoToButton
+            //
+            objectsGoToButton.Location = new Point(4, 6);
+            objectsGoToButton.Name = "objectsGoToButton";
+            objectsGoToButton.Size = new Size(95, 28);
+            objectsGoToButton.Text = "Go To";
+            objectsGoToButton.UseVisualStyleBackColor = true;
+            objectsGoToButton.Click += objectsGoToButton_Click;
+            //
+            // objectsPlaceNewButton
+            //
+            objectsPlaceNewButton.Location = new Point(104, 6);
+            objectsPlaceNewButton.Name = "objectsPlaceNewButton";
+            objectsPlaceNewButton.Size = new Size(95, 28);
+            objectsPlaceNewButton.Text = "Place New";
+            objectsPlaceNewButton.UseVisualStyleBackColor = true;
+            objectsPlaceNewButton.Click += objectsPlaceNewButton_Click;
+            //
+            // npcsTabPage
+            //
+            npcsTabPage.Controls.Add(npcHintLabel);
+            npcsTabPage.Controls.Add(npcPlaceButton);
+            npcsTabPage.Controls.Add(npcSpriteIdInput);
+            npcsTabPage.Controls.Add(npcSpriteIdLabel);
+            npcsTabPage.Location = new Point(4, 24);
+            npcsTabPage.Name = "npcsTabPage";
+            npcsTabPage.Size = new Size(204, 614);
+            npcsTabPage.TabIndex = 4;
+            npcsTabPage.Text = "NPCs";
+            //
+            // npcSpriteIdLabel
+            //
+            npcSpriteIdLabel.AutoSize = true;
+            npcSpriteIdLabel.Location = new Point(8, 12);
+            npcSpriteIdLabel.Name = "npcSpriteIdLabel";
+            npcSpriteIdLabel.Size = new Size(60, 15);
+            npcSpriteIdLabel.Text = "Sprite ID:";
+            //
+            // npcSpriteIdInput
+            //
+            npcSpriteIdInput.Location = new Point(8, 30);
+            npcSpriteIdInput.Maximum = new decimal(new int[] { 999, 0, 0, 0 });
+            npcSpriteIdInput.Name = "npcSpriteIdInput";
+            npcSpriteIdInput.Size = new Size(120, 23);
+            //
+            // npcPlaceButton
+            //
+            npcPlaceButton.Location = new Point(8, 60);
+            npcPlaceButton.Name = "npcPlaceButton";
+            npcPlaceButton.Size = new Size(120, 28);
+            npcPlaceButton.Text = "Place NPC";
+            npcPlaceButton.UseVisualStyleBackColor = true;
+          //  npcPlaceButton.Click += npcPlaceButton_Click;
+            //
+            // npcHintLabel
+            //
+            npcHintLabel.Location = new Point(8, 96);
+            npcHintLabel.MaximumSize = new Size(188, 0);
+            npcHintLabel.Name = "npcHintLabel";
+            npcHintLabel.Size = new Size(188, 100);
+            npcHintLabel.Text = "Click the map to place a new NPC with this sprite ID. Esc cancels.\r\n\r\nOnly saves on maps that already have at least one character -- new spawn records need an existing one as a template for unconfirmed fields.";
+            //
+            // propertiesTabPage
+            //
+            propertiesTabPage.Controls.Add(propertiesGroupBox);
+            propertiesTabPage.Location = new Point(4, 24);
+            propertiesTabPage.Name = "propertiesTabPage";
+            propertiesTabPage.Size = new Size(204, 614);
+            propertiesTabPage.TabIndex = 2;
+            propertiesTabPage.Text = "Properties";
+            //
+            // propertiesGroupBox
+            //
+            propertiesGroupBox.Controls.Add(propertiesLabel);
+            propertiesGroupBox.Dock = DockStyle.Top;
+            propertiesGroupBox.Height = 300;
+            propertiesGroupBox.Name = "propertiesGroupBox";
+            propertiesGroupBox.Text = "Properties";
+            //
+            // propertiesLabel
+            //
+            propertiesLabel.Dock = DockStyle.Fill;
+            propertiesLabel.Name = "propertiesLabel";
+            propertiesLabel.Padding = new Padding(6);
+            propertiesLabel.Text = "No selection.";
             //
             // statusStrip1
             // 
@@ -291,8 +401,13 @@
             sidebarTabControl.ResumeLayout(false);
             tilesTabPage.ResumeLayout(false);
             itemsTabPage.ResumeLayout(false);
-            previewTabPage.ResumeLayout(false);
-            ((System.ComponentModel.ISupportInitialize)previewPictureBox).EndInit();
+            objectsTabPage.ResumeLayout(false);
+            objectsButtonPanel.ResumeLayout(false);
+            npcsTabPage.ResumeLayout(false);
+            npcsTabPage.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)npcSpriteIdInput).EndInit();
+            propertiesTabPage.ResumeLayout(false);
+            propertiesGroupBox.ResumeLayout(false);
             statusStrip1.ResumeLayout(false);
             statusStrip1.PerformLayout();
             ResumeLayout(false);
@@ -309,17 +424,30 @@
         private ToolStripMenuItem toolStrip_SaveROM;
         private ToolStrip viewportToolStrip;
         private ToolStripButton toolStrip_ShowCollision;
-        private ToolStripButton toolStrip_ShowPreviewTab;
         private TabControl sidebarTabControl;
         private TabPage tilesTabPage;
         private ListView listView1;
         private TabPage itemsTabPage;
         private ListView itemsListView;
-        private TabPage previewTabPage;
-        private PictureBox previewPictureBox;
-        private Label previewCoordLabel;
-        private CheckBox previewCollisionCheckBox;
-        private Label previewHintLabel;
+        private TabPage objectsTabPage;
+        private ListView objectsListView;
+        private ColumnHeader colObjZone;
+        private ColumnHeader colObjArea;
+        private ColumnHeader colObjMap;
+        private ColumnHeader colObjItemId;
+        private ColumnHeader colObjX;
+        private ColumnHeader colObjY;
+        private Panel objectsButtonPanel;
+        private Button objectsGoToButton;
+        private Button objectsPlaceNewButton;
+        private TabPage npcsTabPage;
+        private Label npcSpriteIdLabel;
+        private NumericUpDown npcSpriteIdInput;
+        private Button npcPlaceButton;
+        private Label npcHintLabel;
+        private TabPage propertiesTabPage;
+        private GroupBox propertiesGroupBox;
+        private Label propertiesLabel;
         private StatusStrip statusStrip1;
         private ToolStripStatusLabel statusLabel;
     }

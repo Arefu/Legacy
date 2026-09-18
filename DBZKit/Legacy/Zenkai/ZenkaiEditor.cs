@@ -133,15 +133,6 @@ namespace Legacy.Zenkai
                 sc.CallTipCancel();
             };
 
-            // Visual-Studio-style description alongside the Ctrl+Space list: as the
-            // highlighted entry changes (arrow keys or further typing narrowing the list),
-            // show its doc summary as a call tip anchored at the word being completed.
-            sc.AutoCSelection += (s, e) =>
-            {
-                string? tip = FindDocByOpName(e.Text);
-                if (tip == null) { sc.CallTipCancel(); return; }
-                sc.CallTipShow(autoCAnchor >= 0 ? autoCAnchor : e.Position, tip);
-            };
             // After insertion, swap the description tip for the arg-template one (same
             // content "(" would trigger) so you immediately see what to type next.
             sc.AutoCCompleted += (s, e) =>
