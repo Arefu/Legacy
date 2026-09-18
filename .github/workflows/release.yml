@@ -32,20 +32,18 @@ jobs:
         run: dotnet restore DBZKit/Legacy/Legacy.csproj
 
       - name: Publish DBZKit
-        run: dotnet publish DBZKit/DBZKit/DBZKit.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/DBZKit
+        run: dotnet publish DBZKit/DBZKit/DBZKit.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/release
 
       - name: Publish Dragon Radar
-        run: dotnet publish "DBZKit/Dragon Radar/Dragon Radar.csproj" -c Release -o publish/DragonRadar
+        run: dotnet publish "DBZKit/Dragon Radar/Dragon Radar.csproj" -c Release -o publish/release
 
       - name: Publish Legacy
-        run: dotnet publish DBZKit/Legacy/Legacy.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/Legacy
+        run: dotnet publish DBZKit/Legacy/Legacy.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/release
 
       - name: Zip artifacts
         shell: pwsh
         run: |
-          Compress-Archive -Path publish/DBZKit/* -DestinationPath DBZKit-${{ github.ref_name }}.zip
-          Compress-Archive -Path publish/DragonRadar/* -DestinationPath DragonRadar-${{ github.ref_name }}.zip
-          Compress-Archive -Path publish/Legacy/* -DestinationPath Legacy-${{ github.ref_name }}.zip
+          Compress-Archive -Path publish/release/* -DestinationPath DBZKit-${{ github.ref_name }}.zip
 
       - name: Create GitHub Release
         env:
@@ -53,7 +51,5 @@ jobs:
         run: |
           gh release create ${{ github.ref_name }} `
             DBZKit-${{ github.ref_name }}.zip `
-            DragonRadar-${{ github.ref_name }}.zip `
-            Legacy-${{ github.ref_name }}.zip `
             --title "${{ github.ref_name }}" `
             --generate-notes
