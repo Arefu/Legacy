@@ -72,8 +72,10 @@ namespace Legacy.Zenkai
             new(50, "StopMusic", 0),
             new(51, "SpawnCharacterEntity", 3),
             new(52, "DespawnEntity", 1),
-            new(53, "op_unk53", 3, "sub_8009D4A"),
-            new(54, "MoveEntityToPosition", 3),
+            // CONFIRMED 2026-09 (user): walks toward the target position (ground pathing), distinct from opcode 54's FlyToPosition (direct/airborne move).
+            new(53, "WalkToPosition", 3),
+            // RENAMED 2026-09 (was "MoveEntityToPosition") -- CONFIRMED: flies directly to the target position, not ground pathing.
+            new(54, "FlyToPosition", 3),
             new(55, "SetEntityFacing", 2),
             new(56, "SetEntityFollow", 2),
             new(57, "SetEntityAnimation", 2),
@@ -183,5 +185,146 @@ namespace Legacy.Zenkai
         internal static readonly Dictionary<string, OpcodeInfo> NameMap = ByIndex
             .GroupBy(o => o.Name)
             .ToDictionary(g => g.Key, g => g.OrderBy(o => o.Index).First());
+
+        /// <summary>
+        /// Resolves a typed opcode name the same way a human reader would, not just an
+        /// exact match: case-insensitive, then substring (typing "transformation" finds
+        /// SetCharacterTransformation), then typo-tolerant (a small Damerau-Levenshtein
+        /// distance against any same-length-ish window of a candidate name, so e.g.
+        /// "TranFsorMation" -- transposed letters -- still resolves). Tries exact match
+        /// first so well-formed scripts are completely unaffected.
+        /// </summary>
+        /// <summary>
+        /// Every name from <paramref name="candidates"/> that plausibly matches
+        /// <paramref name="typed"/> -- for LIVE autocomplete filtering, where multiple
+        /// results are expected and fine (the user picks from the list), unlike
+        /// TryResolveFuzzy which needs exactly one answer. Prefix matches first (so
+        /// normal typing behaves the same as a plain prefix-filtered list always did),
+        /// then substring (typing "transformation" surfaces SetCharacterTransformation
+        /// even though it doesn't start with that), then typo-tolerant as a last resort.
+        /// Returns everything, unfiltered, once typed is empty.
+        /// </summary>
+        internal static List<string> FuzzyFilterNames(string typed, IEnumerable<string> candidates)
+        {
+            var all = candidates.ToList();
+            if (typed.Length == 0) return all;
+
+            string needle = typed.ToLowerInvariant();
+
+            var prefix = all.Where(n => n.ToLowerInvariant().StartsWith(needle)).ToList();
+            var substring = all.Where(n => !prefix.Contains(n) && n.ToLowerInvariant().Contains(needle)).ToList();
+            if (prefix.Count > 0 || substring.Count > 0)
+                return prefix.Concat(substring).ToList();
+
+            const int maxDistance = 2;
+            var fuzzy = new List<(string Name, int Distance)>();
+            foreach (var name in all)
+            {
+                string candidate = name.ToLowerInvariant();
+                int best = int.MaxValue;
+                for (int start = 0; start <= Math.Max(0, candidate.Length - needle.Length); start++)
+                {
+                    int len = Math.Min(needle.Length + maxDistance, candidate.Length - start);
+                    if (len <= 0) continue;
+                    int dist = DamerauLevenshtein(needle, candidate.Substring(start, len));
+                    if (dist < best) best = dist;
+                }
+                if (candidate.Length <= needle.Length + maxDistance)
+                {
+                    int dist = DamerauLevenshtein(needle, candidate);
+                    if (dist < best) best = dist;
+                }
+                if (best <= maxDistance)
+                    fuzzy.Add((name, best));
+            }
+
+            return fuzzy.OrderBy(f => f.Distance).Select(f => f.Name).ToList();
+        }
+
+        internal static bool TryResolveFuzzy(string typed, out OpcodeInfo? result, out string? error)
+        {
+            result = null;
+            error = null;
+
+            if (NameMap.TryGetValue(typed, out var exact))
+            {
+                result = exact;
+                return true;
+            }
+
+            string needle = typed.ToLowerInvariant();
+
+            var caseInsensitive = NameMap.Where(kv => kv.Key.Equals(typed, StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Value).Distinct().ToList();
+            if (caseInsensitive.Count == 1) { result = caseInsensitive[0]; return true; }
+
+            var substring = NameMap.Where(kv => kv.Key.ToLowerInvariant().Contains(needle)).Select(kv => kv.Value).Distinct().ToList();
+            if (substring.Count == 1) { result = substring[0]; return true; }
+            if (substring.Count > 1)
+            {
+                error = $"'{typed}' matches multiple opcodes: {string.Join(", ", substring.Select(o => o.Name).Distinct().OrderBy(n => n))}. Be more specific.";
+                return false;
+            }
+
+            // Typo-tolerant fallback: slide a same-length-ish window across every
+            // candidate name and keep the smallest edit distance seen, tiny threshold
+            // (<=2) so it only catches genuine near-misses, not unrelated short names.
+            const int maxDistance = 2;
+            var fuzzy = new List<(OpcodeInfo Op, int Distance)>();
+            foreach (var group in NameMap.GroupBy(kv => kv.Value).Select(g => g.First()))
+            {
+                string candidate = group.Key.ToLowerInvariant();
+                int best = int.MaxValue;
+                for (int start = 0; start <= Math.Max(0, candidate.Length - needle.Length); start++)
+                {
+                    int len = Math.Min(needle.Length + maxDistance, candidate.Length - start);
+                    if (len <= 0) continue;
+                    int dist = DamerauLevenshtein(needle, candidate.Substring(start, len));
+                    if (dist < best) best = dist;
+                }
+                if (candidate.Length <= needle.Length + maxDistance)
+                {
+                    int dist = DamerauLevenshtein(needle, candidate);
+                    if (dist < best) best = dist;
+                }
+                if (best <= maxDistance)
+                    fuzzy.Add((group.Value, best));
+            }
+
+            if (fuzzy.Count > 0)
+            {
+                int bestDistance = fuzzy.Min(f => f.Distance);
+                var closest = fuzzy.Where(f => f.Distance == bestDistance).Select(f => f.Op).Distinct().ToList();
+                if (closest.Count == 1) { result = closest[0]; return true; }
+                error = $"'{typed}' is ambiguous between: {string.Join(", ", closest.Select(o => o.Name).Distinct().OrderBy(n => n))}. Be more specific.";
+                return false;
+            }
+
+            error = $"Unknown opcode '{typed}'.";
+            return false;
+        }
+
+        // Standard Damerau-Levenshtein (insert/delete/substitute/adjacent-transpose) --
+        // transpose is what makes "TranFsorMation" (swapped 's'/'f') a distance-1 match
+        // against the matching substring of "SetCharacterTransFormation", rather than
+        // requiring 2 substitutions like plain Levenshtein would.
+        private static int DamerauLevenshtein(string a, string b)
+        {
+            int[,] d = new int[a.Length + 1, b.Length + 1];
+            for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+            for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+
+            for (int i = 1; i <= a.Length; i++)
+            {
+                for (int j = 1; j <= b.Length; j++)
+                {
+                    int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                    int val = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+                    if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1])
+                        val = Math.Min(val, d[i - 2, j - 2] + 1);
+                    d[i, j] = val;
+                }
+            }
+            return d[a.Length, b.Length];
+        }
     }
 }

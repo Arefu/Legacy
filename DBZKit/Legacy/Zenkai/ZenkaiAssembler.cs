@@ -132,8 +132,8 @@ namespace Legacy.Zenkai
                     continue;
                 }
 
-                if (!OpcodeTable.NameMap.TryGetValue(opName, out var op))
-                    throw new ZenkaiAssemblerException($"Unknown opcode '{opName}'");
+                if (!OpcodeTable.TryResolveFuzzy(opName, out var op, out string? resolveError) || op == null)
+                    throw new ZenkaiAssemblerException(resolveError ?? $"Unknown opcode '{opName}'");
 
                 var intArgs = new List<long>();
                 foreach (var a in args)

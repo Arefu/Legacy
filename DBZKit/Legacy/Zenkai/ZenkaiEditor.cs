@@ -43,10 +43,38 @@ namespace Legacy.Zenkai
             sc.Indicators[SquiggleIndicator].Style = IndicatorStyle.Squiggle;
             sc.Indicators[SquiggleIndicator].ForeColor = Color.Red;
 
+            // VS-light-theme-style call tip: white background, near-black body text, the
+            // opcode name highlighted in VS's signature-help blue via CallTipSetHlt (a
+            // plain character-offset range, set per-call in FindDocByOpName's callers --
+            // NOT via embedded \x01/\x02 control codes, which actually draw clickable
+            // up/down-arrow buttons in real Scintilla, not colored text). Back/fore colors
+            // for the tip body come from the Style.CallTip style itself, not a separate
+            // setter -- this ScintillaNET version doesn't expose CallTipSetBack/Fore/
+            // UseStyle at all (checked via reflection), only ForeHlt/SetHlt.
+            sc.Styles[Style.CallTip].Font = "Consolas";
+            sc.Styles[Style.CallTip].Size = 9;
+            sc.Styles[Style.CallTip].BackColor = Color.White;
+            sc.Styles[Style.CallTip].ForeColor = Color.FromArgb(30, 30, 30);
+            sc.CallTipSetForeHlt(Color.FromArgb(0, 90, 180));
+
             // Case-insensitive search (typing "pick" finds "PickUpItem"), but Scintilla still
             // inserts the list's own canonical casing on selection, not what was typed.
             sc.AutoCIgnoreCase = true;
             sc.AutoCMaxHeight = 9;
+            // Filtering now reorders by relevance (prefix matches before substring
+            // matches, see ShowAutoComplete below) rather than staying alphabetical, so
+            // Scintilla can no longer assume the list is presorted for its own internal
+            // jump-to-typed-text lookup -- PerformSort has it sort (a copy) itself instead.
+            sc.AutoCOrder = Order.PerformSort;
+            // CONFIRMED (2026-09, real repro): defaults to true, and is exactly what was
+            // fighting ShowAutoComplete's own re-filtering -- Scintilla auto-cancels/
+            // narrows the ALREADY-VISIBLE list by PREFIX on every keystroke regardless of
+            // what we re-show it with (e.g. after "tr" shows SetCharacterTransformation as
+            // a substring match, typing "a" makes Scintilla check "does 'SetCharacter...'
+            // start with 'tra'?", find no, and collapse to empty before/alongside our own
+            // recompute). Turning this off hands 100% of show/hide control to our own
+            // FuzzyFilterNames-driven re-show, which is already correct on its own.
+            sc.AutoCAutoHide = false;
 
             // Where the current autocomplete word started - used both to re-anchor the
             // description call tip (AutoCSelection below) and, for the "(" case, to show
@@ -63,20 +91,48 @@ namespace Legacy.Zenkai
                 int wordStart = sc.WordStartPosition(currentPos, true);
                 autoCAnchor = wordStart;
                 int lenEntered = currentPos - wordStart;
-                sc.AutoCShow(lenEntered, AllNames());
+                string typed = sc.GetTextRange(wordStart, lenEntered);
+
+                // CONFIRMED (2026-09, real repro): Scintilla applies its OWN passive
+                // prefix-only narrowing to the list ALREADY on screen every time a
+                // character is typed while AutoC is active -- independent of, and BEFORE,
+                // this handler re-computes anything. So e.g. after "tr" shows a substring
+                // match like SetCharacterTransformation, typing "a" makes Scintilla check
+                // "does the CURRENTLY VISIBLE text start with 'tra'?", find nothing (it
+                // matched as a substring, not a prefix), and collapse the list to empty --
+                // then this handler's own re-show runs on top of that already-broken
+                // state. Explicitly cancelling first forces a clean full re-show from our
+                // own filtered list every keystroke instead of ever hitting that path.
+                var filtered = OpcodeTable.FuzzyFilterNames(typed, AllNames().Split(' '));
+                if (sc.AutoCActive) sc.AutoCCancel();
+                if (filtered.Count == 0) return;
+
+                sc.AutoCShow(lenEntered, string.Join(" ", filtered));
             }
 
-            string? FindDocByOpName(string opName)
+            // (tip text, highlight length) -- highlight length is how many characters
+            // at the START of the tip (the opcode name) to color via CallTipSetHlt.
+            // NOTE: \x01/\x02 are NOT generic highlight markers -- in real Scintilla
+            // they draw actual clickable up/down-arrow buttons (multi-signature paging).
+            // An earlier pass here wrapped text in them expecting colored text and got
+            // literal broken-looking arrow buttons instead. The real highlight API is
+            // CallTipSetHlt(start, end), a plain character-offset range with no embedded
+            // control codes at all -- used below instead.
+            (string Tip, int HighlightLength)? FindDocByOpName(string opName)
             {
-                OpcodeDocs.OpcodeDoc? doc = OpcodeTable.NameMap.TryGetValue(opName, out var op)
+                // Same fuzzy resolution ZenkaiAssembler uses at build time (exact ->
+                // case-insensitive -> substring -> typo-tolerant) -- so hovering/typing
+                // "transformation" finds SetCharacterTransformation's docs too, not just
+                // an exact, correctly-cased name.
+                OpcodeDocs.OpcodeDoc? doc = OpcodeTable.TryResolveFuzzy(opName, out var op, out _) && op != null
                     ? OpcodeDocs.Find(op)
                     : OpcodeDocs.Find(opName);
                 if (doc == null) return null;
 
-                string tip = doc.Summary;
+                string tip = doc.Name + "\n" + doc.Summary;
                 if (doc.Params.Count > 0)
                     tip += "\n" + string.Join("\n", doc.Params.Select(p => $"  {p.Name} - {p.Description}"));
-                return tip;
+                return (tip, doc.Name.Length);
             }
 
             // wordPos: any position inside (or at the end of) the opcode name's word.
@@ -89,10 +145,11 @@ namespace Legacy.Zenkai
                 if (nameStart >= nameEnd) { sc.CallTipCancel(); return; }
 
                 string opName = sc.GetTextRange(nameStart, nameEnd - nameStart);
-                string? tip = FindDocByOpName(opName);
-                if (tip == null) { sc.CallTipCancel(); return; }
+                var found = FindDocByOpName(opName);
+                if (found == null) { sc.CallTipCancel(); return; }
 
-                sc.CallTipShow(anchorPos, tip);
+                sc.CallTipShow(anchorPos, found.Value.Tip);
+                sc.CallTipSetHlt(0, found.Value.HighlightLength);
             }
 
             void ShowCallTip()
@@ -137,9 +194,10 @@ namespace Legacy.Zenkai
             // content "(" would trigger) so you immediately see what to type next.
             sc.AutoCCompleted += (s, e) =>
             {
-                string? tip = FindDocByOpName(e.Text);
-                if (tip == null) { sc.CallTipCancel(); return; }
-                sc.CallTipShow(sc.CurrentPosition, tip);
+                var found = FindDocByOpName(e.Text);
+                if (found == null) { sc.CallTipCancel(); return; }
+                sc.CallTipShow(sc.CurrentPosition, found.Value.Tip);
+                sc.CallTipSetHlt(0, found.Value.HighlightLength);
             };
             sc.AutoCCancelled += (s, e) => sc.CallTipCancel();
 
@@ -168,7 +226,15 @@ namespace Legacy.Zenkai
                 }
                 else if (e.KeyCode == Keys.Tab && sc.AutoCActive)
                 {
+                    // AutoCComplete() commits the selected item but, unlike Enter/
+                    // double-click, doesn't reliably raise the AutoCCompleted .NET event
+                    // in this ScintillaNET version -- so the tab-complete path was
+                    // silently skipping both the "(" and the call tip that follow a
+                    // normal completion. Doing both explicitly here instead of relying on
+                    // that event firing.
                     sc.AutoCComplete();
+                    sc.AddText("(");
+                    ShowCallTip();
                     e.SuppressKeyPress = true;
                 }
             };
