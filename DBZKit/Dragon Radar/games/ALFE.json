@@ -8,5 +8,7 @@
     "CharacterSpriteIndexOffset": "0x3B4E74",
     "TileAtlasOffset": "0x4DF574",
     "DefaultCharStats": "1D9548",
-    "DefaultExpThresholds": "1D9834"
+    "DefaultExpThresholds": "1D9834",
+    "QuestTableOffset": "0x6D68DC",
+    "QuestCount": 43
 }
