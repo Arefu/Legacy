@@ -551,8 +551,24 @@ namespace DrGero.Boot
             return addresses;
         }
 
-        /// <summary>One frame's raw decompressed bytes (headerless JCALG1 stream -- see class doc) -- for asset extraction.</summary>
-        public static byte[] GetRawFrameBytes(ROM rom, int resourceAddress) => JCALG1.DecompressUnknownHeader(rom, resourceAddress);
+        /// <summary>
+        /// One frame's raw decompressed bytes. CONFIRMED 2026-09 (direct test against the
+        /// real ROM): these 8 frames are back-to-back headerless JCALG1 streams -- each
+        /// decompression's end offset lands EXACTLY on the next frame's start address, and
+        /// each one decompresses to precisely 1024 bytes (32x32 8bpp). An earlier pass here
+        /// used JCALG1.DecompressUnknownHeader, which skips 4 bytes before decoding -- WRONG
+        /// for this table specifically (there's no leading value to skip at all), and it
+        /// made the decompressor read from the wrong bit position and crash with
+        /// IndexOutOfRangeException on every single frame. DecompressSequential (no skip)
+        /// is the correct call here.
+        /// </summary>
+        public static byte[] GetRawFrameBytes(ROM rom, int resourceAddress)
+        {
+            rom.PushPosition(resourceAddress & 0x00FFFFFF);
+            var result = JCALG1.DecompressSequential(rom, FrameWidth * FrameHeight);
+            rom.PopPosition();
+            return result.Data;
+        }
 
         public static Color[] GetPalette(ROM rom)
         {

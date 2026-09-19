@@ -37,6 +37,15 @@ namespace DrGero.Config
         [JsonConverter(typeof(HexIntConverter))]
         public int DefaultExpThresholds { get; set; }
 
+        // g_QuestEntries -- CONFIRMED via IDA 2026-09 (QuestLog_Build @0x80049FC): a fixed
+        // array of QuestCount 16-byte QuestEntry records (Priority, isAvailableScript,
+        // isCompleteScript, EntryName). See DrGero.Quests.QuestReader for the rest of the
+        // chain (decoding the tiny condition scripts into readable flag checks).
+        [JsonConverter(typeof(HexIntConverter))]
+        public int QuestTableOffset { get; set; }
+
+        public int QuestCount { get; set; }
+
         public class HexIntConverter : JsonConverter<int>
         {
             public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)

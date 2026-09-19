@@ -35,7 +35,18 @@ namespace DrGero.IO
         public void Seek(int newPosition)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(newPosition, 0);
-            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(newPosition, Length);
+            // newPosition == Length is a valid "just past the last byte" position (the same
+            // state reading the final byte of the file naturally leaves _position in via
+            // Read()'s mem[_position++]) -- it just can't be READ from, which CheckLength
+            // already enforces on every Read*/Skip call. Rejecting it here too used to make
+            // PushPosition/PopPosition crash any time a push/pop pair straddled a read that
+            // ended exactly at EOF -- confirmed via a real crash (2026-09-19): a brand new
+            // trigger appended at the very end of a growing ROM, whose 8-byte
+            // {vTable,dataPtr} array entry was also the last 8 bytes in the file, left
+            // _position == Length after reading it; the next PushPosition/PopPosition pair
+            // around the trigger's own data (a legitimate, unrelated read) then threw trying
+            // to restore that saved position. Only reject genuinely too-far positions.
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(newPosition, Length);
 
             _position = newPosition;
         }
@@ -200,13 +211,23 @@ namespace DrGero.IO
         /// </summary>
         public int AllocateFreeSpace(int size)
         {
+            // Every allocation starts on a 4-byte boundary (sizes are rounded up to a multiple of 4,
+            // and the pool/file end is aligned before the first hand-out). FIXED 2026-09-19: this
+            // used to hand out back-to-back exact-size chunks, so after any odd-sized allocation the
+            // next one was misaligned -- and the GBA's 32-bit loads from a misaligned ROM address
+            // return a ROTATED word. The game reads resource headers (format/size) and pointer
+            // arrays that way, so a misaligned stored resource was decoded as garbage (a collision
+            // grid that made the player unable to move, for one). Aligned space costs at most 3
+            // bytes per allocation.
+            size = (size + 3) & ~3;
+
             if (_freeSpaceCursor < 0)
             {
                 _originalLength = mem.Length;
                 byte fill = mem[mem.Length - 1];
                 int i = mem.Length - 1;
                 while (i > 0 && mem[i] == fill) i--;
-                _freeSpaceCursor = i + 1;
+                _freeSpaceCursor = (i + 1 + 3) & ~3;
             }
 
             if (_freeSpaceCursor + size <= _originalLength)
@@ -220,6 +241,9 @@ namespace DrGero.IO
             // chunk lands past the previous one since AppendBytes always writes at
             // the current mem.Length, so callers still get back-to-back, non-
             // overlapping addresses exactly like the padding-pool path above.
+            // Keep the file end aligned too, so the appended chunk starts on a 4-byte boundary.
+            int misalignment = mem.Length & 3;
+            if (misalignment != 0) AppendBytes(new byte[4 - misalignment]);
             return AppendBytes(new byte[size]);
         }
 

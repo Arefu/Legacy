@@ -150,9 +150,19 @@ namespace DrGero.Rendering
                     int coordAddress = objectPtr + 8;
                     int x = rom.ReadInt();
                     int y = rom.ReadInt();
+
+                    // FIXED 2026-09-19: these two fields were never actually read here --
+                    // Entity.OnPickup/CollectionMsg silently stayed 0 for every real object
+                    // (UpdatePropertiesPanel's "if (entity.OnPickup != 0)" check was always
+                    // false), even though FindPickupTemplates/PersistNewObjects already read
+                    // this exact same +0x10/+0x14 pair elsewhere in this file. Same shape as
+                    // a trigger's payload pointer -- this is what "Edit Script" on an object
+                    // (Math Book, Golden Capsules, etc) now resolves and writes back through.
+                    int onPickup = rom.ReadInt();
+                    int collectionMsg = rom.ReadInt();
                     rom.PopPosition();
 
-                    result.Add(new Entity(EntityKind.Object, x, y, itemId, entryAddress, PositionAddress: coordAddress));
+                    result.Add(new Entity(EntityKind.Object, x, y, itemId, entryAddress, PositionAddress: coordAddress, OnPickup: onPickup, CollectionMsg: collectionMsg));
                 }
             }
 
@@ -279,9 +289,22 @@ namespace DrGero.Rendering
 
                     result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress));
                 }
-                // Other handlers may exist in mapScripts (enemies, effects,
-                // etc.) but haven't been identified yet -- skipped rather
-                // than guessing at their record layout/position.
+                else if (handler == (EnemyRecords.SpawnHandler & 0x00FFFFFF)) // ReadPointer strips the 0x08 top byte
+                {
+                    // MapScript_CreateEnemy -- see EnemyRecords for the full record layout.
+                    // Position is INLINE at +0xC (not +8 like the character handlers).
+                    rom.PopPosition();
+                    rom.PushPosition(recordAddress + EnemyRecords.StatIndexOffset);
+                    int statIndex = rom.ReadInt();
+                    int x = rom.ReadShort();
+                    int y = rom.ReadShort();
+                    int spriteId = rom.ReadInt();
+
+                    result.Add(new Entity(EntityKind.Enemy, x, y, spriteId, recordAddress,
+                        PositionAddress: recordAddress + EnemyRecords.PositionOffset, StatIndex: statIndex));
+                }
+                // Other handlers may exist in mapScripts (effects, etc.) but haven't
+                // been identified yet -- skipped rather than guessing at their layout.
 
                 rom.PopPosition();
             }
@@ -466,6 +489,10 @@ namespace DrGero.Rendering
 
             switch (entity.Kind)
             {
+                case EntityKind.Enemy:
+                    EnemyRecords.Move(rom, entity.SourceAddress, newX, newY); // also shifts its patrol waypoints
+                    break;
+
                 case EntityKind.LevelGate:
                 case EntityKind.Character:
                     rom.PatchInt16(entity.PositionAddress, (short)newX);
@@ -799,48 +826,36 @@ namespace DrGero.Rendering
             if (newCharacters.Count == 0)
                 return 0;
 
-            int templateActionData = 0;
             var existingRecordPtrs = new List<int>();
-
             if (entry.MapScripts != 0 && entry.ScriptCount > 0)
             {
                 rom.PushPosition(entry.MapScripts);
                 for (int i = 0; i < entry.ScriptCount; i++)
                     existingRecordPtrs.Add(rom.ReadInt()); // raw, already-encoded pointer value
                 rom.PopPosition();
-
-                foreach (int rawPtr in existingRecordPtrs)
-                {
-                    int recordAddr = rawPtr & 0x00FFFFFF;
-                    if (recordAddr == 0) continue;
-
-                    rom.PushPosition(recordAddr);
-                    int handler = rom.ReadPointer();
-                    if (handler == EntityReader.CharacterSpawnHandlerOffset)
-                    {
-                        templateActionData = rom.ReadBytesAt(recordAddr + 0x10, 4) is { Length: 4 } b ? BitConverter.ToInt32(b) : 0;
-                        rom.PopPosition();
-                        break;
-                    }
-                    rom.PopPosition();
-                }
             }
 
             var newRecordAddresses = new List<int>();
             foreach (var character in newCharacters)
             {
+                // CORRECTED 2026-09-19 (IDA: EntityBehaviorList_Tick @0x800D156): "actionData" is
+                // NOT a value -- MapScript_CreateCharacter passes the ADDRESS of record+0x10, which
+                // is an inline behavior list {u32 count; ptr[count]}, cycled forever. The last two
+                // fields IDA calls next/spawnFunc are really the record's one inline behavior object
+                // (here {NpcBehavior_Idle_Create 0x0800CB0F, flags}: idle random wandering, chance
+                // 0x7D00/65536 per tick). The old code wrote count=1 with a NULL ptr[0], which the
+                // cycler would call straight through.
+                int addr = rom.AllocateFreeSpace(EntityReader.MapScriptRecordSize);
                 var record = new List<byte>();
                 record.AddRange(BitConverter.GetBytes(0x08000000 | EntityReader.CharacterSpawnHandlerOffset)); // handler
                 record.AddRange(BitConverter.GetBytes(0));               // flags/condition = null -> Condition_Evaluate always true
                 record.AddRange(BitConverter.GetBytes((short)character.X));
                 record.AddRange(BitConverter.GetBytes((short)character.Y));
                 record.AddRange(BitConverter.GetBytes(character.TypeId)); // spriteId
-                record.AddRange(BitConverter.GetBytes(templateActionData)); // actionData -- see method doc
-                record.AddRange(BitConverter.GetBytes(0)); // scriptFunc -- CONFIRMED unused by this handler, see method doc
-                record.AddRange(BitConverter.GetBytes(0)); // next -- CONFIRMED unused by this handler
-                record.AddRange(BitConverter.GetBytes(0)); // spawnFunc -- CONFIRMED unused by this handler
-
-                int addr = rom.AllocateFreeSpace(record.Count);
+                record.AddRange(BitConverter.GetBytes(1));                // behavior count
+                record.AddRange(BitConverter.GetBytes(0x08000000 | (addr + 0x18))); // ptr[0] -> the inline object below
+                record.AddRange(BitConverter.GetBytes(EnemyRecords.IdleHandler));   // +0x18 behavior create-fn
+                record.AddRange(BitConverter.GetBytes(0x7D00));                     // +0x1C idle chance/direction flags
                 rom.WriteBytesAt(addr, record.ToArray());
                 newRecordAddresses.Add(addr);
             }
@@ -1026,7 +1041,7 @@ namespace DrGero.Rendering
     }
 
     /// <summary>
-    /// Resolves and renders a live preview icon for EntityKind.Character sprite ids, by
+    /// Resolves and renders live preview frames for EntityKind.Character sprite ids, by
     /// walking the SAME pointer chain the game itself uses at runtime.
     ///
     /// CONFIRMED via IDA 2026-09 (Character_GetSpriteId @0x8009324): for id&gt;=7, this
@@ -1034,28 +1049,35 @@ namespace DrGero.Rendering
     /// a per-character record. Ids 0-6 are a completely different, dynamic lookup
     /// (Character_GetSpriteIdFromStats, the PLAYER's own current party members, resolved
     /// from live save-state stats/transformation -- not a fixed ROM sprite at all) and are
-    /// NOT handled by this reader; GetIcon returns null for them.
+    /// NOT handled by this reader; GetIcon/GetAllFrames return null/empty for them.
     ///
-    /// CONFIRMED via IDA 2026-09 (Entity_Init/sub_80075A8) plus an empirical sweep of every
-    /// spriteId in this ROM: the pointer leads to a 16-byte header, then four 16-byte "slot"
-    /// entries; slots not in use have a sentinel 4th field (seen: -2, -1, 0) while an active
-    /// slot's 4th field is a real ROM pointer (top byte 0x08) to a small array of 12-byte
-    /// frame-descriptor entries. Bytes +2/+3 of that frame descriptor are the frame's real
-    /// pixel WIDTH/HEIGHT (always multiples of 8) -- confirmed across the full sprite table:
-    /// every entry's width*height/64 exactly matches its decompressed tileDataLen/64 tile
-    /// count, from 1 tile (8x8, id=25) up to 64 tiles (64x64, e.g. id=27-30/34/37-39/74/
-    /// 105-106/122-124/127 -- the "bigger" characters like Cell/robots/T-Rex) and one
-    /// confirmed non-square case (id=136, 32x16 = 4 tiles wide x 2 tall). The previous
-    /// version of this reader hardcoded every character to the common 16x32 (2x4 tile) case,
-    /// which is why anything bigger came out cropped/squashed into that box. Then a 4-byte
-    /// pointer to standard JCALG1-compressed tile data, laid out row-major at that width.
+    /// CORRECTED 2026-09: an earlier pass here treated the record as a 16-byte header
+    /// followed by four 16-byte "slots," reading each slot's 4th field as a possible frame
+    /// pointer. That was never right -- it happened to accidentally land on the first real
+    /// frame pointer below for slot index 3 specifically (16 + 3*16 + 12 = 76 = 0x4C), which
+    /// is why testing looked like "exactly one active slot" for every single sprite. The
+    /// REAL layout is the already-IDA-typed struct `CharacterSpriteEntry` (188 bytes, an
+    /// exact match): header (12 bytes) + four 16-byte hit-box rects (bytes 0x0C-0x4B) +
+    /// `framePointers[12]` at 0x4C (48 bytes -- CONFIRMED real per-frame pointers, e.g. a
+    /// walk-cycle) + `reservedSlots[12]` at 0x7C (48 bytes, seen all-zero so far) +
+    /// `extraPointers[4]` at 0xAC (16 bytes, a second/alternate frame set of some kind, not
+    /// yet characterized). GetAllFrames below reads every non-null entry in both pointer
+    /// arrays.
+    ///
+    /// Each non-null pointer is a frame descriptor: bytes +2/+3 are the frame's real pixel
+    /// WIDTH/HEIGHT (always multiples of 8) -- confirmed across the full sprite table: every
+    /// entry's width*height/64 exactly matches its decompressed tileDataLen/64 tile count,
+    /// from 1 tile (8x8, id=25) up to 64 tiles (64x64, e.g. id=27-30/34/37-39/74/105-106/
+    /// 122-124/127 -- the "bigger" characters like Cell/robots/T-Rex) and one confirmed
+    /// non-square case (id=136, 32x16 = 4 tiles wide x 2 tall). Then a 4-byte pointer (+8) to
+    /// standard JCALG1-compressed tile data, laid out row-major at that width.
     /// </summary>
     public static class CharacterIconReader
     {
-        private const int SlotStride = 16;
-        private const int SlotArrayOffset = 16; // first slot starts 16 bytes into the record
-        private const int SlotCount = 4;
-        private const int FrameDescStride = 12;
+        private const int FramePointersOffset = 0x4C; // CharacterSpriteEntry.framePointers
+        private const int FramePointerCount = 12;
+        private const int ExtraPointersOffset = 0xAC; // CharacterSpriteEntry.extraPointers -- second/alternate frame set, not yet characterized
+        private const int ExtraPointerCount = 4;
         private const int BytesPerTile = 64; // 8bpp
 
         private static readonly Dictionary<(Game game, int spriteId), Bitmap?> cache = [];
@@ -1091,15 +1113,15 @@ namespace DrGero.Rendering
             if (recordPtr == 0) return null;
 
             int frameDescArrayPtr = 0;
-            for (int slot = 0; slot < SlotCount; slot++)
+            for (int i = 0; i < FramePointerCount; i++)
             {
-                rom.PushPosition(recordPtr + SlotArrayOffset + (slot * SlotStride) + 12);
-                int candidate = rom.ReadInt();
+                rom.PushPosition(recordPtr + FramePointersOffset + (i * 4));
+                int candidate = rom.ReadPointer();
                 rom.PopPosition();
 
-                if ((candidate & 0xFF000000) == 0x08000000)
+                if (candidate != 0)
                 {
-                    frameDescArrayPtr = candidate & 0x00FFFFFF;
+                    frameDescArrayPtr = candidate;
                     break;
                 }
             }
@@ -1147,6 +1169,90 @@ namespace DrGero.Rendering
         {
             foreach (var key in cache.Keys.Where(k => k.game == game).ToList())
                 cache.Remove(key);
+        }
+
+        public readonly struct SlotFrame(int slotIndex, Bitmap bitmap)
+        {
+            public int SlotIndex { get; } = slotIndex;
+            public Bitmap Bitmap { get; } = bitmap;
+        }
+
+        /// <summary>
+        /// One rendered frame per non-null entry across BOTH <c>framePointers[12]</c> (SlotIndex
+        /// 0-11 -- CONFIRMED real, e.g. a walk-cycle) and <c>extraPointers[4]</c> (SlotIndex
+        /// 12-15 -- a second/alternate frame set, not yet characterized) of the
+        /// <c>CharacterSpriteEntry</c> record, for browsing a character's animation frames.
+        /// GetIcon only ever returns the FIRST non-null framePointers entry (a single static
+        /// icon); this returns all of them, in array order, so a walk-cycle etc. can be
+        /// stepped through frame by frame.
+        /// </summary>
+        public static List<SlotFrame> GetAllSlotFrames(ROM rom, Game game, int spriteId)
+        {
+            var results = new List<SlotFrame>();
+            if (spriteId < 7) return results;
+
+            rom.PushPosition(game.CharacterSpriteIndexOffset + (spriteId * 4));
+            int recordPtr = rom.ReadPointer();
+            rom.PopPosition();
+            if (recordPtr == 0) return results;
+
+            var palette = ItemIconReader.ReadOBJPalette(rom, game);
+
+            for (int i = 0; i < FramePointerCount + ExtraPointerCount; i++)
+            {
+                int ptrOffset = i < FramePointerCount
+                    ? FramePointersOffset + (i * 4)
+                    : ExtraPointersOffset + ((i - FramePointerCount) * 4);
+
+                rom.PushPosition(recordPtr + ptrOffset);
+                int frameDescArrayPtr = rom.ReadPointer();
+                rom.PopPosition();
+
+                if (frameDescArrayPtr == 0) continue;
+
+                try
+                {
+                    rom.PushPosition(frameDescArrayPtr + 2);
+                    int widthPx = rom.ReadByte();
+                    int heightPx = rom.ReadByte();
+                    rom.PopPosition();
+                    if (widthPx <= 0 || heightPx <= 0) continue;
+                    int tilesWide = widthPx / 8;
+                    int tilesTall = heightPx / 8;
+
+                    rom.PushPosition(frameDescArrayPtr + 8);
+                    int tileDataPtr = rom.ReadPointer();
+                    rom.PopPosition();
+                    if (tileDataPtr == 0) continue;
+
+                    byte[] tileData = JCALG1.Decompress(rom, tileDataPtr);
+                    int neededBytes = tilesWide * tilesTall * BytesPerTile;
+                    if (tileData.Length < neededBytes) continue;
+
+                    var frame = new Bitmap(widthPx, heightPx, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                    using var g = Graphics.FromImage(frame);
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+
+                    for (int ty = 0; ty < tilesTall; ty++)
+                    {
+                        for (int tx = 0; tx < tilesWide; tx++)
+                        {
+                            int srcOffset = ((ty * tilesWide) + tx) * BytesPerTile;
+                            using var tileBmp = ItemIconReader.RenderIndexed(tileData.AsSpan(srcOffset, BytesPerTile).ToArray(), 8, 8, palette);
+                            g.DrawImage(tileBmp, tx * 8, ty * 8);
+                        }
+                    }
+
+                    results.Add(new SlotFrame(i, frame));
+                }
+                catch
+                {
+                    // Corrupt/unsupported slot -- skip rather than render garbage.
+                }
+            }
+
+            return results;
         }
 
         /// <summary>
@@ -1220,8 +1326,45 @@ namespace DrGero.Rendering
             layerCaches.Remove(game);
         }
 
+        // Map_VariationEntry.useAffineBg, offset 0x3C -- CONFIRMED via IDA 2026-09-19
+        // (raw disasm of Map_InitRenderer, 0x8006152): when set, the game skips the
+        // normal Camera_ClampToMapBounds path and instead calls Camera_ComputeAffineMatrix
+        // (sets up BG2's rotate/scale registers, GBA hardware affine mode) -- this is a
+        // completely different rendering mode from the regular 4-layer tiled BGs
+        // everything else in this class assumes. Found investigating why Z6A99v1 "The
+        // World" (the overworld/world-map screen, reached from the pause menu) crashed
+        // MapRenderer.RenderMap outright: its staticTilesetDeltaData (+0x48) does not
+        // hold a valid delta-encoded atlas index table for affine maps -- decoding it as
+        // one accumulates a tile index far outside the ROM (an out-of-range ROM seek is
+        // exactly what threw). Affine BG tile/rotation decoding isn't implemented -- this
+        // stops the crash and says so plainly instead of pretending to render it.
+        private const int UseAffineBgOffset = 0x3C;
+
         public static (Bitmap bitmap, Dictionary<Range, Bitmap> tilesets, HashSet<Range> usedTilesets, bool hasUnsupportedLayer, bool[,] collisionGrid) RenderMap(ROM rom, Game game, int mapOffset, MapRenderOptions options)
         {
+            rom.PushPosition(mapOffset + UseAffineBgOffset);
+            bool useAffineBg = rom.ReadInt() != 0;
+            rom.PopPosition();
+
+            if (useAffineBg)
+            {
+                var placeholder = new Bitmap(256, 256);
+                using (var pg = Graphics.FromImage(placeholder))
+                {
+                    pg.Clear(Color.Black);
+                    DrawUnsupportedLayerWarning(pg, placeholder.Width, placeholder.Height);
+                    using var font = new Font(FontFamily.GenericSansSerif, 9f, FontStyle.Bold);
+                    using var brush = new SolidBrush(Color.White);
+                    pg.DrawString(
+                        "This map uses the GBA's affine (rotate/scale) BG mode\n" +
+                        "(Map_VariationEntry.useAffineBg is set) -- e.g. the pause\n" +
+                        "menu's overworld map. Its tile data isn't laid out like a\n" +
+                        "normal tiled BG, and decoding it isn't implemented yet.",
+                        font, brush, 4, 30);
+                }
+                return (placeholder, new Dictionary<Range, Bitmap>(), new HashSet<Range>(), true, new bool[1, 1]);
+            }
+
             var tilesets = DrawTileset(rom, game, mapOffset);
             var usedTilesets = new HashSet<Range>();
 
@@ -1451,8 +1594,11 @@ namespace DrGero.Rendering
         // Resource_LoadOrDecompress` into `g_MapRenderer+0x6C`; Collision_CheckRect @0x8005D6C:
         // `collisionMap[8*tileY + (tileX>>5)] & (1 << (tileX & 0x1F))`). One bit per 8x8 tile,
         // 32 tiles packed per 32-bit word, 8 words per tile-row -- supports up to 256x256 tiles
-        // (2048x2048px). A set bit means BLOCKED/solid (Collision_CheckRect treats a 0 bit run
-        // across the tested rect as ALLOWED and returns BLOCKED as soon as it finds a set bit
+        // (2048x2048px). CORRECTED: a SET bit means ALLOWED (walkable) and a CLEAR bit means BLOCKED --
+        // Collision_CheckRect returns BLOCKED as soon as it finds a CLEAR bit in the tested rect and
+        // ALLOWED only if every bit is set (the older text below had this inverted, so read it
+        // with that in mind; grid[x,y] == true is where the player CAN walk). Original note, wrong on
+        // this point: Collision_CheckRect treats a 0 bit run across the tested rect as ALLOWED and returns BLOCKED as soon as it finds a set bit
         // in range). Returns a full 256x256 grid regardless of the map's real (usually smaller)
         // pixel size -- callers should only look at [0..width/8, 0..height/8].
         public static bool[,] ReadCollisionMap(ROM rom, int mapOffset)
@@ -1500,7 +1646,8 @@ namespace DrGero.Rendering
         }
 
         /// <summary>
-        /// Editor-only overlay: tints solid/blocked tiles from <see cref="ReadCollisionMap"/>
+        /// Editor-only overlay: tints the collision cells from <see cref="ReadCollisionMap"/> -- the
+        /// tinted cells are where the player IS ALLOWED to walk; untinted cells are barred.
         /// semi-transparent red directly onto an already-rendered map bitmap (or a cropped
         /// viewport of one -- pass <paramref name="originTileX"/>/<paramref name="originTileY"/>
         /// to offset into the grid for a crop that doesn't start at tile 0,0).
@@ -1863,7 +2010,10 @@ namespace DrGero.Rendering
                 // rendering defect on Zone2/Area1 -- made no visible difference on that
                 // map, so it wasn't the cause. Reverted to unsigned; ruled out, not fixed.
                 int delta = tilesetBytes[i] | (tilesetBytes[i + 1] << 8);
-                currentTileIndex += delta;
+                // 16-bit wraparound, matching the game's own __int16 arithmetic when it builds this
+                // table (MapRenderer_UploadStaticTileset) -- needed now that TilesetTable can add
+                // a slot for an atlas tile BEFORE the previous one, encoded as a wrapped delta.
+                currentTileIndex = (currentTileIndex + delta) & 0xFFFF;
 
                 // Source: which tile in the atlas to pull from.
                 var src = GetTilesetImage(rom, game, currentTileIndex, pal);
@@ -1880,7 +2030,7 @@ namespace DrGero.Rendering
 
                 // Advance past this tile so the next delta is relative to the tile
                 // after the one we just placed.
-                currentTileIndex++;
+                currentTileIndex = (currentTileIndex + 1) & 0xFFFF;
             }
 
             // The static tileset covers slots 0..(tileCount-1).
@@ -1934,7 +2084,7 @@ namespace DrGero.Rendering
             cache.Add(tilesetId, bitmap);
             return bitmap;
         }
-        private static Color[] ReadBGPalette(ROM rom, Game game)
+        public static Color[] ReadBGPalette(ROM rom, Game game)
         {
             rom.PushPosition(game.BGPaletteOffset);
             var colors = new Color[256];
@@ -2152,6 +2302,38 @@ namespace DrGero.Rendering
 
             return chunk_image;
         }
+        /// <summary>
+        /// Draws one 8x8 tile (by its tileset slot id) at a pixel position -- the same lookup
+        /// DrawChunk does, exposed so the editor can preview a brush stroke on the already-
+        /// rendered map without re-rendering everything on every mouse move. Tile 0 (blank) draws nothing.
+        /// </summary>
+        public static void DrawTileInto(Graphics g, Dictionary<Range, Bitmap> tilesets, int tileId, bool flipX, bool flipY, int x, int y)
+        {
+            if (tileId == 0) return;
+
+            foreach (var k in tilesets.Keys)
+            {
+                if (tileId < k.Start.Value || tileId > k.End.Value) continue;
+
+                var tileset = tilesets[k];
+                int columns = tileset.Width / tile_size;
+                int l = tileId - k.Start.Value;
+                int srcX = (l % columns) * tile_size;
+                int srcY = (l / columns) * tile_size;
+
+                if (flipX || flipY)
+                {
+                    using var flipped = FlipTile(tileset, srcX, srcY, flipX, flipY);
+                    g.DrawImage(flipped, x, y);
+                }
+                else
+                {
+                    g.DrawImage(tileset, x, y, new Rectangle(srcX, srcY, tile_size, tile_size), GraphicsUnit.Pixel);
+                }
+                return;
+            }
+        }
+
         private static Bitmap FlipTile(Bitmap tileset, int srcX, int srcY, bool flipX, bool flipY)
         {
             var tile_image = new Bitmap(tile_size, tile_size);

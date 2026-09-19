@@ -44,7 +44,8 @@ namespace DrGero.Types
             Trigger,
             Character,
             Item,
-            Decoration
+            Decoration,
+            Enemy
         }
 
         // Width/Height default to 0 for point-like entities (level gates, objects,
@@ -59,9 +60,33 @@ namespace DrGero.Types
         // moving an entity -- for most kinds these are the same address, but
         // triggers store their identity in the mapTriggers vtable+dataPtr slot
         // while their x1/y1/x2/y2 coordinates live inside the dataPtr target.
-        public readonly record struct Entity(EntityKind Kind, int X, int Y, int TypeId, int SourceAddress, int Width = 0, int Height = 0, int PositionAddress = 0, int OnPickup = 0, int CollectionMsg = 0)
+        public readonly record struct Entity(EntityKind Kind, int X, int Y, int TypeId, int SourceAddress, int Width = 0, int Height = 0, int PositionAddress = 0, int OnPickup = 0, int CollectionMsg = 0, int StatIndex = 0)
         {
             public int PositionAddress { get; init; } = PositionAddress == 0 ? SourceAddress : PositionAddress;
+        }
+
+        /// <summary>
+        /// Re-reads this entry's ROM record IN PLACE (same object, so the map tree's Tags and
+        /// any held references stay valid). Needed after anything that patches a map entry's
+        /// bytes -- e.g. EntityWriter.PersistNewObjects rewrites mapObjects/objectCount -- since
+        /// the parsed copy never sees those writes on its own: a reload through the stale
+        /// copy reads the OLD array and the new object appears to have vanished.
+        /// </summary>
+        public void RefreshFrom(ROM rom, int recordAddress)
+        {
+            rom.PushPosition(recordAddress);
+            var fresh = Read(rom);
+            rom.PopPosition();
+
+            Zone = fresh.Zone; Area = fresh.Area; Variation = fresh.Variation;
+            TriggerCount = fresh.TriggerCount; ScriptCount = fresh.ScriptCount;
+            ItemCount = fresh.ItemCount; ObjectCount = fresh.ObjectCount; NpcCount = fresh.NpcCount;
+            Flags = fresh.Flags; MapNameIndex = fresh.MapNameIndex;
+            MapTriggers = fresh.MapTriggers; MapScripts = fresh.MapScripts; MapItems = fresh.MapItems;
+            MapObjects = fresh.MapObjects; NpcArray = fresh.NpcArray; MusicId = fresh.MusicId;
+            VariationScript = fresh.VariationScript; VariationArray = fresh.VariationArray;
+            EntryScript = fresh.EntryScript; ExitScript = fresh.ExitScript;
+            // Name is looked up elsewhere from MapNameIndex, not stored in the record -- untouched.
         }
 
         public static MapEntry Read(ROM rom)
