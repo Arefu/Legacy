@@ -66,7 +66,8 @@ jobs:
           gh release delete ${{ env.RELEASE_TAG }} --yes --cleanup-tag 2>$null
           exit 0
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (transient)
+        if: env.IS_TRANSIENT == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -75,4 +76,15 @@ jobs:
             DBZKit-${{ env.RELEASE_TAG }}.zip `
             --title "${{ env.RELEASE_TAG }}" `
             --generate-notes `
-            --prerelease:$${{ env.IS_TRANSIENT }}
+            --prerelease
+
+      - name: Create GitHub Release (versioned)
+        if: env.IS_TRANSIENT == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          gh release create ${{ env.RELEASE_TAG }} `
+            DBZKit-${{ env.RELEASE_TAG }}.zip `
+            --title "${{ env.RELEASE_TAG }}" `
+            --generate-notes
