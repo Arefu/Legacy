@@ -38,19 +38,35 @@ namespace Legacy.Zenkai
             new(16, "PushActiveCharMaxEP", 0),
             new(17, "StackRand", 1),
             new(18, "StackRandChance", 1),
-            new(19, "StackTestQuestFlag", 1),
-            new(20, "StackTestQuestFlagNot", 1),
+            // RENAMED 2026-09-19 (was StackTestQuestFlag/Not): tests a bit in the flat
+            // global story-flag array at g_PartyState+0x180, set/cleared by opcodes 27/28
+            // below. This is what the Quest Log (see Quest-System.md) actually reads --
+            // NOT opcode 128/23's two-part "party member flag" system, despite the old
+            // name suggesting otherwise.
+            new(19, "StackTestStoryFlag", 1),
+            new(20, "StackTestStoryFlagNot", 1),
             new(21, "StackGetItemCount", 1),
             new(22, "StackGetCharLevel", 1),
+            // Two-part (category, sub-id) key resolved through g_PartyMemberFlagCategories
+            // (68 categories) into g_PartyState+0x231 -- a completely separate storage from
+            // opcode 19/20/27/28's story flags above, despite once sharing "Flag" names.
             new(23, "StackTestPartyMemberFlag", 2),
             new(24, "DisableLayer", 1),
             new(25, "EnableLayer", 1),
             new(26, "PickUpItem", 1),
-            new(27, "StackSetPartyFlag", 1),
-            new(28, "StackClearPartyFlag", 1),
+            // RENAMED 2026-09-19 (was StackSetPartyFlag/StackClearPartyFlag): sets/clears
+            // a bit in the SAME flat story-flag array opcode 19/20 read. Old name
+            // ("PartyFlag") made it look related to opcode 128/23's per-character
+            // "party member flag" system -- it isn't, they're two separate storages.
+            new(27, "SetStoryFlag", 1),
+            new(28, "ClearStoryFlag", 1),
             new(29, "FindCharacterEntity", 1),
             new(30, "FindEntityByType", 1),
-            new(31, "op_unk31", 3, "sub_800977A"),
+            // CONFIRMED via Dialog_Format.md 2026-09-14 (real yes/no-style prompt usage
+            // documented) and renamed in IDA 2026-09-19: builds a choice-prompt struct via
+            // sub_800DF1C and blocks on GameLoop_ExecuteAndWait. Pair with a mode-0 dialog
+            // script entry + JumpIfFalse to branch dialogue on the player's answer.
+            new(31, "ShowChoicePrompt", 3, "sub_800977A"),
             new(32, "CenterCameraOnChar", 1),
             new(33, "SetActiveEntity", 1),
             new(34, "SetMapRestoreFlag", 1),
@@ -159,7 +175,11 @@ namespace Legacy.Zenkai
             new(125, "op_unk125", 0, "sub_800AF44"),
             new(126, "PushActiveCharIsTransformed", 0),
             new(127, "SpawnMapEntity", 3),
-            new(128, "SetQuestFlag", 1),
+            // RENAMED 2026-09-19 (was SetQuestFlag -- despite the name, does NOT feed the
+            // Quest Log; see opcode 19/20/27/28 for that). Same two-part key/storage as
+            // opcode 23. ARITY CORRECTED: confirmed via IDA (BytecodeVM_SetPartyMemberFlag,
+            // 0x800AFA0) it pops TWO stack values (category, sub-id), not one.
+            new(128, "SetPartyMemberFlag", 2),
             new(129, "PushSaveStatePtr", 0),
             new(130, "op_unk130", 0, "sub_800AFD4"),
             new(131, "PushLevelUpStat1", 0),

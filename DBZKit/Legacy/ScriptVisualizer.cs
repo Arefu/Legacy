@@ -43,6 +43,13 @@ namespace Legacy
                     .Distinct());
             sc.SetKeywords(0, keywords);
 
+            // Language-level keywords (var/if/else -- see Zenkai.g4 and
+            // Zenkai-Vars-And-If.md) go in Scintilla's SECOND keyword class (styled via
+            // Word2 below) so they're visually distinct from opcode names -- these aren't
+            // opcodes at all, they're the source-level var/if-else layer that compiles
+            // down to real opcode calls underneath.
+            sc.SetKeywords(1, "var if else return");
+
             sc.StyleResetDefault();
             sc.Styles[Style.Default].Font = "Consolas";
             sc.Styles[Style.Default].Size = 10;
@@ -52,6 +59,8 @@ namespace Legacy
             sc.Styles[Style.Cpp.Identifier].ForeColor = Color.Black;
             sc.Styles[Style.Cpp.Word].ForeColor = Color.Blue;
             sc.Styles[Style.Cpp.Word].Bold = true;
+            sc.Styles[Style.Cpp.Word2].ForeColor = Color.Purple;
+            sc.Styles[Style.Cpp.Word2].Bold = true;
             sc.Styles[Style.Cpp.Number].ForeColor = Color.DarkRed;
             sc.Styles[Style.Cpp.CommentLine].ForeColor = Color.Green;
             sc.Styles[Style.Cpp.CommentLine].Italic = true;

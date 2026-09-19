@@ -74,13 +74,13 @@
       <summary>Pops a percentage-like value and pushes whether a random roll succeeded against it. Pushes a boolean (1 = hit, 0 = miss) onto the VM stack.</summary>
       <param name="percent">Chance out of 100 (or similar scale — not fully confirmed).</param>
     </member>
-    <member name="StackTestQuestFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_StackTestQuestFlag" index="19">
-      <summary>Pops a flag id and pushes whether that global quest flag is set. Pushes a boolean onto the VM stack.</summary>
-      <param name="flagId">Quest flag id.</param>
+    <member name="StackTestStoryFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_StackTestStoryFlag" index="19">
+      <summary>RENAMED 2026-09-19 (was StackTestQuestFlag). Pops a flag id and pushes whether that global story flag is set — this is the mechanism the in-game Quest Log actually reads. Pushes a boolean onto the VM stack.</summary>
+      <param name="flagId">Story flag id.</param>
     </member>
-    <member name="StackTestQuestFlagNot" arity="1" confidence="confirmed" originalName="BytecodeVM_StackTestQuestFlagNot" index="20">
-      <summary>Pops a flag id and pushes whether that global quest flag is not set — the negated sibling of StackTestQuestFlag, saving a separate StackNot (0x05) instruction in common scripts. Pushes a boolean (inverted) onto the VM stack.</summary>
-      <param name="flagId">Quest flag id.</param>
+    <member name="StackTestStoryFlagNot" arity="1" confidence="confirmed" originalName="BytecodeVM_StackTestStoryFlagNot" index="20">
+      <summary>RENAMED 2026-09-19 (was StackTestQuestFlagNot). Pops a flag id and pushes whether that global story flag is not set — the negated sibling of StackTestStoryFlag, saving a separate StackNot (0x05) instruction in common scripts. Pushes a boolean (inverted) onto the VM stack.</summary>
+      <param name="flagId">Story flag id.</param>
     </member>
     <member name="StackGetItemCount" arity="1" confidence="confirmed" originalName="BytecodeVM_StackGetItemCount" index="21">
       <summary>Pops an item id and pushes the player&apos;s current inventory count for it. Pushes the number of that item the player is carrying onto the VM stack.</summary>
@@ -90,10 +90,10 @@
       <summary>Pops a character index and pushes their current level. Pushes that character&apos;s level onto the VM stack.</summary>
       <param name="charIdx">Character roster index.</param>
     </member>
-    <member name="StackTestPartyMemberFlag" arity="2" confidence="medium" originalName="BytecodeVM_StackTestPartyMemberFlag" index="23">
-      <summary>Pops two values and calls PartyState_TestQuestFlag(&amp;g_PartyState, a, b), pushing the result. Pushes a boolean onto the VM stack.</summary>
-      <param name="a">Not fully confirmed which of (a, b) is the member index vs. the flag id — see Remarks.</param>
-      <param name="b">See above.</param>
+    <member name="StackTestPartyMemberFlag" arity="2" confidence="confirmed" originalName="BytecodeVM_StackTestPartyMemberFlag" index="23">
+      <summary>CONFIRMED 2026-09-19. Pops two values in push order and calls PartyState_TestMemberFlag(&amp;g_PartyState, a, b), pushing the result. No separate category selector -- brute-force scans all 68 entries of g_PartyMemberFlagCategories for a descriptor matching (a, b). Unrelated to StackTestStoryFlag (opcode 19), a different storage entirely. Pushes a boolean onto the VM stack.</summary>
+      <param name="a">First key part, pushed first (deeper on the stack).</param>
+      <param name="b">Second key part, pushed last (top of stack).</param>
     </member>
     <member name="DisableLayer" arity="1" confidence="confirmed" originalName="BytecodeVM_DisableLayer" index="24">
       <summary>Pops a layer id and disables that background/display layer.</summary>
@@ -107,13 +107,13 @@
       <summary>Pops an item id and fires g_ItemsInGame[itemId].OnItemPickUp — this is the standard &quot;give the player an item&quot; action, and is exactly how the YAJIROBE Senzu Bean dialog event grants its gift (see DBZKit/Dialog_Format.md for the full trace).</summary>
       <param name="itemId">Item id to grant.</param>
     </member>
-    <member name="StackSetPartyFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_StackSetPartyFlag" index="27">
-      <summary>Pops a value and calls BytecodeVM_SetFlag(&amp;g_PartyState, val) — sets a party-scoped flag (as opposed to SetQuestFlag&apos;s global flag).</summary>
-      <param name="flagId">Flag id, popped from the stack.</param>
+    <member name="SetStoryFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_SetStoryFlag" index="27">
+      <summary>RENAMED 2026-09-19 (was StackSetPartyFlag — the old name wrongly implied a link to the unrelated party-member-flag system). Pops a value and calls BytecodeVM_SetFlag_Raw(&amp;g_PartyState, val) — sets a global story flag, the same one StackTestStoryFlag reads. This is the real "advance a quest" opcode.</summary>
+      <param name="flagId">Story flag id, popped from the stack.</param>
     </member>
-    <member name="StackClearPartyFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_StackClearPartyFlag" index="28">
-      <summary>Pops a value and calls BytecodeVM_ClearFlag(&amp;g_PartyState, val) — clears a party-scoped flag.</summary>
-      <param name="flagId">Flag id, popped from the stack.</param>
+    <member name="ClearStoryFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_ClearStoryFlag" index="28">
+      <summary>RENAMED 2026-09-19 (was StackClearPartyFlag). Pops a value and calls BytecodeVM_ClearFlag_Raw(&amp;g_PartyState, val) — clears a global story flag.</summary>
+      <param name="flagId">Story flag id, popped from the stack.</param>
     </member>
     <member name="FindCharacterEntity" arity="1" confidence="confirmed" originalName="BytecodeVM_FindCharacterEntity" index="29">
       <summary>Looks up the live map entity for a given character index. Pushes a handle to that character&apos;s map entity (or null if not spawned) onto the VM stack.</summary>
@@ -562,9 +562,10 @@
       <param name="x">Spawn X.</param>
       <param name="y">Spawn Y.</param>
     </member>
-    <member name="SetQuestFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_SetQuestFlag" index="128">
-      <summary>Sets a global quest flag — the write counterpart to StackTestQuestFlag.</summary>
-      <param name="flagId">Quest flag id.</param>
+    <member name="SetPartyMemberFlag" arity="2" confidence="confirmed" originalName="BytecodeVM_SetPartyMemberFlag" index="128">
+      <summary>RENAMED 2026-09-19 (was SetQuestFlag — despite the name, does NOT feed the in-game Quest Log). ARITY CORRECTED: pops two values, not one. Write counterpart to StackTestPartyMemberFlag (opcode 23) — same two-part-key storage, unrelated to opcode 19/20/27/28's story flags.</summary>
+      <param name="a">First key part, pushed first.</param>
+      <param name="b">Second key part, pushed last.</param>
     </member>
     <member name="PushSaveStatePtr" arity="0" confidence="medium" originalName="BytecodeVM_PushSaveStatePtr" index="129">
       <summary>No arguments. Pushes a pointer to g_SaveState onto the VM stack.</summary>

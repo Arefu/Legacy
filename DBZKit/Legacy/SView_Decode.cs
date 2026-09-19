@@ -44,7 +44,24 @@
                             byte opcodeIndex = data[offset++];
                             string rawName = BYTECODE_VM.OP_CODES.TryGetValue(opcodeIndex, out var n) ? n : $"UNKNOWN_{opcodeIndex:X2}";
                             string name = SView_Tools.CleanName(rawName);
-                            result.Add(new Instruction { Offset = start, Name = name, Args = new List<long>() });
+
+                            // FIXED 2026-09-19: resolve which preceding Push* values this Step
+                            // actually consumes, using the opcode's known arity (Zenkai.OpcodeTable)
+                            // -- the VM stack is LIFO, so it's the LAST `arity` values pushed, not
+                            // every value on the stack. Previously this recorded no args at all,
+                            // which made it impossible to tell (e.g.) that 3 pending pushes ahead
+                            // of a 1-arg StackRand meant only the 3rd one was StackRand's argument.
+                            // Values are popped in push order for display (Pop() is LIFO, so the
+                            // popped list comes out most-recent-first and needs reversing).
+                            var args = new List<long>();
+                            if (Zenkai.OpcodeTable.IndexMap.TryGetValue(opcodeIndex, out var opInfo))
+                            {
+                                for (int i = 0; i < opInfo.Arity && vmStack.Count > 0; i++)
+                                    args.Add(vmStack.Pop());
+                                args.Reverse();
+                            }
+
+                            result.Add(new Instruction { Offset = start, Name = name, Args = args });
                             break;
                         }
                     case 0x03: // sub_8008FA4 (type handler dispatch)

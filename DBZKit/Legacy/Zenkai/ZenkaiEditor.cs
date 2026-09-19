@@ -11,18 +11,53 @@ namespace Legacy.Zenkai
     /// ZenkaiAssembler.Validate). Shared by every editor that edits Zenkai source so they
     /// can't drift out of sync with each other.
     /// </summary>
-    internal static class ZenkaiEditor
+    // PUBLIC 2026-09-19 (was internal) -- Dragon Radar's trigger/dialog script editor
+    // (ScriptEditorForm.cs) references this project to reuse the real Zenkai editor
+    // (highlighting, autocomplete, var/if/else) instead of duplicating any of it.
+    public static class ZenkaiEditor
     {
         private const int SquiggleIndicator = 8;
         private static readonly string[] JumpFamily = { "Jump", "JumpIfFalse", "LoopOrJump" };
+        private static readonly string[] LanguageKeywords = { "var", "if", "else", "return" };
 
-        internal static void Configure(Scintilla sc)
+        // `var name = Call(...)` declarations and `label:` lines in the current text -- what
+        // a real IntelliSense offers alongside the built-in names. Rescanned per popup
+        // (scripts are tiny, so this is cheaper than tracking edits).
+        private static readonly System.Text.RegularExpressions.Regex VarDeclRx =
+            new(@"\bvar\s+([A-Za-z_]\w*)\s*=\s*([^;\r\n]*)", System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex LabelRx =
+            new(@"^[ \t]*([A-Za-z_]\w*)[ \t]*:", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Multiline);
+        private static readonly System.Text.RegularExpressions.Regex JumpArgContextRx =
+            new(@"\b(?:Jump|JumpIfFalse|LoopOrJump)\s*\(\s*\w*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static (Dictionary<string, string> Vars, Dictionary<string, int> Labels) ScanSymbols(string text)
+        {
+            var vars = new Dictionary<string, string>();
+            foreach (System.Text.RegularExpressions.Match m in VarDeclRx.Matches(text))
+                vars.TryAdd(m.Groups[1].Value, m.Groups[2].Value.Trim());
+
+            var labels = new Dictionary<string, int>();
+            foreach (System.Text.RegularExpressions.Match m in LabelRx.Matches(text))
+                labels.TryAdd(m.Groups[1].Value, text.Take(m.Index).Count(c => c == '\n') + 1);
+            return (vars, labels);
+        }
+
+        public static void Configure(Scintilla sc)
         {
             sc.Lexer = Lexer.Cpp;
 
             string keywords = string.Join(" ",
                 OpcodeTable.ByIndex.Select(o => o.Name).Concat(JumpFamily).Distinct());
             sc.SetKeywords(0, keywords);
+
+            // Language-level keywords (var/if/else -- see Zenkai.g4 and
+            // Zenkai-Vars-And-If.md) go in Scintilla's SECOND keyword class (styled via
+            // Word2 below) so they're visually distinct from opcode names -- these aren't
+            // opcodes at all, they're the source-level var/if-else layer that compiles
+            // down to real opcode calls underneath. (Same fix as ScriptVisualizer.cs's
+            // ConfigureZenkaiEditor -- this is a SEPARATE editor config, they don't share
+            // state, so both need it.)
+            sc.SetKeywords(1, "var if else return");
 
             sc.StyleResetDefault();
             sc.Styles[Style.Default].Font = "Consolas";
@@ -33,6 +68,8 @@ namespace Legacy.Zenkai
             sc.Styles[Style.Cpp.Identifier].ForeColor = Color.Black;
             sc.Styles[Style.Cpp.Word].ForeColor = Color.Blue;
             sc.Styles[Style.Cpp.Word].Bold = true;
+            sc.Styles[Style.Cpp.Word2].ForeColor = Color.Purple;
+            sc.Styles[Style.Cpp.Word2].Bold = true;
             sc.Styles[Style.Cpp.Number].ForeColor = Color.DarkRed;
             sc.Styles[Style.Cpp.CommentLine].ForeColor = Color.Green;
             sc.Styles[Style.Cpp.CommentLine].Italic = true;
@@ -103,7 +140,20 @@ namespace Legacy.Zenkai
                 // then this handler's own re-show runs on top of that already-broken
                 // state. Explicitly cancelling first forces a clean full re-show from our
                 // own filtered list every keystroke instead of ever hitting that path.
-                var filtered = OpcodeTable.FuzzyFilterNames(typed, AllNames().Split(' '));
+                string before = sc.GetTextRange(sc.Lines[sc.LineFromPosition(wordStart)].Position,
+                    wordStart - sc.Lines[sc.LineFromPosition(wordStart)].Position);
+
+                // Typing the NAME of a new variable -- nothing sensible to suggest.
+                if (before.TrimEnd().EndsWith("var") || (typed.Length > 0 && before.EndsWith("var "))) return;
+
+                var (vars, labels) = ScanSymbols(sc.Text);
+
+                // Inside Jump(...)/JumpIfFalse(...)/LoopOrJump(...) only labels make sense.
+                IEnumerable<string> pool = JumpArgContextRx.IsMatch(before + typed)
+                    ? labels.Keys
+                    : AllNames().Split(' ').Concat(LanguageKeywords).Concat(vars.Keys).Concat(labels.Keys).Distinct();
+
+                var filtered = OpcodeTable.FuzzyFilterNames(typed, pool.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray());
                 if (sc.AutoCActive) sc.AutoCCancel();
                 if (filtered.Count == 0) return;
 
@@ -145,6 +195,21 @@ namespace Legacy.Zenkai
                 if (nameStart >= nameEnd) { sc.CallTipCancel(); return; }
 
                 string opName = sc.GetTextRange(nameStart, nameEnd - nameStart);
+
+                // Hovering a variable / label shows what it is, like a real IDE.
+                var (symVars, symLabels) = ScanSymbols(sc.Text);
+                if (symVars.TryGetValue(opName, out var varDef))
+                {
+                    sc.CallTipShow(anchorPos, $"var {opName} = {varDef}\n(every use re-runs this call -- no VM storage)");
+                    sc.CallTipSetHlt(0, 3 + 1 + opName.Length);
+                    return;
+                }
+                if (symLabels.TryGetValue(opName, out int labelLine))
+                {
+                    sc.CallTipShow(anchorPos, $"label {opName} (line {labelLine})");
+                    sc.CallTipSetHlt(0, 6 + opName.Length);
+                    return;
+                }
                 var found = FindDocByOpName(opName);
                 if (found == null) { sc.CallTipCancel(); return; }
 

@@ -15,6 +15,48 @@ namespace Legacy.Zenkai
     {
         private record RawInsn(int Offset, int NextOffset, string Kind, List<long> PushedValues, int StepOpcode = -1, int JumpTarget = -1, bool IsLoop = false);
 
+        // Flat, structure-free line model built by the main decode loop below -- exactly
+        // the same lines that used to go straight to the output StringBuilder, just kept as
+        // data so the structuring pass (Structure/Render, added 2026-09-19) can recognize
+        // JumpIfFalse/Jump/label patterns and fold them back into real if/else blocks
+        // instead of printing raw jumps. CondJump/UncondJump only cover opcodes 0x13/0x12 --
+        // LoopOrJump (0x1C, backward branches -- i.e. loops, not if/else) is deliberately
+        // NOT one of these; it stays a plain Code line, unrecognized by Structure(), same
+        // as before this change.
+        private abstract record Line;
+        private sealed record CodeLine(string Text) : Line;
+        private sealed record LabelLine(string Name) : Line;
+        private sealed record CondJumpLine(string Cond, string Target) : Line;
+        private sealed record UncondJumpLine(string Target) : Line;
+
+        // A value on the simulated VM stack. Kept as a small expression (not eagerly
+        // turned into a `var tN` line) so a value that's consumed exactly once can be
+        // inlined where it's used -- e.g. `if (StackGetItemCount(0) == 1)` instead of
+        // `var t0 = ...; var t1 = (t0 == 1); if (t1)`. Only materialized into a
+        // `var tN = ...;` when it has to be an opcode-call argument (Zenkai.g4 args are
+        // literals or var names, not nested calls).
+        //   Literal = a pushed constant; Call = `Name(args)` from a value-producing Step;
+        //   Compare = `a == b` etc. whose operands are both literals/calls (exactly what
+        //   Zenkai.g4's `cond` accepts); Other = AND/NOT/arithmetic/nested compares
+        //   (displayable, but no Zenkai source syntax for them yet).
+        private enum ValKind { Literal, Call, Compare, Other }
+        private sealed record Val(string Text, ValKind Kind);
+
+        private abstract record Node;
+        private sealed record RawNode(string Text) : Node;
+        private sealed record IfNode(string Cond, List<Node> Then) : Node;
+        private sealed record IfElseNode(string Cond, List<Node> Then, List<Node> Else) : Node;
+
+        // Lets the pre-existing Take()/EmitProducing()/FlushRemainingStack() code below
+        // keep calling "sb.AppendLine(...)" unchanged while actually appending to the
+        // structure-aware `lines` list instead of a real StringBuilder.
+        private sealed class EmitShim
+        {
+            private readonly Action<string> _emit;
+            public EmitShim(Action<string> emit) => _emit = emit;
+            public void AppendLine(string text) => _emit(text);
+        }
+
         public static string Disassemble(byte[] data) => Disassemble(data, out _);
 
         // byteLength is how many bytes of `data` the script actually occupies (through and
@@ -37,85 +79,351 @@ namespace Legacy.Zenkai
                 .Select((t, i) => (t, name: $"L{i}"))
                 .ToDictionary(x => x.t, x => x.name);
 
-            var sb = new StringBuilder();
-            var pendingPushes = new List<long>();
+            var lines = new List<Line>();
+            void Emit(string text) => lines.Add(new CodeLine(text));
 
-            void FlushOrphanPushes()
+            // Kept as a thin shim so the rest of this method (Take/EmitProducing/
+            // FlushRemainingStack below) reads exactly as it did before this change --
+            // only the destination changed, from "sb.AppendLine" to "Emit".
+            var sb = new EmitShim(Emit);
+
+            // REDESIGNED 2026-09-19: this used to be a flat List<long> of "pending pushes"
+            // handed wholesale to whatever Step came next, which was wrong in two ways real
+            // ROM scripts exposed: (1) it ignored arity, so N pushes ahead of a 1-arg opcode
+            // all got attributed to it; (2) opcodes that actually PRODUCE a value on the VM
+            // stack (StackRand peek-and-replaces in place; StackAnd/StackAdd/comparisons/etc
+            // all pop N and push 1 result) had no way to leave that result available for
+            // whatever consumes it next -- their result just vanished, which is exactly why
+            // real Z1A2 scripts (StackRand feeding an entity-command opcode, StackAdd feeding
+            // another) came out as broken "orphan push" spam and 0-arg calls with an arity
+            // mismatch comment despite the values being right there.
+            //
+            // This models the REAL VM stack symbolically: `stack` holds one string per value
+            // currently on it -- either a literal ("54") or a reference to an already-emitted
+            // temp variable ("t3") for a value that came from a computed result rather than a
+            // plain PushByte/PushVarint. Any opcode that produces a result (Stack*/Push*-named
+            // Step opcodes, and the raw arithmetic/comparison/logic ops 0x04-0x10) gets its
+            // call wrapped in `tN = ...;` and `tN` pushed back onto `stack`, so later
+            // consumers -- another Step, a raw op, a jump condition -- pick it up correctly
+            // via the same LIFO pop this file already established. This is a DISPLAY-ONLY
+            // convention (matches this whole project's own decompiler-output style, e.g.
+            // `v1`/`v2` in every IDA excerpt across BytecodeVM_OpCodes.md) -- ZenkaiAssembler
+            // does not understand `tN =` assignment syntax yet, so a script containing one
+            // can be viewed correctly here but not reassembled from this text unhandled;
+            // that's a real, separate grammar/assembler gap, not pretended away.
+            var stack = new List<Val>();
+            int tempCounter = 0;
+
+            // Operand text for embedding inside a larger expression.
+            static string Inline(Val v) => v.Kind is ValKind.Compare or ValKind.Other ? $"({v.Text})" : v.Text;
+
+            // Text for use as an opcode-call argument: literals stay literal; anything
+            // computed becomes a named temp (`var tN = ...;` emitted just before the call).
+            string Arg(Val v)
             {
-                // Shouldn't happen for well-formed scripts (every Push* is consumed by
-                // the next Step), but don't silently drop bytes if it does.
-                foreach (var v in pendingPushes)
-                    sb.AppendLine($"// orphan push: {v}");
-                pendingPushes.Clear();
+                if (v.Kind == ValKind.Literal) return v.Text;
+                string t = $"t{tempCounter++}";
+                sb.AppendLine(v.Kind == ValKind.Call ? $"var {t} = {v.Text};" : $"var {t} = ({v.Text});");
+                return t;
+            }
+
+            List<Val> Take(int arity)
+            {
+                int take = Math.Min(arity, stack.Count);
+                var args = stack.GetRange(stack.Count - take, take);
+                stack.RemoveRange(stack.Count - take, take);
+                if (take < arity)
+                    sb.AppendLine($"// arity mismatch: expected {arity}, only {take} value(s) on the simulated stack here");
+                return args;
+            }
+
+            void FlushRemainingStack(string context)
+            {
+                // A script's END can legitimately leave exactly one value on the stack --
+                // that's the script's return value (see Dialog_Format.md mode-0 entries,
+                // and every QuestEntry condition script in Quest-System.md, both of which
+                // rely on exactly this). More than one left over at END, or ANY leftover at
+                // a point that isn't END (a jump crossing a branch, for instance), is
+                // genuinely unusual for a well-formed script -- surfaced either way rather
+                // than silently dropped. A leftover CALL is emitted as a plain statement
+                // (the assembler leaves its result on the stack too), so it round-trips.
+                bool isResult = stack.Count == 1 && context == "end";
+                foreach (var v in stack)
+                {
+                    string note = isResult ? "script result" : $"leftover on stack at {context}";
+                    if (v.Kind == ValKind.Call)
+                        sb.AppendLine($"{v.Text}; // {note}");
+                    else if (isResult && v.Kind == ValKind.Literal)
+                        sb.AppendLine($"return {v.Text};"); // reassembles: push + END
+                    else
+                        sb.AppendLine($"// {note}: {v.Text}");
+                }
+                stack.Clear();
             }
 
             foreach (var insn in insns)
             {
                 if (labelNames.TryGetValue(insn.Offset, out var label))
-                    sb.AppendLine($"{label}:");
+                    lines.Add(new LabelLine(label));
 
                 switch (insn.Kind)
                 {
                     case "push":
-                        pendingPushes.AddRange(insn.PushedValues);
+                        foreach (var v in insn.PushedValues)
+                            stack.Add(new Val(v.ToString(), ValKind.Literal));
                         break;
 
                     case "step":
                         {
                             if (!OpcodeTable.IndexMap.TryGetValue(insn.StepOpcode, out var op))
                             {
-                                sb.AppendLine($"// UNKNOWN_STEP_{insn.StepOpcode:X2}({string.Join(", ", pendingPushes)})");
-                                pendingPushes.Clear();
+                                sb.AppendLine($"// UNKNOWN_STEP_{insn.StepOpcode:X2}() -- arity unknown, stack left as-is");
                                 break;
                             }
-                            if (pendingPushes.Count != op.Arity)
-                                sb.AppendLine($"// arity mismatch: {op.Name} expects {op.Arity}, got {pendingPushes.Count}");
-                            sb.AppendLine($"{op.Name}({string.Join(", ", pendingPushes)});");
-                            pendingPushes.Clear();
+
+                            var args = Take(op.Arity).Select(Arg).ToList();
+                            string call = $"{op.Name}({string.Join(", ", args)})";
+
+                            // Heuristic (matches this project's own naming convention,
+                            // cross-checked against opcode_data.js's "returns" column for
+                            // every opcode sampled so far): a "Stack"/"Push"-prefixed name
+                            // means the real VM function pops its args and pushes a result
+                            // back (often in place, e.g. BytecodeVM_StackRand's peek-and-
+                            // replace) -- everything else (Set*/Spawn*/Despawn*/Walk*/etc)
+                            // is a pure action with nothing left on the stack afterward.
+                            bool producesValue = op.Name.StartsWith("Stack", StringComparison.Ordinal)
+                                || op.Name.StartsWith("Push", StringComparison.Ordinal);
+
+                            if (producesValue)
+                                stack.Add(new Val(call, ValKind.Call));
+                            else
+                                sb.AppendLine($"{call};");
                             break;
                         }
 
                     case "jump":
                         {
-                            string opName = insn.StepOpcode switch { 0x12 => "Jump", 0x13 => "JumpIfFalse", 0x1C => "LoopOrJump", _ => "Jump" };
-                            // JumpIfFalse pops its condition directly (the VM's jump handler
-                            // consumes it, not a Step) -- a pending push right before it is
-                            // that condition, not an orphan. KNOWN GAP: the grammar has no
-                            // syntax yet for stack-producing ops (0x04-0x10 comparisons/logic),
-                            // so a real script whose condition comes from one of those (rather
-                            // than a plain PushByte/PushVarint literal) can be disassembled but
-                            // not hand-authored from source yet. Neither example script in
-                            // Zenkai-Example-Scripts.md exercises JumpIfFalse, so this is
-                            // untested against a real ROM case either way.
-                            if (opName == "JumpIfFalse" && pendingPushes.Count == 1)
-                            {
-                                sb.AppendLine($"// JumpIfFalse condition (pushed literal): {pendingPushes[0]}");
-                                pendingPushes.Clear();
-                            }
-                            FlushOrphanPushes();
                             string targetLabel = labelNames.TryGetValue(insn.JumpTarget, out var l) ? l : $"0x{insn.JumpTarget:X}";
-                            sb.AppendLine($"{opName}({targetLabel});");
+
+                            // JumpIfFalse pops its condition directly (the VM's jump handler
+                            // consumes it, not a Step) -- same LIFO Take() as everywhere else.
+                            // Captured as a CondJumpLine (rather than emitted as text here)
+                            // so the structuring pass below (Structure/Render) can fold this,
+                            // its matching label, and everything in between back into a real
+                            // if/[else] block -- see that pass's own comments for exactly
+                            // which shapes it recognizes and what it falls back to otherwise.
+                            string? cond0 = null;
+                            if (insn.StepOpcode == 0x13) // JumpIfFalse
+                            {
+                                var cond = Take(1);
+                                cond0 = cond.Count > 0 ? cond[0].Text : "?";
+                            }
+
+                            if (stack.Count > 0)
+                                FlushRemainingStack($"jump at offset {insn.Offset}");
+
+                            if (insn.StepOpcode == 0x13)
+                                lines.Add(new CondJumpLine(cond0!, targetLabel));
+                            else if (insn.StepOpcode == 0x12) // Jump
+                                lines.Add(new UncondJumpLine(targetLabel));
+                            else // LoopOrJump (0x1C) -- a backward branch (a loop), not an if/else shape;
+                                Emit($"LoopOrJump({targetLabel});"); // left as opaque text, not fed to Structure()
                             break;
                         }
 
                     case "stack":
-                        // No-operand / stack-only main-dispatch ops (0x04-0x10, 0x14, 0x1B,
-                        // 0x15-0x1A type-handler post-ops) have no Zenkai.g4 call syntax yet
-                        // -- they don't appear in real dialog/cutscene scripts sampled so far
-                        // (Zenkai-Example-Scripts.md's two examples use neither), so surface
-                        // them as a raw byte comment rather than silently dropping them or
-                        // inventing unverified syntax for them.
-                        FlushOrphanPushes();
-                        sb.AppendLine($"// raw main-dispatch opcode 0x{insn.StepOpcode:X2} at offset {insn.Offset} (no Zenkai.g4 syntax for this yet)");
-                        break;
+                        {
+                            // Raw main-dispatch ops with no Zenkai.g4 call syntax of their
+                            // own (0x03 type-handler dispatch, 0x04-0x10 arithmetic/logic/
+                            // comparison, 0x14 StackPop, 0x15-0x1A StepTypePost_* type-handler
+                            // post-ops, 0x1B PushToAltStack). Arity/symbol/produces-result
+                            // per opcode, confirmed against SView_Decoder's own handling of
+                            // each (0x04-0x10 case blocks there do exactly this pop-2/push-1
+                            // math already) -- this just mirrors that here instead of
+                            // discarding whatever's pending as a fake "orphan".
+                            var (arity, symbol, produces) = insn.StepOpcode switch
+                            {
+                                0x04 => (2, "AND", true),
+                                0x05 => (1, "NOT", true),
+                                0x06 => (1, "NEG", true),
+                                0x07 => (2, "+", true),
+                                0x08 => (2, "-", true),
+                                0x09 => (2, "*", true),
+                                0x0A => (2, "/", true),
+                                0x0B => (2, "==", true),
+                                0x0C => (2, "!=", true),
+                                0x0D => (2, ">", true),
+                                0x0E => (2, ">=", true),
+                                0x0F => (2, "<", true),
+                                0x10 => (2, "<=", true),
+                                0x14 => (1, "StackPop", false),
+                                0x1B => (1, "PushToAltStack", false),
+                                _ => (1, $"op_0x{insn.StepOpcode:X2}", false), // 0x03, 0x15-0x1A -- semantics too uncertain to claim a result
+                            };
+
+                            var operands = Take(arity);
+                            string O(int i) => i < operands.Count ? Inline(operands[i]) : "?";
+
+                            if (!produces)
+                            {
+                                string text = $"{symbol}({string.Join(", ", operands.Select(o => o.Text))})";
+                                sb.AppendLine($"// raw main-dispatch opcode 0x{insn.StepOpcode:X2} at offset {insn.Offset}: {text}");
+                                break;
+                            }
+
+                            bool isCompare = insn.StepOpcode is >= 0x0B and <= 0x10;
+                            if (arity == 2)
+                            {
+                                string text = $"{O(0)} {symbol} {O(1)}";
+                                // Only a compare of plain literals/calls is valid Zenkai `cond` syntax.
+                                bool simple = operands.Count == 2 && operands.All(o => o.Kind is ValKind.Literal or ValKind.Call);
+                                stack.Add(new Val(text, isCompare && simple ? ValKind.Compare : ValKind.Other));
+                            }
+                            else
+                            {
+                                stack.Add(new Val($"{symbol}({string.Join(", ", operands.Select(o => o.Text))})", ValKind.Other));
+                            }
+                            break;
+                        }
 
                     case "end":
-                        FlushOrphanPushes();
+                        FlushRemainingStack("end");
                         break;
                 }
             }
 
-            return sb.ToString();
+            var nodes = Structure(lines, 0, lines.Count);
+            var outSb = new StringBuilder();
+            Render(nodes, outSb, 0);
+            return outSb.ToString();
+        }
+
+        // Folds the canonical shapes ZenkaiAssembler.EmitIf actually generates back into
+        // real if/[else] blocks:
+        //   JumpIfFalse(cond, L0); <then...> L0:                         -> if (cond) { <then...> }
+        //   JumpIfFalse(cond, L0); <then...> Jump(L1); L0: <else...> L1: -> if (cond) { <then...> } else { <else...> }
+        // Only ever recognizes these two exact shapes -- anything else (the matching label
+        // missing from this scope, no trailing Jump before it, or that Jump's own target
+        // missing too) is left as plain, unrestructured jump/label lines, same output as
+        // before this pass existed. This deliberately does NOT attempt loops (LoopOrJump
+        // never reaches here, see the "jump" case above) or hand-written gotos -- only the
+        // two shapes this project's own compiler is known to emit.
+        private static List<Node> Structure(List<Line> lines, int start, int end)
+        {
+            var result = new List<Node>();
+            int i = start;
+            while (i < end)
+            {
+                switch (lines[i])
+                {
+                    case CondJumpLine cj:
+                        {
+                            int labelIdx = FindLabel(lines, cj.Target, i + 1, end);
+                            if (labelIdx < 0)
+                            {
+                                result.Add(new RawNode($"// JumpIfFalse condition: {cj.Cond}"));
+                                result.Add(new RawNode($"JumpIfFalse({cj.Target});"));
+                                i++;
+                                break;
+                            }
+
+                            // else pattern: the line right before the label is an
+                            // unconditional Jump, and ITS target also has a label in scope.
+                            if (labelIdx - 1 > i && lines[labelIdx - 1] is UncondJumpLine uj)
+                            {
+                                int elseEnd = FindLabel(lines, uj.Target, labelIdx, end);
+                                if (elseEnd >= 0)
+                                {
+                                    var thenNodes = Structure(lines, i + 1, labelIdx - 1);
+                                    var elseNodes = Structure(lines, labelIdx + 1, elseEnd);
+                                    // An empty else is just a Jump over nothing -- same behaviour
+                                    // as a plain if, so don't print a pointless `else { }`.
+                                    if (elseNodes.Count == 0)
+                                        result.Add(new IfNode(cj.Cond, thenNodes));
+                                    else
+                                        result.Add(new IfElseNode(cj.Cond, thenNodes, elseNodes));
+                                    i = elseEnd + 1;
+                                    break;
+                                }
+                            }
+
+                            // Plain if, no else.
+                            var thenOnly = Structure(lines, i + 1, labelIdx);
+                            result.Add(new IfNode(cj.Cond, thenOnly));
+                            i = labelIdx + 1;
+                            break;
+                        }
+
+                    case UncondJumpLine uj2:
+                        result.Add(new RawNode($"Jump({uj2.Target});"));
+                        i++;
+                        break;
+
+                    case LabelLine lbl:
+                        result.Add(new RawNode($"{lbl.Name}:"));
+                        i++;
+                        break;
+
+                    case CodeLine cl:
+                        result.Add(new RawNode(cl.Text));
+                        i++;
+                        break;
+                }
+            }
+            return result;
+        }
+
+        private static int FindLabel(List<Line> lines, string name, int from, int to)
+        {
+            for (int j = from; j < to; j++)
+                if (lines[j] is LabelLine l && l.Name == name) return j;
+            return -1;
+        }
+
+        private static void Render(List<Node> nodes, StringBuilder outSb, int indent)
+        {
+            string pad = new string(' ', indent * 4);
+            foreach (var node in nodes)
+            {
+                switch (node)
+                {
+                    case RawNode r:
+                        outSb.AppendLine(pad + r.Text);
+                        break;
+
+                    case IfNode iff:
+                        outSb.AppendLine($"{pad}if ({iff.Cond})");
+                        RenderBody(iff.Then, outSb, pad, indent);
+                        break;
+
+                    case IfElseNode ie:
+                        outSb.AppendLine($"{pad}if ({ie.Cond})");
+                        RenderBody(ie.Then, outSb, pad, indent);
+                        outSb.AppendLine($"{pad}else");
+                        RenderBody(ie.Else, outSb, pad, indent);
+                        break;
+                }
+            }
+        }
+
+        // Braces are optional for a single-statement body -- same as C#. Only a body that
+        // is EXACTLY one plain statement (not a comment, not a label, not itself a nested
+        // if) qualifies; anything else (multiple statements, or a comment alongside the
+        // statement) keeps real braces so nothing is ambiguous about what's inside the if.
+        private static bool IsBraceless(List<Node> body) =>
+            body.Count == 1 && body[0] is RawNode r && r.Text.EndsWith(";") && !r.Text.StartsWith("//");
+
+        private static void RenderBody(List<Node> body, StringBuilder outSb, string pad, int indent)
+        {
+            if (IsBraceless(body))
+            {
+                outSb.AppendLine($"{pad}    {((RawNode)body[0]).Text}");
+                return;
+            }
+
+            outSb.AppendLine($"{pad}{{");
+            Render(body, outSb, indent + 1);
+            outSb.AppendLine($"{pad}}}");
         }
 
         private static List<RawInsn> Decode(byte[] data)

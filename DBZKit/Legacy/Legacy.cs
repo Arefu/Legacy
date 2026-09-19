@@ -8,9 +8,27 @@ namespace Legacy
         List<byte> _extension = new(); // bytes appended past original ROM on save
         bool _dirtyPending = false;
 
-        public Legacy()
+        public Legacy() : this(Array.Empty<string>()) { }
+
+        // Startup args, launched from Dragon Radar's "Edit Script..."/"Edit Dialogue..."
+        // buttons (see Dragon Radar's editScriptButton_Click/editDialogueButton_Click,
+        // which shell out to this exe via Process.Start instead of using Dragon Radar's
+        // own simpler embedded editor forms) so the two tools share one real script/
+        // dialogue editor instead of maintaining two:
+        //   --rom=<path>            load this ROM on startup
+        //   --zone=<n> --area=<n>   expand/select this Zone/Area once the tree is built
+        //   --focus=0x<addr>        (optional) also select the specific trigger's
+        //                           conversation within that Area -- matched against
+        //                           DialogNodeInfo.SequenceBaseAddr (the trigger's own
+        //                           dataPtr+0x10 field, which is exactly what Dragon
+        //                           Radar already resolves as ResolveTriggerScriptPayload's
+        //                           ScriptAddress)
+        private readonly string[] _startupArgs;
+
+        public Legacy(string[] args)
         {
             InitializeComponent();
+            _startupArgs = args;
         }
 
         const uint RomBase = 0x08000000;
@@ -20,6 +38,21 @@ namespace Legacy
         const int MapEntrySize = 0x38;
         const int TriggerCountOffset = 0x03;
         const int MapTriggersPtrOffset = 0x10;
+
+        // Object script support, added 2026-09-19 -- Legacy is now the shared editor for
+        // an object's OnPickup payload (the Math Book/Golden Capsule/etc "set a flag and/or
+        // show a message on pickup" step) too, not just trigger payloads. Offsets confirmed
+        // via DrGero.Rendering.EntityReader.ReadObjectArray/FindPickupTemplates -- MapEntry's
+        // own field layout was already cross-checked against this file's OTHER hand-rolled
+        // offsets above (TriggerCountOffset/MapTriggersPtrOffset/MapItemCountOffset/
+        // MapItemsPtrOffset all landed exactly where DrGero.Types.MapEntry's field order
+        // says they should), so these two follow the same confirmed layout: ObjectCount is
+        // the very next byte after ItemCount, MapObjects the very next pointer after MapItems.
+        const int MapObjectCountOffset = 0x06;
+        const int MapObjectsPtrOffset = 0x1C;
+        // CORRECTED 2026-09-19 (IDA): +0x10 onPickup is a NATIVE function pointer, not a script.
+        // The dialogue it runs (where SetStoryFlag lives) is +0x14 collectionMsg.
+        const int ObjectCollectionMsgOffset = 0x14;
 
         const uint MapEntriesAddr = 0x08409368;
         const int MapCount = 0x147;
@@ -214,6 +247,14 @@ namespace Legacy
             public bool EndsDialogHere;     // current desired state (starts = whether Index already equals the terminator)
             public bool EndsDialogDirty;    // true once the user has toggled EndsDialogHere away from its loaded state
 
+            // The dialog table's own base address (the same "dialogArrayPtr" every entry
+            // in one WalkDialogArray call was walked from) -- shared by every entry from
+            // that same table, same as TerminatorSlotIndex above. Used by FocusOnAddress
+            // to jump straight to a specific trigger's conversation when launched from
+            // Dragon Radar's "Edit Dialogue..."/"Edit Script..." buttons, which know this
+            // exact address (it's the trigger's own dataPtr+0x10 field).
+            public uint SequenceBaseAddr;
+
             // Mode 1/2 (text) only: leading format characters confirmed via IDA
             // (Dialog_CreateTextBox, 0x800B1E2) and, for Center, via in-game testing.
             // These are stripped off Text on load and re-prepended on save rather than
@@ -274,12 +315,26 @@ namespace Legacy
         // One zone/area's worth of dialog entries, built once per ROM load. Kept separate
         // from the TreeView itself so the tree can be re-rendered filtered by active tab
         // (RenderTreeForActiveTab) without re-walking the ROM every time.
-        private class ZoneModel
+        //
+        // Two-level Zone -> Area hierarchy (matches Dragon Radar's own MapTreeBuilder.Build
+        // labeling, "Zone {n}" / "Area {n}") -- previously this was a flat list of one
+        // "Z{zone}A{area}" node per map entry, which meant a zone with several areas (the
+        // normal case) showed as several unrelated top-level nodes instead of one zone you
+        // could expand. REFACTORED 2026-09-19 per explicit request.
+        private class AreaModel
         {
+            public byte Zone;
+            public byte Area;
             public string Label = "";
             public List<(string Label, DialogNodeInfo Info)> Children = new();
         }
-        private List<ZoneModel> _dialogModel = new();
+        private class ZoneGroup
+        {
+            public byte Zone;
+            public string Label = "";
+            public List<AreaModel> Areas = new();
+        }
+        private List<ZoneGroup> _dialogModel = new();
 
         // Walks a 0-terminated DCD pointer table of dialog entries (same shape whether
         // it came from a MapTriggerDialog's dialogArray or a MapItem's dialogSeq) and
@@ -370,7 +425,8 @@ namespace Legacy
                     OriginalScriptLength = scriptLen,
                     EntryAddr = dialogPtr,
                     Position = position,
-                    CenterText = centerText
+                    CenterText = centerText,
+                    SequenceBaseAddr = dialogArrayPtr
                 };
 
                 target.Add(($"{labelPrefix} - Dialog #{seq}", info));
@@ -410,19 +466,29 @@ namespace Legacy
                 byte itemCount = ReadU8(entryAddr + MapItemCountOffset);
                 uint mapItemsPtr = ReadU32(entryAddr + MapItemsPtrOffset);
 
+                byte objectCount = ReadU8(entryAddr + MapObjectCountOffset);
+                uint mapObjectsPtr = ReadU32(entryAddr + MapObjectsPtrOffset);
+
                 bool hasTriggers = triggerCount != 0 && IsValidPtr(triggersPtr);
                 bool hasItems = itemCount != 0 && IsValidPtr(mapItemsPtr);
-                if (!hasTriggers && !hasItems) continue;
+                bool hasObjects = objectCount != 0 && IsValidPtr(mapObjectsPtr);
+                if (!hasTriggers && !hasItems && !hasObjects) continue;
 
-                ZoneModel zoneModel = null;
-                ZoneModel GetZoneModel()
+                AreaModel areaModel = null;
+                AreaModel GetZoneModel()
                 {
-                    if (zoneModel == null)
+                    if (areaModel == null)
                     {
-                        zoneModel = new ZoneModel { Label = $"Z{zone}A{area}" };
-                        _dialogModel.Add(zoneModel);
+                        var zoneGroup = _dialogModel.FirstOrDefault(z => z.Zone == zone);
+                        if (zoneGroup == null)
+                        {
+                            zoneGroup = new ZoneGroup { Zone = zone, Label = $"Zone {zone}" };
+                            _dialogModel.Add(zoneGroup);
+                        }
+                        areaModel = new AreaModel { Zone = zone, Area = area, Label = $"Area {area}" };
+                        zoneGroup.Areas.Add(areaModel);
                     }
-                    return zoneModel;
+                    return areaModel;
                 }
 
                 if (hasTriggers)
@@ -458,7 +524,28 @@ namespace Legacy
                         WalkDialogArray(GetZoneModel().Children, dialogSeqPtr, $"Z{zone}A{area} Item[{it}]");
                     }
                 }
+
+                // Map_Object pickups (Mathbook, Golden Capsules, custom test items...): the
+                // native onPickup handler runs the object's collectionMsg (+0x14) as a dialog
+                // sequence, and that's where a pickup's script/message lives (confirmed via IDA).
+                if (hasObjects)
+                {
+                    for (int o = 0; o < objectCount; o++)
+                    {
+                        uint objectPtr = ReadU32(mapObjectsPtr + (uint)(o * 4));
+                        if (!IsValidPtr(objectPtr) || objectPtr + ObjectCollectionMsgOffset + 4 > RomEnd) continue;
+
+                        uint collectionMsgPtr = ReadU32(objectPtr + ObjectCollectionMsgOffset);
+                        WalkDialogArray(GetZoneModel().Children, collectionMsgPtr, $"Z{zone}A{area} Object[{o}] (item {ReadU32(objectPtr + 4)})");
+                    }
+                }
             }
+
+            // Matches Dragon Radar's own MapTreeBuilder.Build ordering (OrderBy Zone, then
+            // Area) so navigating the same game in either tool feels the same.
+            _dialogModel = _dialogModel.OrderBy(z => z.Zone).ToList();
+            foreach (var zoneGroup in _dialogModel)
+                zoneGroup.Areas = zoneGroup.Areas.OrderBy(a => a.Area).ToList();
 
             RenderTreeForActiveTab();
         }
@@ -471,23 +558,92 @@ namespace Legacy
         // TreeNode has no Visible property to toggle anyway.
         private void RenderTreeForActiveTab()
         {
-            bool scriptTab = Legacy_MainTabs.SelectedTab == Legacy_TabScriptEditor;
+            // FIXED 2026-09-19: TabControl.SelectedTab can be unreliable before the form's
+            // window handle exists (confirmed root cause of "Legacy opens to an empty
+            // page" when launched from Dragon Radar with --zone/--area -- ApplyStartupArgs
+            // runs during Form.Load, calling this before that). SelectedIndex is a plain
+            // int and has no such timing dependency, and Legacy_TabScriptEditor is always
+            // added first (index 0) in InitializeComponent.
+            bool scriptTab = Legacy_MainTabs.SelectedIndex == 0;
 
             Legacy_ScriptFunctions.BeginUpdate();
             Legacy_ScriptFunctions.Nodes.Clear();
 
-            foreach (var zone in _dialogModel)
+            foreach (var zoneGroup in _dialogModel)
             {
-                var matching = zone.Children.Where(c => MatchesActiveTab(c.Info, scriptTab)).ToList();
-                if (matching.Count == 0) continue;
+                var zoneNode = new TreeNode(zoneGroup.Label);
+                foreach (var area in zoneGroup.Areas)
+                {
+                    var matching = area.Children.Where(c => MatchesActiveTab(c.Info, scriptTab)).ToList();
+                    if (matching.Count == 0) continue;
 
-                var zoneNode = new TreeNode(zone.Label);
-                foreach (var (label, info) in matching)
-                    zoneNode.Nodes.Add(new TreeNode(label) { Tag = info });
+                    var areaNode = new TreeNode(area.Label);
+                    foreach (var (label, info) in matching)
+                        areaNode.Nodes.Add(new TreeNode(label) { Tag = info });
+                    zoneNode.Nodes.Add(areaNode);
+                }
+                if (zoneNode.Nodes.Count == 0) continue;
                 Legacy_ScriptFunctions.Nodes.Add(zoneNode);
             }
 
             Legacy_ScriptFunctions.EndUpdate();
+
+            if (_pendingFocus != null)
+            {
+                var focus = _pendingFocus.Value;
+                _pendingFocus = null;
+                FocusZoneArea(focus.Zone, focus.Area, focus.Addr);
+            }
+        }
+
+        // Requested via command-line args (see Program.cs/ParseStartupArgs) or a future
+        // launch-from-Dragon-Radar call -- applied once, right after the tree this needs
+        // to search has actually been rebuilt (RenderTreeForActiveTab runs synchronously
+        // at the end of PopulateDialogTree, so by the time that returns the ROM has
+        // already been read and the tree populated).
+        private (byte Zone, byte Area, uint? Addr)? _pendingFocus;
+
+        /// <summary>
+        /// Expands and selects the tree node for the given Zone/Area -- and, if addr is
+        /// given and matches an entry's SequenceBaseAddr (the same dataPtr+0x10 value
+        /// Dragon Radar already resolves for a trigger's payload), selects that specific
+        /// conversation/script entry instead of just the Area node.
+        ///
+        /// NOTE: only dialog-table entries (WalkDialogArray) become tree nodes here -- a
+        /// trigger whose payload is a plain script (not a dialog table) has no node to
+        /// select, so addr won't match anything for those and this falls back to
+        /// selecting the Area node, which is still a genuine improvement over nothing.
+        /// </summary>
+        private void FocusZoneArea(byte zone, byte area, uint? addr = null)
+        {
+            foreach (TreeNode zoneNode in Legacy_ScriptFunctions.Nodes)
+            {
+                if (zoneNode.Text != $"Zone {zone}") continue;
+                foreach (TreeNode areaNode in zoneNode.Nodes)
+                {
+                    if (areaNode.Text != $"Area {area}") continue;
+
+                    zoneNode.Expand();
+                    areaNode.Expand();
+
+                    TreeNode? target = areaNode;
+                    if (addr != null)
+                    {
+                        foreach (TreeNode child in areaNode.Nodes)
+                        {
+                            if (child.Tag is DialogNodeInfo info && info.SequenceBaseAddr == addr.Value)
+                            {
+                                target = child;
+                                break;
+                            }
+                        }
+                    }
+
+                    Legacy_ScriptFunctions.SelectedNode = target;
+                    target.EnsureVisible();
+                    return;
+                }
+            }
         }
 
         private static bool MatchesActiveTab(DialogNodeInfo info, bool scriptTab)
@@ -651,6 +807,45 @@ namespace Legacy
             toolStripButton2.ToolTipText = "Save ROM";
             toolStripButton1.Click += (s, e2) => Legacy_IDE_BTN_Compile_Click(s, e2);
             toolStripButton2.Click += (s, e2) => Legacy_SaveROM_Click(s, e2);
+
+            ApplyStartupArgs();
+        }
+
+        private void ApplyStartupArgs()
+        {
+            string? romPath = null;
+            byte? zone = null, area = null;
+            uint? focus = null;
+
+            foreach (var arg in _startupArgs)
+            {
+                if (arg.StartsWith("--rom=")) romPath = arg.Substring("--rom=".Length).Trim('"');
+                else if (arg.StartsWith("--zone=") && byte.TryParse(arg.Substring("--zone=".Length), out var z)) zone = z;
+                else if (arg.StartsWith("--area=") && byte.TryParse(arg.Substring("--area=".Length), out var a)) area = a;
+                else if (arg.StartsWith("--focus=") && TryParseHexAddr(arg.Substring("--focus=".Length), out var f)) focus = f;
+            }
+
+            if (romPath == null || !File.Exists(romPath))
+            {
+                if (romPath != null)
+                    ShowStatus($"Startup ROM not found: {romPath}", isError: true);
+                return;
+            }
+
+            _rom = File.ReadAllBytes(romPath);
+            _saveTargetPath = romPath;
+
+            if (zone != null && area != null)
+                _pendingFocus = (zone.Value, area.Value, focus); // consumed by RenderTreeForActiveTab, called at the end of PopulateDialogTree below
+
+            PopulateDialogTree();
+        }
+
+        private static bool TryParseHexAddr(string s, out uint value)
+        {
+            s = s.Trim();
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) s = s.Substring(2);
+            return uint.TryParse(s, System.Globalization.NumberStyles.HexNumber, null, out value);
         }
 
         // Non-blocking status strip message, replacing MessageBox popups for routine
@@ -696,7 +891,8 @@ namespace Legacy
             // which is now filtered per active tab (RenderTreeForActiveTab) and so can be
             // missing dirty nodes edited on the other tab.
             var dirtyInfos = _dialogModel
-                .SelectMany(z => z.Children)
+                .SelectMany(z => z.Areas)
+                .SelectMany(a => a.Children)
                 .Where(c => c.Info.Editable && (c.Info.Dirty || c.Info.EndsDialogDirty))
                 .Select(c => c.Info)
                 .ToList();

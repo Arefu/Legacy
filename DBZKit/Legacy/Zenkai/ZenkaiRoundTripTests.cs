@@ -39,6 +39,44 @@ namespace Legacy.Zenkai
             // (neither uses Jump/JumpIfFalse) -- synthetic test, forward and backward.
             TestJumpRoundTrip(Check);
 
+            // The Math-Book-style "have it? take it : give it" shape, and a bare
+            // quest-condition script -- disassembly must read like source (no temp vars,
+            // no raw-opcode comments) AND reassemble byte-identical.
+            TestReadableRoundTrip("if/else with inline compare", @"
+if (StackGetItemCount(0) == 1)
+    RemoveItem(0);
+else
+    PickUpItem(1);
+", Check);
+            TestReadableRoundTrip("bare flag condition (script result)", @"
+StackTestStoryFlag(191); // script result
+", Check);
+            // Empty else (Jump over nothing) must not print an `else { }` block.
+            {
+                byte[] b = ZenkaiAssembler.Assemble("if (StackTestStoryFlag(1)) SetEntityFacing(0, 1); else { }");
+                string t = ZenkaiDisassembler.Disassemble(b);
+                Check("empty else is omitted", !t.Contains("else"), t);
+            }
+            // The reported shape: an if, then a bare literal left on the stack at END.
+            TestReadableRoundTrip("return literal after if", @"
+if (StackTestStoryFlag(1))
+    SetEntityFacing(0, 1);
+return 2;
+", Check);
+            // `;` is optional on return; a bare `return` followed by a call on the next line
+            // must not swallow the call's name as a returned variable.
+            {
+                bool same = ZenkaiAssembler.Assemble("return 2").AsSpan().SequenceEqual(ZenkaiAssembler.Assemble("return 2;"));
+                Check("return: semicolon is optional", same, "bytes differ");
+
+                byte[] bare = ZenkaiAssembler.Assemble("return\nPlayMusic(1);");
+                Check("return: bare return before a call", bare.Length > 0 && bare[0] == 0x11 && bare.Length > 2, string.Join(" ", bare.Select(b => b.ToString("X2"))));
+            }
+            TestReadableRoundTrip("if on flag test", @"
+if (StackTestStoryFlag(4))
+    SetStoryFlag(2);
+", Check);
+
             Console.WriteLine();
             Console.WriteLine($"{pass} passed, {fail} failed.");
         }
@@ -73,6 +111,25 @@ namespace Legacy.Zenkai
             bool same = original.AsSpan().SequenceEqual(reassembled);
             check($"{name}: byte-identical round trip", same,
                 same ? "" : $"original=[{string.Join(" ", original.Select(b => b.ToString("X2")))}] reassembled=[{string.Join(" ", reassembled.Select(b => b.ToString("X2")))}]");
+        }
+
+        private static void TestReadableRoundTrip(string name, string source, Action<string, bool, string> check)
+        {
+            try
+            {
+                byte[] bytes = ZenkaiAssembler.Assemble(source);
+                string text = ZenkaiDisassembler.Disassemble(bytes);
+                Console.WriteLine($"--- {name} ---");
+                Console.WriteLine(text);
+
+                static string Norm(string t) => string.Concat(t.Where(c => !char.IsWhiteSpace(c)));
+                check($"{name}: disassembles to the original source", Norm(text) == Norm(source), $"got: {text}");
+                check($"{name}: byte-identical round trip", ZenkaiAssembler.Assemble(text).AsSpan().SequenceEqual(bytes), "bytes differ");
+            }
+            catch (Exception ex)
+            {
+                check($"{name}", false, ex.Message);
+            }
         }
 
         private static void TestJumpRoundTrip(Action<string, bool, string> check)
