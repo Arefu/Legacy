@@ -15,4 +15,8 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\DrGero\DrGero.csproj" />
+  </ItemGroup>
+
 </Project>
