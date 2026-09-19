@@ -1,5 +1,13 @@
 <Project>
   <PropertyGroup>
+    <!--
+      Without this, $(Configuration) is still empty at the point OutputPath below
+      evaluates when building a project directly with plain `dotnet build` (no
+      explicit configuration flag): it lands straight in Build\ instead of
+      Build\Debug\. Visual Studio always passes an explicit configuration, so this
+      only bit plain CLI builds.
+    -->
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
     <OutputPath>$(MSBuildThisFileDirectory)Build\$(Configuration)\</OutputPath>

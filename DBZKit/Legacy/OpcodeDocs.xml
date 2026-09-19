@@ -223,14 +223,14 @@
       <summary>Removes an entity from the map&apos;s live entity list.</summary>
       <param name="entityHandle">Entity handle.</param>
     </member>
-    <member name="sub_8009D4A" arity="3" confidence="low" index="53">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3 values, resolves an entity by character index, builds a command via sub_8026620(0, {x,y}), and enqueues it.</summary>
+    <member name="WalkToPosition" arity="3" confidence="confirmed" originalName="BytecodeVM_WalkToPosition" index="53">
+      <summary>Walks an entity toward a specific position (ground pathing) -- CONFIRMED 2026-09 (user), distinct from FlyToPosition's direct/airborne move. Resolves an entity by character index, builds a move-command via sub_8026620, and enqueues it.</summary>
       <param name="charIdx">Popped last — the entity to command, resolved via Entity_GetByCharIndex.</param>
       <param name="y">Popped second.</param>
       <param name="x">Popped first.</param>
     </member>
-    <member name="MoveEntityToPosition" arity="3" confidence="confirmed" originalName="BytecodeVM_MoveEntityToPosition" index="54">
-      <summary>Moves an entity toward a specific position.</summary>
+    <member name="FlyToPosition" arity="3" confidence="confirmed" originalName="BytecodeVM_FlyToPosition" index="54">
+      <summary>Flies an entity directly to a specific position -- CONFIRMED 2026-09 (user), distinct from WalkToPosition's ground pathing. Renamed from MoveEntityToPosition.</summary>
       <param name="charIdx">Entity to move.</param>
       <param name="x">Target X.</param>
       <param name="y">Target Y.</param>
@@ -421,7 +421,7 @@
       <summary>No arguments.</summary>
     </member>
     <member name="SetCharacterLevel" arity="2" confidence="confirmed" originalName="BytecodeVM_SetCharacterLevel" index="98">
-      <summary>Directly sets a character&apos;s level (as opposed to AddEXP&apos;s gradual leveling).</summary>
+      <summary>Directly sets a character&apos;s level (as opposed to AddEXP&apos;s gradual leveling). Only levels up, not down -- if level &lt;= current level, does nothing. Capped at 50.</summary>
       <param name="charIdx">Character roster index.</param>
       <param name="level">New level.</param>
     </member>
@@ -634,7 +634,7 @@
       <param name="charIdx">Character roster index.</param>
     </member>
     <member name="SetEntityPosition" arity="3" confidence="confirmed" originalName="BytecodeVM_SetEntityPosition" index="144">
-      <summary>Directly sets an entity&apos;s position (a teleport, not a move-toward — see MoveEntityToPosition for the animated version).</summary>
+      <summary>Directly sets an entity&apos;s position (a teleport, not a move-toward — see WalkToPosition/FlyToPosition for the animated versions).</summary>
       <param name="charIdx">Character roster index.</param>
       <param name="x">New X.</param>
       <param name="y">New Y.</param>

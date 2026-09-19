@@ -91,7 +91,7 @@ opcodes, and each handler pops its own argument count (visible in the decompilat
 | 43 | sub_8009B94 | pops 1, allocs a 12-byte async "command" object (vtable `0x802545C`), blocks via `GameLoop_ExecuteAndWait` | `BytecodeVM_ShowCutsceneCommand_A` | **low, needs vtable inspection or in-game correlation** |
 | 44 | sub_8009BBC | same shape as #43, different vtable `0x8024778` | `BytecodeVM_ShowCutsceneCommand_B` | **low** |
 | 51 | sub_8009CC4 | pops 3 (world/area/variant?), calls `MapScript_CreateCharacter`, adds to entity list | `SpawnCharacterEntity` | high |
-| 53 | sub_8009D4A | pops 3, resolves an entity by char index, builds a move-command via `sub_8026620`, enqueues it | `EntityMoveToEntity` or `EntityFacePosition` | medium — please confirm |
+| 53 | ~~sub_8009D4A~~ `BytecodeVM_WalkToPosition` | pops 3, resolves an entity by char index, builds a move-command via `sub_8026620`, enqueues it | **RESOLVED 2026-09 (user):** walks toward the target position (ground pathing) — distinct from opcode 54, `BytecodeVM_FlyToPosition` (renamed from `MoveEntityToPosition`, direct/airborne move) | confirmed |
 | 58 | sub_800A044 | pops 2, entity-command with vtable `unk_8024878`, 1 payload word | sibling of SetEntityFacing/Animation — `SetEntityAnimationSpeed`? | **low** |
 | 60 | sub_800A09A | pops 1, entity-command vtable `unk_8025258`, no payload | `EntityStopAnimation`? | **low** |
 | 62 | sub_800A44E | pops 3, entity-command vtable `unk_8024DE4`, 2 payload words | `SetEntityVelocity`? | **low** |
@@ -151,7 +151,7 @@ names in the wiki pages under `opcodes/unknown/` as confirmed. Full list, with v
 payload shape (see the individual wiki pages for byte-level detail):
 
 `sub_800977A`(31, menu/prompt), `sub_8009B94`(43, vtable `0x802545C`), `sub_8009BBC`(44, vtable
-`0x8024778`), `sub_8009D4A`(53, via `sub_8026620`), `sub_800A044`(58, vtable `unk_8024878`),
+`0x8024778`), `sub_800A044`(58, vtable `unk_8024878`),
 `sub_800A09A`(60, vtable `unk_8025258`), `sub_800A44E`(62, vtable `unk_8024DE4`), `sub_800A622`(67,
 opens fixed menu/table slot `dword_8025B98[60]`), `sub_800A638`(68, vtable `unk_8023D2C`),
 `sub_8009688`(78, calls `sub_80062C0(g_MapRenderer, a, b)`), `sub_800AC00`(88,
