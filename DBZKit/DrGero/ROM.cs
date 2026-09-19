@@ -158,14 +158,15 @@ namespace DrGero.IO
         /// Grows the ROM buffer by appending <paramref name="data"/> at the end and
         /// returns the file offset it now lives at.
         ///
-        /// AVOID THIS for anything the game needs to read back at runtime: real
-        /// data confirmed appended this way (44 bytes past the original 8MB file)
-        /// still crashed the game on load, even though the bytes themselves were
-        /// correct -- most likely because emulators/hardware map ROM based on the
-        /// cartridge's original/detected size, and reads past that boundary return
-        /// GBA "open bus" garbage rather than the actual appended bytes, not a
-        /// file-reading problem at all. Prefer <see cref="AllocateFreeSpace"/>,
-        /// which writes into real unused space inside the original file bounds.
+        /// A prior session saw this crash on load (44 bytes past the original 8MB
+        /// file, correct bytes, still failed) and this method was avoided ever
+        /// since. Per direct user confirmation, mGBA (our actual test target) is
+        /// fine straddling/extending past the original file size -- that old
+        /// failure was most likely something else at the time, or specific to
+        /// whatever tool/hardware was used to check it back then, not a general
+        /// GBA/mGBA rule. <see cref="AllocateFreeSpace"/> now falls back to this
+        /// automatically once its small trailing-padding pool runs out, so this
+        /// is called routinely, not just as a last resort.
         /// </summary>
         public int AppendBytes(byte[] data)
         {
@@ -181,16 +182,21 @@ namespace DrGero.IO
         private int _originalLength = -1;
 
         /// <summary>
-        /// Finds and hands out chunks of real, unused space INSIDE the ROM's
-        /// original file bounds, instead of growing the file. GBA ROMs are
-        /// commonly padded to their declared size with a repeated fill byte
-        /// (confirmed for this ROM: a 6856-byte run of 0xFF at the end) --
-        /// on first call this locates that trailing run by scanning backward
-        /// from the end of the buffer while bytes match the last byte's value,
-        /// then hands out sequential chunks from it on each call. Throws if the
-        /// padding run isn't big enough for everything requested in one ROM's
-        /// lifetime -- there's no reclaiming/reuse across separate save
-        /// operations on the same file today.
+        /// Hands out chunks of unused space for new data, preferring real padding
+        /// INSIDE the ROM's original file bounds over growing the file. GBA ROMs
+        /// are commonly padded to their declared size with a repeated fill byte
+        /// (confirmed for this ROM: a 6856-byte run of 0xFF at the end) -- on
+        /// first call this locates that trailing run by scanning backward from
+        /// the end of the buffer while bytes match the last byte's value, then
+        /// hands out sequential chunks from it on each call.
+        ///
+        /// That padding pool is small and shared across everything one save
+        /// touches (new objects, items, characters, and the pointer arrays that
+        /// reference them all), so it's easy to exhaust in a single edit
+        /// session. Once it's gone, this falls back to <see cref="AppendBytes"/>
+        /// (growing the file) rather than throwing -- confirmed fine on mGBA,
+        /// our test target. There's still no reclaiming/reuse of either pool
+        /// across separate save operations on the same file.
         /// </summary>
         public int AllocateFreeSpace(int size)
         {
@@ -203,16 +209,18 @@ namespace DrGero.IO
                 _freeSpaceCursor = i + 1;
             }
 
-            if (_freeSpaceCursor + size > _originalLength)
+            if (_freeSpaceCursor + size <= _originalLength)
             {
-                throw new InvalidOperationException(
-                    $"Not enough unused space left inside the ROM to place new data " +
-                    $"(need {size} bytes, only {_originalLength - _freeSpaceCursor} left in the padding region).");
+                int start = _freeSpaceCursor;
+                _freeSpaceCursor += size;
+                return start;
             }
 
-            int start = _freeSpaceCursor;
-            _freeSpaceCursor += size;
-            return start;
+            // Padding pool exhausted -- grow the file instead of throwing. Each new
+            // chunk lands past the previous one since AppendBytes always writes at
+            // the current mem.Length, so callers still get back-to-back, non-
+            // overlapping addresses exactly like the padding-pool path above.
+            return AppendBytes(new byte[size]);
         }
 
         /// <summary>Overwrites a block of bytes at an absolute ROM file offset.</summary>

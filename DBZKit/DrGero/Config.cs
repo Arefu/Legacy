@@ -21,6 +21,13 @@ namespace DrGero.Config
         [JsonConverter(typeof(HexIntConverter))]
         public int OBJPaletteOffset { get; set; }
 
+        // g_CharacterSpriteIndex -- CONFIRMED via IDA 2026-09 (Character_GetSpriteId
+        // @0x8009324): for spriteId>=7, a direct array of per-character record pointers,
+        // indexed by spriteId. See CharacterIconReader for the (partly experimental) rest
+        // of the chain from a record pointer to real decoded pixels.
+        [JsonConverter(typeof(HexIntConverter))]
+        public int CharacterSpriteIndexOffset { get; set; }
+
         [JsonConverter(typeof(HexIntConverter))]
         public int TileAtlasOffset { get; set; }
 

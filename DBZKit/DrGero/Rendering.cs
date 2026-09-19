@@ -775,15 +775,22 @@ namespace DrGero.Rendering
         /// <summary>
         /// Persists newly-placed EntityKind.Character entities (SourceAddress == 0) into the
         /// ROM by growing mapScripts[], the pointer array MapScript_CreateCharacter-handled
-        /// records already live in (see EntityReader.ReadMapScripts). Each 32-byte record is
-        /// only CONFIRMED for its first 16 bytes (handler, flags/condition, x, y, spriteId) --
-        /// bytes +0x10..+0x1F are unconfirmed, the exact same situation PersistNewItems hit
-        /// with graphicObjects' tail bytes, which a real crash report traced to zeroing an
-        /// unconfirmed field the game's spawn code still reads unconditionally. Applying the
-        /// same fix here pre-emptively rather than waiting for the same crash to recur: copy
-        /// those 16 bytes from an existing CharacterSpawnHandlerOffset record on the SAME map
-        /// (a real, already-working record) instead of zeroing them, and REFUSE to place a
-        /// character on a map with no such existing record to copy from, rather than guess.
+        /// records already live in (see EntityReader.ReadMapScripts). The 32-byte
+        /// MapScriptSpawnMultiConditional record's full layout is CONFIRMED by IDA's own type
+        /// info (not placeholder field_X names): handler(0)/flags(4)/position(8)/spriteId(0xC)/
+        /// actionData(0x10)/scriptFunc(0x14)/next(0x18)/spawnFunc(0x1C).
+        ///
+        /// CONFIRMED via IDA 2026-09 that scriptFunc/next/spawnFunc are safe to zero for a
+        /// FRESH record (unlike graphicObjects' analogous tail bytes, which a real crash
+        /// proved ARE read unconditionally): MapScript_CreateCharacter itself only reads
+        /// spriteId/position/actionData, never those three; Map_LoadInternal's own
+        /// mapScripts[] dispatch loop only reads handler/flags before calling through
+        /// handler; and Condition_Evaluate (the flags check) is a flat flag/bytecode test
+        /// with no "next" chain traversal at all. So placing NPCs no longer requires an
+        /// existing character record on the map to copy from -- actionData is still copied
+        /// from one when available (its real semantics -- probably a dialog/behavior
+        /// selector, see MapScript_InitCharacterInteractionState -- aren't independently
+        /// confirmed), defaulting to 0 ("no special action") when the map has none.
         /// Uses ROM.AllocateFreeSpace, matching PersistNewObjects.
         /// </summary>
         public static int PersistNewCharacters(ROM rom, MapEntry entry, int mapEntryAddress, List<Entity> entities)
@@ -792,7 +799,7 @@ namespace DrGero.Rendering
             if (newCharacters.Count == 0)
                 return 0;
 
-            byte[]? tailTemplate = null;
+            int templateActionData = 0;
             var existingRecordPtrs = new List<int>();
 
             if (entry.MapScripts != 0 && entry.ScriptCount > 0)
@@ -811,21 +818,12 @@ namespace DrGero.Rendering
                     int handler = rom.ReadPointer();
                     if (handler == EntityReader.CharacterSpawnHandlerOffset)
                     {
-                        tailTemplate = rom.ReadBytesAt(recordAddr + 0x10, EntityReader.MapScriptRecordSize - 0x10);
+                        templateActionData = rom.ReadBytesAt(recordAddr + 0x10, 4) is { Length: 4 } b ? BitConverter.ToInt32(b) : 0;
                         rom.PopPosition();
                         break;
                     }
                     rom.PopPosition();
                 }
-            }
-
-            if (tailTemplate == null)
-            {
-                throw new InvalidOperationException(
-                    "This map has no pre-existing character spawn (MapScript_CreateCharacter) record to use as a " +
-                    "template for the new character's unconfirmed tail bytes, and PersistNewItems already hit a real " +
-                    "crash from zeroing an analogous unconfirmed field elsewhere. Placing NPCs is only supported on " +
-                    "maps that already have at least one character.");
             }
 
             var newRecordAddresses = new List<int>();
@@ -837,7 +835,10 @@ namespace DrGero.Rendering
                 record.AddRange(BitConverter.GetBytes((short)character.X));
                 record.AddRange(BitConverter.GetBytes((short)character.Y));
                 record.AddRange(BitConverter.GetBytes(character.TypeId)); // spriteId
-                record.AddRange(tailTemplate);
+                record.AddRange(BitConverter.GetBytes(templateActionData)); // actionData -- see method doc
+                record.AddRange(BitConverter.GetBytes(0)); // scriptFunc -- CONFIRMED unused by this handler, see method doc
+                record.AddRange(BitConverter.GetBytes(0)); // next -- CONFIRMED unused by this handler
+                record.AddRange(BitConverter.GetBytes(0)); // spawnFunc -- CONFIRMED unused by this handler
 
                 int addr = rom.AllocateFreeSpace(record.Count);
                 rom.WriteBytesAt(addr, record.ToArray());
@@ -1021,6 +1022,153 @@ namespace DrGero.Rendering
         {
             foreach (var key in cache.Keys.Where(k => k.game == game).ToList())
                 cache.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// Resolves and renders a live preview icon for EntityKind.Character sprite ids, by
+    /// walking the SAME pointer chain the game itself uses at runtime.
+    ///
+    /// CONFIRMED via IDA 2026-09 (Character_GetSpriteId @0x8009324): for id&gt;=7, this
+    /// resolves as `g_CharacterSpriteIndex[id]` -- a direct pointer (NOT a raw index) into
+    /// a per-character record. Ids 0-6 are a completely different, dynamic lookup
+    /// (Character_GetSpriteIdFromStats, the PLAYER's own current party members, resolved
+    /// from live save-state stats/transformation -- not a fixed ROM sprite at all) and are
+    /// NOT handled by this reader; GetIcon returns null for them.
+    ///
+    /// CONFIRMED via IDA 2026-09 (Entity_Init/sub_80075A8) plus an empirical sweep of every
+    /// spriteId in this ROM: the pointer leads to a 16-byte header, then four 16-byte "slot"
+    /// entries; slots not in use have a sentinel 4th field (seen: -2, -1, 0) while an active
+    /// slot's 4th field is a real ROM pointer (top byte 0x08) to a small array of 12-byte
+    /// frame-descriptor entries. Bytes +2/+3 of that frame descriptor are the frame's real
+    /// pixel WIDTH/HEIGHT (always multiples of 8) -- confirmed across the full sprite table:
+    /// every entry's width*height/64 exactly matches its decompressed tileDataLen/64 tile
+    /// count, from 1 tile (8x8, id=25) up to 64 tiles (64x64, e.g. id=27-30/34/37-39/74/
+    /// 105-106/122-124/127 -- the "bigger" characters like Cell/robots/T-Rex) and one
+    /// confirmed non-square case (id=136, 32x16 = 4 tiles wide x 2 tall). The previous
+    /// version of this reader hardcoded every character to the common 16x32 (2x4 tile) case,
+    /// which is why anything bigger came out cropped/squashed into that box. Then a 4-byte
+    /// pointer to standard JCALG1-compressed tile data, laid out row-major at that width.
+    /// </summary>
+    public static class CharacterIconReader
+    {
+        private const int SlotStride = 16;
+        private const int SlotArrayOffset = 16; // first slot starts 16 bytes into the record
+        private const int SlotCount = 4;
+        private const int FrameDescStride = 12;
+        private const int BytesPerTile = 64; // 8bpp
+
+        private static readonly Dictionary<(Game game, int spriteId), Bitmap?> cache = [];
+
+        public static Bitmap? GetIcon(ROM rom, Game game, int spriteId)
+        {
+            if (spriteId < 7) return null; // player/party members -- dynamic, not a fixed ROM sprite (see class doc)
+
+            var key = (game, spriteId);
+            if (cache.TryGetValue(key, out var cached))
+                return cached;
+
+            Bitmap? icon = null;
+            try
+            {
+                icon = TryRender(rom, game, spriteId);
+            }
+            catch
+            {
+                // Corrupt/unsupported record for this id -- fall through and cache the miss
+                // rather than guess, matching ItemIconReader's convention.
+            }
+
+            cache[key] = icon;
+            return icon;
+        }
+
+        private static Bitmap? TryRender(ROM rom, Game game, int spriteId)
+        {
+            rom.PushPosition(game.CharacterSpriteIndexOffset + (spriteId * 4));
+            int recordPtr = rom.ReadPointer();
+            rom.PopPosition();
+            if (recordPtr == 0) return null;
+
+            int frameDescArrayPtr = 0;
+            for (int slot = 0; slot < SlotCount; slot++)
+            {
+                rom.PushPosition(recordPtr + SlotArrayOffset + (slot * SlotStride) + 12);
+                int candidate = rom.ReadInt();
+                rom.PopPosition();
+
+                if ((candidate & 0xFF000000) == 0x08000000)
+                {
+                    frameDescArrayPtr = candidate & 0x00FFFFFF;
+                    break;
+                }
+            }
+            if (frameDescArrayPtr == 0) return null;
+
+            // +2/+3 of the frame descriptor: real pixel width/height for THIS character's
+            // frame (see class doc) -- not a fixed 2x4 tile shape.
+            rom.PushPosition(frameDescArrayPtr + 2);
+            int widthPx = rom.ReadByte();
+            int heightPx = rom.ReadByte();
+            rom.PopPosition();
+            if (widthPx <= 0 || heightPx <= 0) return null;
+            int tilesWide = widthPx / 8;
+            int tilesTall = heightPx / 8;
+
+            rom.PushPosition(frameDescArrayPtr + 8);
+            int tileDataPtr = rom.ReadPointer();
+            rom.PopPosition();
+            if (tileDataPtr == 0) return null;
+
+            byte[] tileData = JCALG1.Decompress(rom, tileDataPtr);
+            int neededBytes = tilesWide * tilesTall * BytesPerTile;
+            if (tileData.Length < neededBytes) return null;
+
+            var palette = ItemIconReader.ReadOBJPalette(rom, game);
+            var frame = new Bitmap(widthPx, heightPx, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using var g = Graphics.FromImage(frame);
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+
+            for (int ty = 0; ty < tilesTall; ty++)
+            {
+                for (int tx = 0; tx < tilesWide; tx++)
+                {
+                    int srcOffset = ((ty * tilesWide) + tx) * BytesPerTile;
+                    using var tileBmp = ItemIconReader.RenderIndexed(tileData.AsSpan(srcOffset, BytesPerTile).ToArray(), 8, 8, palette);
+                    g.DrawImage(tileBmp, tx * 8, ty * 8);
+                }
+            }
+
+            return frame;
+        }
+
+        public static void ResetCache(Game game)
+        {
+            foreach (var key in cache.Keys.Where(k => k.game == game).ToList())
+                cache.Remove(key);
+        }
+
+        /// <summary>
+        /// Enumerates spriteIds (starting at 7 -- see class doc) that produce a real,
+        /// non-null decoded icon, up to maxId or until maxConsecutiveMisses in a row (same
+        /// heuristic-scan convention as ItemIconReader.EnumerateValidItemIds).
+        /// </summary>
+        public static IEnumerable<int> EnumerateValidSpriteIds(ROM rom, Game game, int maxId = 256, int maxConsecutiveMisses = 12)
+        {
+            int misses = 0;
+            for (int spriteId = 7; spriteId < maxId; spriteId++)
+            {
+                if (GetIcon(rom, game, spriteId) != null)
+                {
+                    misses = 0;
+                    yield return spriteId;
+                }
+                else if (++misses >= maxConsecutiveMisses)
+                {
+                    yield break;
+                }
+            }
         }
     }
 
