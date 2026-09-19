@@ -37,26 +37,14 @@
             toolStrip_SaveROM = new ToolStripMenuItem();
             viewportToolStrip = new ToolStrip();
             toolStrip_ShowCollision = new ToolStripButton();
+            toolStrip_RefreshMap = new ToolStripButton();
             sidebarTabControl = new TabControl();
             tilesTabPage = new TabPage();
             listView1 = new ListView();
             itemsTabPage = new TabPage();
             itemsListView = new ListView();
-            objectsTabPage = new TabPage();
-            objectsListView = new ListView();
-            colObjZone = new ColumnHeader();
-            colObjArea = new ColumnHeader();
-            colObjMap = new ColumnHeader();
-            colObjItemId = new ColumnHeader();
-            colObjX = new ColumnHeader();
-            colObjY = new ColumnHeader();
-            objectsButtonPanel = new Panel();
-            objectsGoToButton = new Button();
-            objectsPlaceNewButton = new Button();
             npcsTabPage = new TabPage();
-            npcSpriteIdLabel = new Label();
-            npcSpriteIdInput = new NumericUpDown();
-            npcPlaceButton = new Button();
+            npcListView = new ListView();
             npcHintLabel = new Label();
             propertiesTabPage = new TabPage();
             propertiesGroupBox = new GroupBox();
@@ -70,10 +58,7 @@
             sidebarTabControl.SuspendLayout();
             tilesTabPage.SuspendLayout();
             itemsTabPage.SuspendLayout();
-            objectsTabPage.SuspendLayout();
-            objectsButtonPanel.SuspendLayout();
             npcsTabPage.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)npcSpriteIdInput).BeginInit();
             propertiesTabPage.SuspendLayout();
             propertiesGroupBox.SuspendLayout();
             statusStrip1.SuspendLayout();
@@ -87,6 +72,7 @@
             mapTreeView.Size = new Size(320, 826);
             mapTreeView.TabIndex = 1;
             mapTreeView.AfterSelect += mapTreeView_AfterSelect;
+            mapTreeView.BeforeSelect += mapTreeView_BeforeSelect;
             //
             // mapScrollPanel
             //
@@ -142,7 +128,7 @@
             //
             // viewportToolStrip
             //
-            viewportToolStrip.Items.AddRange(new ToolStripItem[] { toolStrip_ShowCollision });
+            viewportToolStrip.Items.AddRange(new ToolStripItem[] { toolStrip_ShowCollision, toolStrip_RefreshMap });
             viewportToolStrip.Location = new Point(0, 24);
             viewportToolStrip.Name = "viewportToolStrip";
             viewportToolStrip.Size = new Size(1500, 28);
@@ -159,12 +145,23 @@
             toolStrip_ShowCollision.ToolTipText = "Overlay solid/blocked tiles (red) on the map";
             toolStrip_ShowCollision.CheckedChanged += toolStrip_ShowCollision_CheckedChanged;
             //
+            // toolStrip_RefreshMap
+            //
+            // WinForms TreeView doesn't fire AfterSelect when you click a node that's
+            // already selected, so there was previously no way to force a reload without
+            // selecting a different node and clicking back. This does it directly.
+            toolStrip_RefreshMap.DisplayStyle = ToolStripItemDisplayStyle.Text;
+            toolStrip_RefreshMap.Name = "toolStrip_RefreshMap";
+            toolStrip_RefreshMap.Size = new Size(97, 25);
+            toolStrip_RefreshMap.Text = "Refresh Map";
+            toolStrip_RefreshMap.ToolTipText = "Reload the current map from the live ROM";
+            toolStrip_RefreshMap.Click += toolStrip_RefreshMap_Click;
+            //
             // sidebarTabControl
             //
             sidebarTabControl.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             sidebarTabControl.Controls.Add(tilesTabPage);
             sidebarTabControl.Controls.Add(itemsTabPage);
-            sidebarTabControl.Controls.Add(objectsTabPage);
             sidebarTabControl.Controls.Add(npcsTabPage);
             sidebarTabControl.Controls.Add(propertiesTabPage);
             sidebarTabControl.Location = new Point(1276, 55);
@@ -210,132 +207,35 @@
             itemsListView.UseCompatibleStateImageBehavior = false;
             itemsListView.MouseDown += itemsListView_MouseDown;
             //
-            // objectsTabPage
-            //
-            objectsTabPage.Controls.Add(objectsListView);
-            objectsTabPage.Controls.Add(objectsButtonPanel);
-            objectsTabPage.Location = new Point(4, 24);
-            objectsTabPage.Name = "objectsTabPage";
-            objectsTabPage.Size = new Size(204, 614);
-            objectsTabPage.TabIndex = 3;
-            objectsTabPage.Text = "Objects";
-            //
-            // objectsListView
-            //
-            // Every EntityKind.Object across every map, scanned up front -- see
-            // PopulateObjectsList -- not just whatever's on the currently-open map.
-            objectsListView.Columns.AddRange(new ColumnHeader[] { colObjZone, colObjArea, colObjMap, colObjItemId, colObjX, colObjY });
-            objectsListView.Dock = DockStyle.Fill;
-            objectsListView.FullRowSelect = true;
-            objectsListView.GridLines = true;
-            objectsListView.Location = new Point(0, 0);
-            objectsListView.MultiSelect = false;
-            objectsListView.Name = "objectsListView";
-            objectsListView.Size = new Size(204, 574);
-            objectsListView.TabIndex = 0;
-            objectsListView.UseCompatibleStateImageBehavior = false;
-            objectsListView.View = View.Details;
-            objectsListView.MouseDoubleClick += objectsListView_MouseDoubleClick;
-            //
-            // colObjZone
-            //
-            colObjZone.Text = "Zn";
-            colObjZone.Width = 30;
-            //
-            // colObjArea
-            //
-            colObjArea.Text = "Ar";
-            colObjArea.Width = 30;
-            //
-            // colObjMap
-            //
-            colObjMap.Text = "Map";
-            colObjMap.Width = 70;
-            //
-            // colObjItemId
-            //
-            colObjItemId.Text = "Item";
-            colObjItemId.Width = 34;
-            //
-            // colObjX
-            //
-            colObjX.Text = "X";
-            colObjX.Width = 40;
-            //
-            // colObjY
-            //
-            colObjY.Text = "Y";
-            colObjY.Width = 40;
-            //
-            // objectsButtonPanel
-            //
-            objectsButtonPanel.Controls.Add(objectsGoToButton);
-            objectsButtonPanel.Controls.Add(objectsPlaceNewButton);
-            objectsButtonPanel.Dock = DockStyle.Bottom;
-            objectsButtonPanel.Height = 40;
-            objectsButtonPanel.Name = "objectsButtonPanel";
-            //
-            // objectsGoToButton
-            //
-            objectsGoToButton.Location = new Point(4, 6);
-            objectsGoToButton.Name = "objectsGoToButton";
-            objectsGoToButton.Size = new Size(95, 28);
-            objectsGoToButton.Text = "Go To";
-            objectsGoToButton.UseVisualStyleBackColor = true;
-            objectsGoToButton.Click += objectsGoToButton_Click;
-            //
-            // objectsPlaceNewButton
-            //
-            objectsPlaceNewButton.Location = new Point(104, 6);
-            objectsPlaceNewButton.Name = "objectsPlaceNewButton";
-            objectsPlaceNewButton.Size = new Size(95, 28);
-            objectsPlaceNewButton.Text = "Place New";
-            objectsPlaceNewButton.UseVisualStyleBackColor = true;
-            objectsPlaceNewButton.Click += objectsPlaceNewButton_Click;
-            //
             // npcsTabPage
             //
+            npcsTabPage.Controls.Add(npcListView);
             npcsTabPage.Controls.Add(npcHintLabel);
-            npcsTabPage.Controls.Add(npcPlaceButton);
-            npcsTabPage.Controls.Add(npcSpriteIdInput);
-            npcsTabPage.Controls.Add(npcSpriteIdLabel);
             npcsTabPage.Location = new Point(4, 24);
             npcsTabPage.Name = "npcsTabPage";
             npcsTabPage.Size = new Size(204, 614);
             npcsTabPage.TabIndex = 4;
             npcsTabPage.Text = "NPCs";
             //
-            // npcSpriteIdLabel
+            // npcListView
             //
-            npcSpriteIdLabel.AutoSize = true;
-            npcSpriteIdLabel.Location = new Point(8, 12);
-            npcSpriteIdLabel.Name = "npcSpriteIdLabel";
-            npcSpriteIdLabel.Size = new Size(60, 15);
-            npcSpriteIdLabel.Text = "Sprite ID:";
-            //
-            // npcSpriteIdInput
-            //
-            npcSpriteIdInput.Location = new Point(8, 30);
-            npcSpriteIdInput.Maximum = new decimal(new int[] { 999, 0, 0, 0 });
-            npcSpriteIdInput.Name = "npcSpriteIdInput";
-            npcSpriteIdInput.Size = new Size(120, 23);
-            //
-            // npcPlaceButton
-            //
-            npcPlaceButton.Location = new Point(8, 60);
-            npcPlaceButton.Name = "npcPlaceButton";
-            npcPlaceButton.Size = new Size(120, 28);
-            npcPlaceButton.Text = "Place NPC";
-            npcPlaceButton.UseVisualStyleBackColor = true;
-          //  npcPlaceButton.Click += npcPlaceButton_Click;
+            // Real sprite previews from the "Character IDs" folder (extracted separately,
+            // filenames are the hex sprite id -- see PopulateNpcList) instead of a bare
+            // numeric id input, so picking a character is recognition, not guessing.
+            npcListView.Dock = DockStyle.Fill;
+            npcListView.Location = new Point(0, 0);
+            npcListView.Name = "npcListView";
+            npcListView.Size = new Size(204, 514);
+            npcListView.TabIndex = 0;
+            npcListView.UseCompatibleStateImageBehavior = false;
+            npcListView.MouseDown += npcListView_MouseDown;
             //
             // npcHintLabel
             //
-            npcHintLabel.Location = new Point(8, 96);
-            npcHintLabel.MaximumSize = new Size(188, 0);
+            npcHintLabel.Dock = DockStyle.Bottom;
+            npcHintLabel.Height = 100;
             npcHintLabel.Name = "npcHintLabel";
-            npcHintLabel.Size = new Size(188, 100);
-            npcHintLabel.Text = "Click the map to place a new NPC with this sprite ID. Esc cancels.\r\n\r\nOnly saves on maps that already have at least one character -- new spawn records need an existing one as a template for unconfirmed fields.";
+            npcHintLabel.Text = "Click a sprite, then click the map to place it. Esc cancels.\r\n\r\nOnly saves on maps that already have at least one character -- new spawn records need an existing one as a template for unconfirmed fields.";
             //
             // propertiesTabPage
             //
@@ -401,11 +301,7 @@
             sidebarTabControl.ResumeLayout(false);
             tilesTabPage.ResumeLayout(false);
             itemsTabPage.ResumeLayout(false);
-            objectsTabPage.ResumeLayout(false);
-            objectsButtonPanel.ResumeLayout(false);
             npcsTabPage.ResumeLayout(false);
-            npcsTabPage.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)npcSpriteIdInput).EndInit();
             propertiesTabPage.ResumeLayout(false);
             propertiesGroupBox.ResumeLayout(false);
             statusStrip1.ResumeLayout(false);
@@ -424,26 +320,14 @@
         private ToolStripMenuItem toolStrip_SaveROM;
         private ToolStrip viewportToolStrip;
         private ToolStripButton toolStrip_ShowCollision;
+        private ToolStripButton toolStrip_RefreshMap;
         private TabControl sidebarTabControl;
         private TabPage tilesTabPage;
         private ListView listView1;
         private TabPage itemsTabPage;
         private ListView itemsListView;
-        private TabPage objectsTabPage;
-        private ListView objectsListView;
-        private ColumnHeader colObjZone;
-        private ColumnHeader colObjArea;
-        private ColumnHeader colObjMap;
-        private ColumnHeader colObjItemId;
-        private ColumnHeader colObjX;
-        private ColumnHeader colObjY;
-        private Panel objectsButtonPanel;
-        private Button objectsGoToButton;
-        private Button objectsPlaceNewButton;
         private TabPage npcsTabPage;
-        private Label npcSpriteIdLabel;
-        private NumericUpDown npcSpriteIdInput;
-        private Button npcPlaceButton;
+        private ListView npcListView;
         private Label npcHintLabel;
         private TabPage propertiesTabPage;
         private GroupBox propertiesGroupBox;

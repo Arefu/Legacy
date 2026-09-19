@@ -29,9 +29,17 @@ namespace Dragon_Radar
 
         private void DragonRadarUI_KeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Escape && _placingItemId.HasValue)
+            if (e.KeyCode != Keys.Escape) return;
+
+            if (_placingItemId.HasValue)
             {
                 _placingItemId = null;
+                UpdateStatusLabel();
+            }
+
+            if (_placingCharacterSpriteId.HasValue)
+            {
+                _placingCharacterSpriteId = null;
                 UpdateStatusLabel();
             }
         }
@@ -74,6 +82,11 @@ namespace Dragon_Radar
             ImageSize = new Size(32, 32),
             ColorDepth = ColorDepth.Depth32Bit
         };
+        private readonly ImageList _npcThumbnails = new ImageList
+        {
+            ImageSize = new Size(32, 32),
+            ColorDepth = ColorDepth.Depth32Bit
+        };
 
         // Set by clicking an entry in the Items tab; the next click on the map
         // places a new EntityKind.Item marker there instead of selecting/dragging.
@@ -81,6 +94,12 @@ namespace Dragon_Radar
         // Save ROM As can't write them back (see toolStrip_SaveROM_Click).
         private int? _placingItemId;
         private (int OnPickup, int CollectionMsg) _placingTemplate;
+
+        // Same idea as _placingItemId, for the NPCs tab -- next map click places a new
+        // EntityKind.Character (spriteId = _placingCharacterSpriteId) instead of
+        // selecting/dragging. See EntityWriter.PersistNewCharacters for why saving this
+        // only works on maps that already have at least one character.
+        private int? _placingCharacterSpriteId;
 
         // Scans g_ItemsInGame once per ROM load and fills the Items tab with an
         // icon + id for every entry that looks real (see EnumerateValidItemIds).
@@ -158,6 +177,22 @@ namespace Dragon_Radar
             _placingItemId = itemId;
             _placingTemplate = (onPickup, collectionMsg);
             statusLabel.Text = $"Placing item {itemId} — click the map to place it, Esc to cancel";
+        }
+
+        // Zone/Area group nodes (built by MapTreeBuilder -- Tag is null for anything
+        // that isn't an actual map leaf) aren't maps and have nothing to show -- cancel
+        // the selection outright so clicking one leaves whatever map was already open
+        // in place instead of clearing the view.
+        private void mapTreeView_BeforeSelect(object? sender, TreeViewCancelEventArgs e)
+        {
+            if (e.Node?.Tag is not MapEntry)
+                e.Cancel = true;
+        }
+
+        private void toolStrip_RefreshMap_Click(object? sender, EventArgs e)
+        {
+            if (mapTreeView.SelectedNode != null)
+                mapTreeView_AfterSelect(this, new TreeViewEventArgs(mapTreeView.SelectedNode));
         }
 
         private void mapTreeView_AfterSelect(object? sender, TreeViewEventArgs e)
@@ -428,9 +463,14 @@ namespace Dragon_Radar
                     // ItemIconReader was drawing whatever pickup happened to share that
                     // small index (e.g. index 0-2) instead of the actual rock/object --
                     // confirmed against real ROM data for Zone1/Area1's three rocks.
-                    Bitmap? icon = entity.Kind == EntityKind.Object && _rom != null && _game != null
-                        ? ItemIconReader.GetIcon(_rom, _game.Config, entity.TypeId)
-                        : null;
+                    // Character.TypeId IS the real spriteId (see ReadMapScripts) -- same
+                    // value CharacterIconReader/the NPCs tab placement flow already use.
+                    Bitmap? icon = _rom == null || _game == null ? null : entity.Kind switch
+                    {
+                        EntityKind.Object => ItemIconReader.GetIcon(_rom, _game.Config, entity.TypeId),
+                        EntityKind.Character => CharacterIconReader.GetIcon(_rom, _game.Config, entity.TypeId),
+                        _ => null
+                    };
 
                     if (icon != null)
                     {
@@ -622,6 +662,18 @@ namespace Dragon_Radar
                 return;
             }
 
+            if (_placingCharacterSpriteId.HasValue)
+            {
+                _currentEntities.Add(new Entity(EntityKind.Character, e.Location.X, e.Location.Y, _placingCharacterSpriteId.Value, SourceAddress: 0));
+                _selectedIndex = _currentEntities.Count - 1;
+                _placingCharacterSpriteId = null;
+                _dirty = true;
+
+                UpdateStatusLabel();
+                mapPictureBox.Invalidate();
+                return;
+            }
+
             // Grabbing the currently-selected trigger's border takes priority over starting
             // a fresh selection/move -- check it before HitTest replaces _selectedIndex.
             if (_selectedIndex >= 0 && _selectedIndex < _currentEntities.Count)
@@ -764,7 +816,7 @@ namespace Dragon_Radar
             {
                 EntityKind.Object => $"item id {entity.TypeId}",
                 EntityKind.Item => $"item id {entity.TypeId} (position approximate)",
-                EntityKind.Character => $"spriteId {entity.TypeId}",
+                EntityKind.Character => $"spriteId {entity.TypeId} (= script charIdx {entity.TypeId})",
                 EntityKind.LevelGate => $"requires level {entity.TypeId}",
                 EntityKind.Trigger => $"{entity.Width}x{entity.Height} zone",
                 EntityKind.Decoration => $"decoration frame {entity.TypeId} ({entity.Width}x{entity.Height})",
@@ -830,6 +882,17 @@ namespace Dragon_Radar
                     break;
                 case EntityKind.Character:
                     lines.Add($"Sprite ID: {entity.TypeId}");
+                    lines.Add("");
+                    // CONFIRMED via IDA (Entity_GetByCharIndex -> Character_GetSpriteId,
+                    // 2026-09): this is the EXACT same id space Legacy/Zenkai scripts pass
+                    // as charIdx to WalkToPosition/FlyToPosition/SetEntityFacing/etc, not
+                    // just a display-only sprite lookup.
+                    lines.Add(entity.TypeId switch
+                    {
+                        0 => "Script charIdx 0 = the player. Same value used by WalkToPosition/FlyToPosition in Legacy scripts.",
+                        >= 1 and <= 6 => $"Script charIdx {entity.TypeId} = party roster slot {entity.TypeId} (dynamic -- depends on current save state, not a fixed sprite). Same value used by WalkToPosition/FlyToPosition.",
+                        _ => $"Script charIdx {entity.TypeId} -- same value used by WalkToPosition/FlyToPosition/etc in Legacy scripts to command this NPC. Only resolves if this NPC is actually spawned on the map the script runs on."
+                    });
                     break;
                 case EntityKind.SpawnScript:
                     lines.Add("Spawn script entity.");
@@ -870,91 +933,76 @@ namespace Dragon_Radar
 
             PopulateMapTree();
             PopulateItemList();
-            PopulateObjectsList();
+            PopulateNpcList();
         }
 
-        // Cross-map object browser -- scans every map's mapObjects[] up front (via
-        // EntityReader.ReadObjectArray, the same reader the main view uses) so "where are
-        // all the objects" has a real answer instead of only ever showing whatever's on
-        // whichever single map happens to be open.
-        private void PopulateObjectsList()
+        // Live previews decoded straight from the ROM (see CharacterIconReader) rather than
+        // a pre-extracted asset folder -- an earlier version used a "Character IDs" folder
+        // of separately-extracted portrait art, but that turned out to be dialog-box
+        // portraits, a completely different asset from the overworld sprite
+        // MapScript_CreateCharacter actually spawns, so it wasn't a valid preview for
+        // placement anyway. Requires a ROM to be loaded; called from toolStrip_OpenROM_Click.
+        //
+        // CharacterIconReader's native output is 16x32 (2x4 tiles) -- upscaled 2x to 32x64
+        // here (nearest-neighbor, so it stays pixel-exact) purely for the thumbnail list.
+        // Character frames are NOT all the same size (CONFIRMED via IDA -- see
+        // CharacterIconReader's class doc: frames range from 8x8 up to 64x64, plus at least
+        // one non-square 32x16 case), so this scales each icon to FIT inside a fixed square
+        // box while preserving its real aspect ratio (centered), rather than force-stretching
+        // every icon to one fixed size -- which is what made bigger characters (Cell, robots,
+        // T-Rex) look squashed/distorted in the list.
+        private const int NpcThumbnailBox = 64;
+
+        private void PopulateNpcList()
         {
-            objectsListView.Items.Clear();
+            npcListView.Items.Clear();
+            _npcThumbnails.Images.Clear();
+            _npcThumbnails.ImageSize = new Size(NpcThumbnailBox, NpcThumbnailBox);
+            npcListView.LargeImageList = _npcThumbnails;
+            npcListView.View = View.LargeIcon;
+
             if (_rom == null || _game == null) return;
 
-            var rows = new List<ListViewItem>();
-            foreach (var entry in _game.MapEntries)
+            var images = new List<Image>();
+            var items = new List<ListViewItem>();
+
+            foreach (int spriteId in CharacterIconReader.EnumerateValidSpriteIds(_rom, _game.Config))
             {
-                foreach (var entity in EntityReader.ReadObjectArray(_rom, entry))
+                var icon = CharacterIconReader.GetIcon(_rom, _game.Config, spriteId);
+                if (icon == null) continue;
+
+                float scale = Math.Min((float)NpcThumbnailBox / icon.Width, (float)NpcThumbnailBox / icon.Height);
+                int drawWidth = Math.Max(1, (int)Math.Round(icon.Width * scale));
+                int drawHeight = Math.Max(1, (int)Math.Round(icon.Height * scale));
+                int drawX = (NpcThumbnailBox - drawWidth) / 2;
+                int drawY = (NpcThumbnailBox - drawHeight) / 2;
+
+                var thumbnail = new Bitmap(NpcThumbnailBox, NpcThumbnailBox);
+                using (var g = Graphics.FromImage(thumbnail))
                 {
-                    rows.Add(new ListViewItem(new[]
-                    {
-                        entry.Zone.ToString(),
-                        entry.Area.ToString(),
-                        entry.Name,
-                        entity.TypeId.ToString(),
-                        entity.X.ToString(),
-                        entity.Y.ToString(),
-                    })
-                    { Tag = (entry, entity) });
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(icon, drawX, drawY, drawWidth, drawHeight);
                 }
+
+                images.Add(thumbnail);
+                items.Add(new ListViewItem($"NPC {spriteId}", images.Count - 1) { Tag = spriteId });
             }
 
-            objectsListView.Items.AddRange(rows.ToArray());
+            _npcThumbnails.Images.AddRange(images.ToArray());
+
+            npcListView.BeginUpdate();
+            npcListView.Items.AddRange(items.ToArray());
+            npcListView.EndUpdate();
         }
 
-        private void objectsListView_MouseDoubleClick(object? sender, MouseEventArgs e) => GoToSelectedObject();
-
-        private void objectsGoToButton_Click(object? sender, EventArgs e) => GoToSelectedObject();
-
-        // Jumps the main view to an existing object: selects its map's tree node (triggers
-        // the normal mapTreeView_AfterSelect load), then finds and selects the matching
-        // entity by SourceAddress in the freshly-loaded _currentEntities and scrolls to it.
-        private void GoToSelectedObject()
+        private void npcListView_MouseDown(object? sender, MouseEventArgs e)
         {
-            if (objectsListView.SelectedItems.Count == 0) return;
-            if (objectsListView.SelectedItems[0].Tag is not (MapEntry entry, Entity entity)) return;
+            var item = npcListView.GetItemAt(e.X, e.Y);
+            if (item?.Tag is not int spriteId) return;
 
-            var node = FindMapNode(mapTreeView.Nodes, entry);
-            if (node == null) return;
-
-            mapTreeView.SelectedNode = node;
-
-            int idx = _currentEntities.FindIndex(x => x.Kind == EntityKind.Object && x.SourceAddress == entity.SourceAddress);
-            if (idx < 0) return;
-
-            _selectedIndex = idx;
-            UpdateStatusLabel();
-            mapPictureBox.Invalidate();
-
-            var target = _currentEntities[idx];
-            mapScrollPanel.AutoScrollPosition = new Point(
-                Math.Max(0, target.X - (mapScrollPanel.ClientSize.Width / 2)),
-                Math.Max(0, target.Y - (mapScrollPanel.ClientSize.Height / 2)));
-        }
-
-        // Places another copy of the selected row's item type on the CURRENTLY open map --
-        // same disambiguation flow as the Items tab (asks which onPickup/collectionMsg
-        // script to reuse if this item id already has more than one distinct pair in the
-        // ROM), since dropping a duplicate of something that already exists is exactly the
-        // "multiple scripts" case that flow was built for.
-        private void objectsPlaceNewButton_Click(object? sender, EventArgs e)
-        {
-            if (objectsListView.SelectedItems.Count == 0) return;
-            if (objectsListView.SelectedItems[0].Tag is not (MapEntry, Entity entity)) return;
-
-            ArmPlacementWithDisambiguation(entity.TypeId, objectsListView, objectsListView.PointToClient(Cursor.Position));
-        }
-
-        private static TreeNode? FindMapNode(TreeNodeCollection nodes, MapEntry entry)
-        {
-            foreach (TreeNode node in nodes)
-            {
-                if (ReferenceEquals(node.Tag, entry)) return node;
-                var found = FindMapNode(node.Nodes, entry);
-                if (found != null) return found;
-            }
-            return null;
+            _placingCharacterSpriteId = spriteId;
+            statusLabel.Text = $"Placing NPC (sprite {spriteId}) — click the map to place it, Esc to cancel";
         }
 
         // Writes every entity's current (possibly edited) position back into a copy
@@ -1048,9 +1096,19 @@ namespace Dragon_Radar
 
             if (placeError != null)
                 MessageBox.Show(placeError, "Couldn't place new item(s)", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            _dirty = false;
-            UpdateStatusLabel();
-            MessageBox.Show($"Saved {written} entity position(s) and {placed} newly-placed item(s) to {Path.GetFileName(dialog.FileName)}.\n\nReopen the saved file to keep editing the newly-placed items further.");
+
+            // Make the just-saved ROM the live one, then reload the current map through
+            // the exact same path selecting it in the tree already uses -- re-reads every
+            // entity fresh, so newly-placed items/characters pick up their real ROM
+            // SourceAddress/PositionAddress and can keep being edited immediately, no
+            // reopen required (previously required re-opening the saved file for this).
+            _rom = editedRom;
+            if (mapTreeView.SelectedNode != null)
+                mapTreeView_AfterSelect(this, new TreeViewEventArgs(mapTreeView.SelectedNode));
+
+            // Set after the reload above -- mapTreeView_AfterSelect ends by calling
+            // UpdateStatusLabel() itself, which would otherwise overwrite this immediately.
+            statusLabel.Text = $"Saved {written} entity position(s) and {placed} newly-placed item(s) to {Path.GetFileName(dialog.FileName)}.";
         }
     }
 }
