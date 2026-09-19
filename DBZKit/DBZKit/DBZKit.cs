@@ -1,6 +1,7 @@
 using DBZKit.Assets;
 using DrGero.Boot;
 using DrGero.IO;
+using DrGero.Rendering;
 
 namespace DBZKit
 {
@@ -18,6 +19,15 @@ namespace DBZKit
 
         private byte[]? _GBARom;
 
+        // Confirmed offsets from Dragon Radar's games/ALFE.json (this ROM) -- only the
+        // two fields CharacterIconReader actually needs, so a plain Game POCO built here
+        // avoids pulling in Bulma's GameFactory/GameLibrary just for this.
+        private static readonly DrGero.Config.Game NpcGame = new()
+        {
+            OBJPaletteOffset = 0x1DA6C8,
+            CharacterSpriteIndexOffset = 0x3B4E74,
+        };
+
         public DBZKit()
         {
             InitializeComponent();
@@ -34,9 +44,13 @@ namespace DBZKit
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
+            // 64x64 fixed box -- CharacterIconReader's frames are NOT all the same size
+            // (CONFIRMED: 8x8 up to 64x64, plus at least one 32x16 case), so each frame is
+            // scaled to FIT inside this box (preserving aspect ratio, see
+            // PopulateSpriteFrameList) rather than force-stretched to one shape.
             _SpriteImageList = new ImageList
             {
-                ImageSize = new Size(64, 128),
+                ImageSize = new Size(64, 64),
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
@@ -141,7 +155,7 @@ namespace DBZKit
             }
 
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
-            Sprites.Load3(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            PopulateSpriteTree();
             Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             //    Sprites.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
@@ -786,7 +800,31 @@ namespace DBZKit
                 catch { }
             }
 
-            MessageBox.Show($"Dumped {dumped} asset(s) to:\n{rawDir}\n{assetsDir}", "Dump complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // Every map's tiles, layers and collision (PNG + raw BIN), plus the shared tile atlas --
+            // see MapDumper for the layout. This is the slow part (hundreds of maps).
+            string mapsDir = Path.Combine(dialog.SelectedPath, "ROM", "Maps");
+            string originalTitle = Text;
+            Cursor = Cursors.WaitCursor;
+            (int Maps, int Banks, int Errors) mapResult;
+            try
+            {
+                mapResult = MapDumper.DumpAll(rom, mapsDir, status =>
+                {
+                    Text = $"{originalTitle} -- {status}";
+                    Application.DoEvents(); // keep the window alive during the long dump
+                });
+            }
+            finally
+            {
+                Text = originalTitle;
+                Cursor = Cursors.Default;
+            }
+
+            MessageBox.Show(
+                $"Dumped {dumped} asset(s) to:\n{rawDir}\n{assetsDir}\n\n" +
+                $"Dumped {mapResult.Maps} map(s) and {mapResult.Banks} tile atlas bank(s) (PNG + BIN) to:\n{mapsDir}" +
+                (mapResult.Errors > 0 ? $"\n\n{mapResult.Errors} problem(s) were logged to errors.txt in that folder." : ""),
+                "Dump complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         // Credits: dump (export current ROM text to BIN+TXT), import (load a BIN or TXT
@@ -877,6 +915,70 @@ namespace DBZKit
             {
                 ListBox_CreditsViewer.Lines = File.ReadAllLines(dialog.FileName);
             }
+        }
+
+        // Sprite Viewer tab -- treeView2 lists every real sprite id (NPCs and enemies
+        // share this same catalog, no distinction found in the data), ListView_SpriteViewer
+        // shows that sprite's frames across its active slots when a tree node is picked.
+        // Replaces the old Sprites.Load3 call, which only ever loaded 4 hardcoded sample
+        // NPC ids (10/11/12) rather than the real catalog.
+        private void PopulateSpriteTree()
+        {
+            treeView2.Nodes.Clear();
+            ListView_SpriteViewer.Items.Clear();
+            _SpriteImageList.Images.Clear();
+
+            if (_GBARom == null) return;
+
+            var rom = Rom;
+            var nodes = new List<TreeNode>();
+            foreach (int spriteId in CharacterIconReader.EnumerateValidSpriteIds(rom, NpcGame))
+                nodes.Add(new TreeNode($"Sprite {spriteId}") { Tag = spriteId });
+
+            treeView2.BeginUpdate();
+            treeView2.Nodes.AddRange(nodes.ToArray());
+            treeView2.EndUpdate();
+        }
+
+        private void treeView2_AfterSelect(object? sender, TreeViewEventArgs e)
+        {
+            ListView_SpriteViewer.Items.Clear();
+            _SpriteImageList.Images.Clear();
+            ListView_SpriteViewer.LargeImageList = _SpriteImageList;
+            ListView_SpriteViewer.View = View.LargeIcon;
+
+            if (_GBARom == null || e.Node?.Tag is not int spriteId) return;
+
+            const int box = 64;
+            var images = new List<Image>();
+            var items = new List<ListViewItem>();
+
+            foreach (var slotFrame in CharacterIconReader.GetAllSlotFrames(Rom, NpcGame, spriteId))
+            {
+                var icon = slotFrame.Bitmap;
+                int iconWidth = icon.Width, iconHeight = icon.Height;
+                float scale = Math.Min((float)box / iconWidth, (float)box / iconHeight);
+                int drawWidth = Math.Max(1, (int)Math.Round(iconWidth * scale));
+                int drawHeight = Math.Max(1, (int)Math.Round(iconHeight * scale));
+
+                var thumbnail = new Bitmap(box, box);
+                using (var g = Graphics.FromImage(thumbnail))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                    g.DrawImage(icon, (box - drawWidth) / 2, (box - drawHeight) / 2, drawWidth, drawHeight);
+                }
+                icon.Dispose();
+
+                images.Add(thumbnail);
+                items.Add(new ListViewItem($"Slot {slotFrame.SlotIndex} ({iconWidth}x{iconHeight})", images.Count - 1));
+            }
+
+            _SpriteImageList.Images.AddRange(images.ToArray());
+
+            ListView_SpriteViewer.BeginUpdate();
+            ListView_SpriteViewer.Items.AddRange(items.ToArray());
+            ListView_SpriteViewer.EndUpdate();
         }
     }
 }

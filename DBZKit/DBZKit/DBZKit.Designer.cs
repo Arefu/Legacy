@@ -186,6 +186,7 @@
             treeView2.Name = "treeView2";
             treeView2.Size = new Size(256, 629);
             treeView2.TabIndex = 1;
+            treeView2.AfterSelect += treeView2_AfterSelect;
             // 
             // ListView_SpriteViewer
             // 
