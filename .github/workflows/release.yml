@@ -21,9 +21,11 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "build-$(Get-Date -Format yyyyMMdd)-${{ github.run_number }}"
+            $tag = "build-${{ github.run_id }}"
+            echo "IS_TRANSIENT=true" >> $env:GITHUB_ENV
           } else {
             $tag = "${{ github.ref_name }}"
+            echo "IS_TRANSIENT=false" >> $env:GITHUB_ENV
           }
           echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
 
@@ -55,12 +57,22 @@ jobs:
         run: |
           Compress-Archive -Path publish/release/* -DestinationPath DBZKit-${{ env.RELEASE_TAG }}.zip
 
+      - name: Clean up previous transient release
+        if: env.IS_TRANSIENT == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          gh release delete ${{ env.RELEASE_TAG }} --yes --cleanup-tag 2>$null
+          exit 0
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
           gh release create ${{ env.RELEASE_TAG }} `
             DBZKit-${{ env.RELEASE_TAG }}.zip `
             --title "${{ env.RELEASE_TAG }}" `
             --generate-notes `
-            --clobber
+            --prerelease:$${{ env.IS_TRANSIENT }}
