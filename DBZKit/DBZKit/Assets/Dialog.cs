@@ -176,8 +176,8 @@ class DialogParser
                     // StackAnd..StackCmpLe - no operands
                     break;
 
-                case 0x12: // Jump - TODO: confirm operand size (guessing 1 byte)
-                case 0x13: // JumpIfFalse - TODO: confirm operand size (guessing 1 byte)
+                case 0x12: // Jump - one signed byte (CONFIRMED in IDA, BytecodeVM_Jump 0x080090FE)
+                case 0x13: // JumpIfFalse - one signed byte (CONFIRMED, BytecodeVM_JumpIfFalse 0x0800910A)
                     pos += 1;
                     break;
 
@@ -194,10 +194,10 @@ class DialogParser
                     pos += 1;
                     break;
 
-                case 0x1B: // PushToAltStack - no operands (assumed)
+                case 0x1B: // PushToAltStack - no operands (CONFIRMED, BytecodeVM_PushToAltStack 0x08009250)
                     break;
 
-                case 0x1C: // LoopOrJump - TODO: confirm operand size (guessing 1 byte)
+                case 0x1C: // LoopOrJump - one signed byte (CONFIRMED, BytecodeVM_LoopOrJump 0x0800926C)
                     pos += 1;
                     break;
 

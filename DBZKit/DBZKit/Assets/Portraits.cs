@@ -28,7 +28,10 @@ namespace DBZKit.Assets
                 int deflatedSize = GBA.ReadInt32(rom, pointer + 4);
                 int dataOffset = GBA.ToOffset(pointer) + 8;
 
-                var result = Jcalg1Decompress.Decompress(rom, dataOffset, deflatedSize);
+                // mode 0 = raw (what DBZKit's Replace writes; Resource_LoadOrDecompress memcpys it), otherwise JCALG1
+                var result = isCompressed == 0
+                    ? new Jcalg1Decompress.DecompressResult { Data = rom.AsSpan(dataOffset, deflatedSize).ToArray(), EndOffset = dataOffset + deflatedSize }
+                    : Jcalg1Decompress.Decompress(rom, dataOffset, deflatedSize);
 
                 string key = $"portrait_{i}";
                 rawData[i] = result.Data;
