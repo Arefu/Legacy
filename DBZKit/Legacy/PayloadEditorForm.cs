@@ -19,7 +19,9 @@ namespace Legacy
         {
             public bool IsScript;
             public byte Character;   // messages only: who's speaking (CharacterId)
-            public string Text = ""; // message text, or Zenkai source for a script
+            public string Text = ""; // message text (without its position/centre prefix), or Zenkai source for a script
+            public BoxPosition Position; // messages only: '!' / '@' / '#'
+            public bool Center;          // messages only: '^' 
         }
 
         private readonly List<Step> _steps;
@@ -32,6 +34,15 @@ namespace Legacy
         private readonly Panel _messagePanel = new() { Dock = DockStyle.Fill, Visible = false };
         private readonly Label _status = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0) };
 
+        // Live preview of the selected message: portrait, box position and width (see DialogPreview).
+        private readonly ComboBox _position = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+        private readonly CheckBox _center = new() { Text = "Centre text (^)", AutoSize = true };
+        private readonly Label _speakerInfo = new() { Dock = DockStyle.Top, Height = 38, Padding = new Padding(4, 2, 4, 0), ForeColor = Color.DimGray };
+        private readonly DialogPreviewControl _preview = new();
+        private readonly Panel _previewHolder = new() { Dock = DockStyle.Bottom, Height = 380, Visible = false };
+        private readonly byte[]? _romForPreview;
+        private readonly Dictionary<byte, (Bitmap? Image, string What)> _portraits = [];
+
         private Step? _shown;
         private bool _loading;
 
@@ -40,16 +51,17 @@ namespace Legacy
         private readonly Func<List<DialogLine>?, byte[]?, string?> _commit;
 
         public PayloadEditorForm(string title, List<Step> steps, bool rawScript, string? warning,
-            Func<List<DialogLine>?, byte[]?, string?> commit)
+            Func<List<DialogLine>?, byte[]?, string?> commit, byte[]? romForPreview = null)
         {
+            _romForPreview = romForPreview;
             _steps = steps;
             _rawScript = rawScript;
             _commit = commit;
 
             Text = title;
             StartPosition = FormStartPosition.CenterParent;
-            ClientSize = new Size(900, 580);
-            MinimumSize = new Size(640, 400);
+            ClientSize = new Size(1000, romForPreview != null ? 900 : 580);
+            MinimumSize = new Size(700, romForPreview != null ? 700 : 400);
             ShowIcon = false;
 
             // ---- left: step list + add/remove/reorder ----
@@ -73,8 +85,27 @@ namespace Legacy
             var top = new Panel { Dock = DockStyle.Top, Height = 32 };
             top.Controls.Add(charLabel);
             top.Controls.Add(_character);
+
+            // Box position + centring (the leading '!' / '@' / '#' and '^' of the message, kept out of the text you edit).
+            _position.Items.AddRange(new object[] { "Auto (engine decides)", "Top (Y 40)", "Middle (Y 80)", "Bottom (Y 120)" });
+            _position.SelectedIndex = 0;
+            var formatBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 32, Padding = new Padding(4, 4, 0, 0) };
+            formatBar.Controls.AddRange(new Control[] { new Label { Text = "Box position:", AutoSize = true, Margin = new Padding(0, 5, 4, 0) }, _position, _center });
+            _center.Margin = new Padding(12, 4, 0, 0);
+
+            _preview.Anchor = AnchorStyles.Top;
+            _preview.Location = new Point(8, 4);
+            var previewInner = new Panel { Dock = DockStyle.Fill };
+            previewInner.Controls.Add(_preview);
+            _previewHolder.Controls.Add(previewInner);
+            _previewHolder.Controls.Add(_speakerInfo);
+            previewInner.Resize += (_, _) => _preview.Left = Math.Max(4, (previewInner.Width - _preview.Width) / 2);
+
             _messagePanel.Controls.Add(_message);
+            _messagePanel.Controls.Add(_previewHolder);
+            _messagePanel.Controls.Add(formatBar);
             _messagePanel.Controls.Add(top);
+            _previewHolder.Visible = romForPreview != null;
 
             var right = new Panel { Dock = DockStyle.Fill };
             right.Controls.Add(_script);
@@ -109,8 +140,10 @@ namespace Legacy
             remove.Click += (_, _) => RemoveSelected();
             up.Click += (_, _) => MoveSelected(-1);
             down.Click += (_, _) => MoveSelected(1);
-            _message.TextChanged += (_, _) => { if (!_loading) RefreshListLabels(); };
-            _character.ValueChanged += (_, _) => { if (!_loading && _shown is { IsScript: false }) _shown.Character = (byte)_character.Value; };
+            _message.TextChanged += (_, _) => { if (!_loading) { RefreshListLabels(); UpdatePreview(); } };
+            _character.ValueChanged += (_, _) => { if (!_loading && _shown is { IsScript: false }) { _shown.Character = (byte)_character.Value; UpdatePreview(); } };
+            _position.SelectedIndexChanged += (_, _) => { if (!_loading && _shown is { IsScript: false }) { _shown.Position = (BoxPosition)_position.SelectedIndex; UpdatePreview(); } };
+            _center.CheckedChanged += (_, _) => { if (!_loading && _shown is { IsScript: false }) { _shown.Center = _center.Checked; UpdatePreview(); } };
             check.Click += (_, _) => TryCompileAll(showSuccess: true);
             apply.Click += (_, _) => Apply();
             ok.Click += (_, _) => { if (Apply()) { DialogResult = DialogResult.OK; Close(); } };
@@ -171,7 +204,12 @@ namespace Legacy
         {
             if (_shown == null) return;
             _shown.Text = _shown.IsScript ? _script.Text : _message.Text;
-            if (!_shown.IsScript) _shown.Character = (byte)_character.Value;
+            if (!_shown.IsScript)
+            {
+                _shown.Character = (byte)_character.Value;
+                _shown.Position = (BoxPosition)Math.Max(0, _position.SelectedIndex);
+                _shown.Center = _center.Checked;
+            }
         }
 
         private void ShowSelected()
@@ -192,9 +230,31 @@ namespace Legacy
             {
                 _message.Text = _shown.Text;
                 _character.Value = _shown.Character;
+                _position.SelectedIndex = (int)_shown.Position;
+                _center.Checked = _shown.Center;
             }
             _loading = false;
             RefreshListLabelsQuiet();
+            UpdatePreview();
+        }
+
+        // Redraws the mock screen for the selected message. Portraits are decoded once per speaker id.
+        private void UpdatePreview()
+        {
+            if (_romForPreview == null || _shown is not { IsScript: false }) return;
+
+            byte speaker = (byte)_character.Value;
+            if (!_portraits.TryGetValue(speaker, out var cached))
+            {
+                var img = DialogPreview.PortraitFor(_romForPreview, speaker, out string what);
+                cached = (img, what);
+                _portraits[speaker] = cached;
+            }
+
+            int style = DialogPreview.BoxStyle(speaker);
+            _speakerInfo.Text = $"Speaker {speaker}: {cached.What}  |  box {DialogPreview.BoxWidth(speaker)} px wide, style {style}." +
+                                (speaker != 0 && cached.Image == null ? "  (no portrait bitmap for this id)" : "");
+            _preview.SetContent(speaker, (BoxPosition)Math.Max(0, _position.SelectedIndex), _center.Checked, _message.Text, cached.Image);
         }
 
         private void RefreshListLabelsQuiet()
@@ -283,7 +343,7 @@ namespace Legacy
                 {
                     var s = _steps[i];
                     if (s.IsScript) lines.Add(DialogLine.Script(compiled[i]!));
-                    else lines.Add(DialogLine.TextLine(s.Character, s.Text.Replace("\r\n", "\n")));
+                    else lines.Add(DialogLine.TextLine(s.Character, DialogPreview.ApplyFormat(s.Text.Replace("\r\n", "\n"), s.Position, s.Center)));
                 }
 
                 if (lines.Count == 0)

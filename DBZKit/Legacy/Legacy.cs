@@ -28,6 +28,7 @@ namespace Legacy
         public Legacy(string[] args)
         {
             InitializeComponent();
+            BuildTextTabLayout();
             _startupArgs = args;
         }
 
@@ -56,6 +57,18 @@ namespace Legacy
 
         const uint MapEntriesAddr = 0x08409368;
         const int MapCount = 0x147;
+
+        // Dialogue reached through mapScripts[] (added 2026-09-20; Legacy used to index only triggers, items and
+        // objects, so it missed 242 town-NPC conversations and 27 enemy dialogues). Confirmed via IDA + ROM data:
+        //  - handler 0x0800B711 (MapScript_CreateNpcSprite): record+0xC is the NPC's dialog sequence[], opened by
+        //    MapEntity_HandleCollisionInteract when you talk to it;
+        //  - handler 0x0800E77F (MapScript_CreateEnemy): record+0x14 is an action object {func, payload}; with func
+        //    0x080106B3 (EnemyAction_RunDialog) the payload is a dialog sequence[] (e.g. Cell's defeat dialogue).
+        const int ScriptCountOffset = 0x04;
+        const int MapScriptsPtrOffset = 0x14;
+        const uint NpcSpriteHandler = 0x0800B711;
+        const uint EnemyHandler = 0x0800E77F;
+        const uint EnemyRunDialogFunc = 0x080106B3;
 
         const int DialogSequenceTableEntrySize = 4; // DCD pointer table, 0-terminated
         const int DialogHeaderSize = 4; // Index(u16) + Mode(u8) + Character(u8) -- Mode 1/2 (text) only
@@ -187,7 +200,7 @@ namespace Legacy
             Legacy_CharacterUpDown.Value = characterId;
             _suppressCharacterChanged = false;
 
-            Legacy_CharacterPreview.Image = RenderPortrait(characterId);
+            Legacy_CharacterPreview.Image = _rom == null ? null : DialogPreview.PortraitFor(_rom, characterId, out _);
             Legacy_CharacterLabel.Text = $"Character ID: {characterId}";
         }
 
@@ -205,10 +218,136 @@ namespace Legacy
                 info.Character = newId;
                 info.Dirty = true;
 
-                Legacy_CharacterPreview.Image = RenderPortrait(newId);
+                Legacy_CharacterPreview.Image = _rom == null ? null : DialogPreview.PortraitFor(_rom, newId, out _);
                 Legacy_CharacterLabel.Text = $"Character ID: {newId}";
+                UpdateDialogPreview();
             }
         }
+        // ---- text tab: same layout as the micro editor (speaker row, box-position bar, big message box, mock screen) ----
+
+        private readonly DialogPreviewControl _dialogPreview = new();
+        private readonly Label _speakerInfo = new() { Dock = DockStyle.Top, Height = 38, Padding = new Padding(4, 2, 4, 0), ForeColor = Color.DimGray };
+        private readonly Label _flowInfo = new() { Dock = DockStyle.Top, Height = 40, Padding = new Padding(8, 2, 8, 2), AutoSize = false };
+        private readonly Dictionary<byte, (Bitmap? Image, string What)> _portraitCache = [];
+        private byte[]? _portraitCacheRom;
+
+        private void BuildTextTabLayout()
+        {
+            var tab = Legacy_TabCharacterText;
+            tab.SuspendLayout();
+            tab.Controls.Clear();
+
+            // Row 1: speaker id (the old absolute-positioned 128x128 portrait is replaced by the mock screen below).
+            Legacy_CharacterLabel.AutoSize = true;
+            Legacy_CharacterLabel.Location = new Point(6, 9);
+            Legacy_CharacterUpDown.Location = new Point(120, 5);
+            Legacy_CharacterUpDown.Size = new Size(70, 23);
+            var top = new Panel { Dock = DockStyle.Top, Height = 32 };
+            top.Controls.Add(Legacy_CharacterLabel);
+            top.Controls.Add(Legacy_CharacterUpDown);
+
+            // Row 2: box position + centring.
+            Legacy_TextPositionCombo.Width = 170;
+            var fmt = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 32, Padding = new Padding(4, 4, 0, 0) };
+            fmt.Controls.Add(new Label { Text = "Box position:", AutoSize = true, Margin = new Padding(0, 5, 4, 0) });
+            fmt.Controls.Add(Legacy_TextPositionCombo);
+            Legacy_ChkCenterText.Margin = new Padding(12, 4, 0, 0);
+            fmt.Controls.Add(Legacy_ChkCenterText);
+
+            // The message itself fills the middle.
+            Legacy_TextBox.Dock = DockStyle.Fill;
+            Legacy_TextBox.Location = new Point(0, 0);
+            Legacy_TextBox.Font = new Font("Consolas", 10f);
+            Legacy_TextBox.TextChanged += (_, _) => UpdateDialogPreview();
+
+            // Bottom: what it will look like.
+            var holder = new Panel { Dock = DockStyle.Bottom, Height = 380 };
+            var inner = new Panel { Dock = DockStyle.Fill };
+            _dialogPreview.Location = new Point(8, 4);
+            inner.Controls.Add(_dialogPreview);
+            inner.Resize += (_, _) => _dialogPreview.Left = Math.Max(4, (inner.Width - _dialogPreview.Width) / 2);
+            holder.Controls.Add(inner);
+            holder.Controls.Add(_speakerInfo);
+
+            tab.Controls.Add(Legacy_TextBox);
+            tab.Controls.Add(holder);
+            tab.Controls.Add(fmt);
+            tab.Controls.Add(top);
+            Legacy_CharacterPreview.Visible = false; // superseded by the mock screen
+
+            // "End dialog" is now spelled out, with a flow line under it that says what happens next.
+            Legacy_ChkEndDialog.Text = "End the conversation after this entry";
+            var panel = Legacy_AppContainer.Panel2;
+            panel.Controls.Remove(Legacy_ChkEndDialog);
+            panel.Controls.Add(_flowInfo);
+            panel.Controls.Add(Legacy_ChkEndDialog);
+
+            tab.ResumeLayout();
+        }
+
+        // Redraws the mock screen for the selected text entry. Portraits are decoded once per speaker id per ROM.
+        private void UpdateDialogPreview()
+        {
+            if (_rom == null || _currentNode?.Tag is not DialogNodeInfo info || (info.Mode != 0x1 && info.Mode != 0x2))
+            {
+                _dialogPreview.SetContent(0, BoxPosition.Auto, false, "", null);
+                _speakerInfo.Text = "Select a text entry to see how it will look in-game.";
+                return;
+            }
+
+            if (!ReferenceEquals(_portraitCacheRom, _rom)) { _portraitCache.Clear(); _portraitCacheRom = _rom; }
+
+            byte speaker = (byte)Legacy_CharacterUpDown.Value;
+            if (!_portraitCache.TryGetValue(speaker, out var cached))
+            {
+                var img = DialogPreview.PortraitFor(_rom, speaker, out string what);
+                cached = (img, what);
+                _portraitCache[speaker] = cached;
+            }
+
+            _speakerInfo.Text = $"Speaker {speaker}: {cached.What}  |  box {DialogPreview.BoxWidth(speaker)} px wide, style {DialogPreview.BoxStyle(speaker)}." +
+                                (speaker != 0 && cached.Image == null ? "  (no portrait bitmap for this id)" : "");
+            _dialogPreview.SetContent(speaker, (BoxPosition)Math.Max(0, Legacy_TextPositionCombo.SelectedIndex), Legacy_ChkCenterText.Checked, Legacy_TextBox.Text, cached.Image);
+        }
+
+        // Says where the conversation goes after the selected entry, and shouts when an "end" flag would cut off later steps
+        // (that is exactly how a change-character script followed by a message silently never showed the message).
+        private void UpdateFlowInfo()
+        {
+            if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable || info.SequenceBaseAddr == 0)
+            {
+                _flowInfo.Text = "";
+                return;
+            }
+
+            int slot = (int)((info.TableSlotAddr - info.SequenceBaseAddr) / DialogSequenceTableEntrySize);
+            int terminator = info.TerminatorSlotIndex;
+            int next = info.EndsDialogHere ? terminator : info.Index;
+            int stepsAfter = terminator - slot - 1;
+
+            if (next == terminator)
+            {
+                if (stepsAfter <= 0)
+                {
+                    _flowInfo.ForeColor = Color.DimGray;
+                    _flowInfo.Text = $"Step {slot + 1}: this is the last step -- the conversation ends after it.";
+                }
+                else
+                {
+                    _flowInfo.ForeColor = Color.Firebrick;
+                    _flowInfo.Text = $"Step {slot + 1}: the conversation ENDS after this step, so the {stepsAfter} step(s) after it will never run. " +
+                                     $"Untick the box above to continue to step {slot + 2}.";
+                }
+            }
+            else
+            {
+                _flowInfo.ForeColor = Color.DarkGreen;
+                _flowInfo.Text = next == slot + 1
+                    ? $"Step {slot + 1}: continues to step {next + 1}."
+                    : $"Step {slot + 1}: jumps to step {next + 1} (not the next one in the list).";
+            }
+        }
+
         private void ClearCharacterPreview()
         {
             Legacy_CharacterPreview.Image = null;
@@ -456,9 +595,24 @@ namespace Legacy
             _extension.Clear();
             _originalRomLength = _rom!.Length;
 
-            for (int i = 0; i < MapCount; i++)
+            // The ROM's own code says where the map table is and how many maps there are, so ROMs whose table was
+            // relocated/extended (DBZKit > Engine tools) are read correctly.
+            uint mapTableAddr = MapEntriesAddr;
+            int mapCount = MapCount;
+            try
             {
-                uint entryAddr = MapEntriesAddr + (uint)(i * MapEntrySize);
+                var romView = DrGero.IO.ROM.FromBytes(_rom!);
+                if (DrGero.Engine.RosterTables.IsSupportedRom(romView))
+                {
+                    mapTableAddr = RomBase | (uint)DrGero.Engine.MapTable.Address(romView);
+                    mapCount = DrGero.Engine.MapTable.Count(romView);
+                }
+            }
+            catch (InvalidOperationException) { /* unexpected layout -- keep the built-in values */ }
+
+            for (int i = 0; i < mapCount; i++)
+            {
+                uint entryAddr = mapTableAddr + (uint)(i * MapEntrySize);
                 byte zone = ReadU8(entryAddr + 0x00);
                 byte area = ReadU8(entryAddr + 0x01);
                 byte triggerCount = ReadU8(entryAddr + TriggerCountOffset);
@@ -472,7 +626,11 @@ namespace Legacy
                 bool hasTriggers = triggerCount != 0 && IsValidPtr(triggersPtr);
                 bool hasItems = itemCount != 0 && IsValidPtr(mapItemsPtr);
                 bool hasObjects = objectCount != 0 && IsValidPtr(mapObjectsPtr);
-                if (!hasTriggers && !hasItems && !hasObjects) continue;
+
+                byte scriptCount = ReadU8(entryAddr + ScriptCountOffset);
+                uint mapScriptsPtr = ReadU32(entryAddr + MapScriptsPtrOffset);
+                bool hasScripts = scriptCount != 0 && IsValidPtr(mapScriptsPtr);
+                if (!hasTriggers && !hasItems && !hasObjects && !hasScripts) continue;
 
                 AreaModel areaModel = null;
                 AreaModel GetZoneModel()
@@ -537,6 +695,31 @@ namespace Legacy
 
                         uint collectionMsgPtr = ReadU32(objectPtr + ObjectCollectionMsgOffset);
                         WalkDialogArray(GetZoneModel().Children, collectionMsgPtr, $"Z{zone}A{area} Object[{o}] (item {ReadU32(objectPtr + 4)})");
+                    }
+                }
+
+                // NPC conversations and enemy dialogues (see the constants above). WalkDialogArray already skips a
+                // pointer that doesn't decode to a real dialog table, so records without a conversation add nothing.
+                if (hasScripts)
+                {
+                    for (int k = 0; k < scriptCount; k++)
+                    {
+                        uint recordPtr = ReadU32(mapScriptsPtr + (uint)(k * 4));
+                        if (!IsValidPtr(recordPtr) || recordPtr + 0x1C > RomEnd) continue;
+
+                        uint handler = ReadU32(recordPtr);
+                        if (handler == NpcSpriteHandler)
+                        {
+                            WalkDialogArray(GetZoneModel().Children, ReadU32(recordPtr + 0x0C),
+                                $"Z{zone}A{area} NPC[{k}] (sprite {ReadU32(recordPtr + 0x10)})");
+                        }
+                        else if (handler == EnemyHandler)
+                        {
+                            uint actionObj = ReadU32(recordPtr + 0x14);
+                            if (!IsValidPtr(actionObj) || actionObj + 8 > RomEnd || ReadU32(actionObj) != EnemyRunDialogFunc) continue;
+                            WalkDialogArray(GetZoneModel().Children, ReadU32(actionObj + 4),
+                                $"Z{zone}A{area} Enemy[{k}] (stat {ReadU32(recordPtr + 8)}, sprite {ReadU32(recordPtr + 0x10)})");
+                        }
                     }
                 }
             }
@@ -713,6 +896,8 @@ namespace Legacy
                 Legacy_ChkCenterText.Enabled = isText;
                 Legacy_ChkCenterText.Checked = isText && info.CenterText;
                 _suppressTextFormatChanged = false;
+                UpdateDialogPreview();
+                UpdateFlowInfo();
             }
             else
             {
@@ -731,6 +916,8 @@ namespace Legacy
                 Legacy_ChkCenterText.Enabled = false;
                 Legacy_ChkCenterText.Checked = false;
                 _suppressTextFormatChanged = false;
+                UpdateDialogPreview();
+                UpdateFlowInfo();
             }
         }
 
@@ -746,6 +933,7 @@ namespace Legacy
             bool loadedState = info.Index == info.TerminatorSlotIndex;
             info.EndsDialogHere = desired;
             info.EndsDialogDirty = desired != loadedState;
+            UpdateFlowInfo();
         }
 
         private void Legacy_TextPositionCombo_SelectedIndexChanged(object sender, EventArgs e)
@@ -756,6 +944,7 @@ namespace Legacy
 
             info.Position = (TextPosition)Legacy_TextPositionCombo.SelectedIndex;
             info.Dirty = true;
+            UpdateDialogPreview();
         }
 
         private void Legacy_ChkCenterText_CheckedChanged(object sender, EventArgs e)
@@ -765,6 +954,7 @@ namespace Legacy
 
             info.CenterText = Legacy_ChkCenterText.Checked;
             info.Dirty = true;
+            UpdateDialogPreview();
         }
 
         private void CommitPendingEdit()

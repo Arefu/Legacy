@@ -13,6 +13,7 @@ namespace Legacy
     ///   trigger / object: the payload pointer (a trigger's dataPtr+0x10, an object's collectionMsg
     ///     +0x14). Points at a dialog sequence[] (objects always; triggers when it looks like one) or,
     ///     for some triggers, plain bytecode.
+    ///   dialog: a plain pointer to a dialog sequence[] (a talkable NPC record's +0xC); same handling as object.
     ///   enemy: the payload pointer of the enemy's action object {func, payload} (field-4 is func).
     ///     func 0x080106B3 = payload is a dialog sequence[]; 0x0801069B = payload is plain bytecode.
     ///     Applying sets func to match what was authored (EnemyAction_RunDialog / _RunScript).
@@ -34,7 +35,7 @@ namespace Legacy
             if (romPath == null || kind == null || fieldText == null || !File.Exists(romPath)
                 || !int.TryParse(fieldText.Replace("0x", "", StringComparison.OrdinalIgnoreCase), System.Globalization.NumberStyles.HexNumber, null, out int field))
             {
-                MessageBox.Show("--micro-edit needs --rom=<existing file>, --kind=<trigger|object|npc|enemy> and --field=0x<offset>.", "Legacy");
+                MessageBox.Show("--micro-edit needs --rom=<existing file>, --kind=<trigger|object|npc|enemy|dialog> and --field=0x<offset>.", "Legacy");
                 return;
             }
 
@@ -99,7 +100,7 @@ namespace Legacy
                         address = 0;
                 }
 
-                bool isSequence = kind == "object" || address <= 0
+                bool isSequence = kind == "object" || kind == "dialog" || address <= 0
                     || (kind == "enemy" ? enemyFunc == DrGero.EnemyRecords.RunDialogFunc : DialogScanner.LooksLikeDialogSequence(rom, address));
                 rawScript = !isSequence;
 
@@ -117,7 +118,10 @@ namespace Legacy
                             steps.Add(new PayloadEditorForm.Step { IsScript = true, Text = Disassemble(line.ScriptBytes) });
                         else
                         {
-                            steps.Add(new PayloadEditorForm.Step { Character = line.CharacterId, Text = line.Text });
+                        {
+                            var (plain, position, center) = DialogPreview.ExtractFormat(line.Text);
+                            steps.Add(new PayloadEditorForm.Step { Character = line.CharacterId, Text = plain, Position = position, Center = center });
+                        }
                             lossy |= line.Kind == DialogLineKind.Interpolated;
                         }
                     }
@@ -166,7 +170,7 @@ namespace Legacy
                 }
             }
 
-            Application.Run(new PayloadEditorForm(title, steps, rawScript, warning, Commit));
+            Application.Run(new PayloadEditorForm(title, steps, rawScript, warning, Commit, rom.ToArray()));
         }
     }
 }
