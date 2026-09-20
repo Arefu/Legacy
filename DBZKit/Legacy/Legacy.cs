@@ -33,8 +33,11 @@ namespace Legacy
         }
 
         const uint RomBase = 0x08000000;
+        // A trigger's first vtable word says what kind it is. Surveyed over every trigger in the ROM: 0x0800D7E1 triggers
+        // (any second word) carry a dialog sequence[] at dataPtr+0x10, and 0x0800C2C3 triggers carry a plain script there.
+        // The others (0x0800C233, 0x08010AC7, ...) have no ROM pointer at +0x10, so there is nothing to show for them.
         const uint DialogHandlerA = 0x0800D7E1; // MapTrigger_OnEnter+1
-        const uint DialogHandlerB = 0x0800D765; // sub_800D764+1
+        const uint ScriptTriggerHandler = 0x0800C2C3;
 
         const int MapEntrySize = 0x38;
         const int TriggerCountOffset = 0x03;
@@ -314,7 +317,7 @@ namespace Legacy
         // (that is exactly how a change-character script followed by a message silently never showed the message).
         private void UpdateFlowInfo()
         {
-            if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable || info.SequenceBaseAddr == 0)
+            if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable || info.SequenceBaseAddr == 0 || info.RawScript)
             {
                 _flowInfo.Text = "";
                 return;
@@ -371,6 +374,14 @@ namespace Legacy
             // anything larger is appended to the ROM extension like an edited text entry.
             public uint ScriptAddr;
             public int OriginalScriptLength;
+
+            // True for a trigger's plain-script payload: the script is referenced directly (TableSlotAddr is the
+            // payload field, not a dialog table slot) and has no Index/Mode header or end-dialog step.
+            public bool RawScript;
+
+            // True once a save has appended this script at the end of the ROM (and repointed to it); from then
+            // on it is this node's own copy, so later edits that fit may be written over it in place.
+            public bool Relocated;
 
             // CONFIRMED via IDA 2026-09-16 (Dialog_ProcessNext, 0x800B520): dialog sequencing
             // is index-chained, not positional -- after processing sequence[currentIndex], the
@@ -452,8 +463,8 @@ namespace Legacy
         const int MapItemsPtrOffset = 0x18;
 
         // One zone/area's worth of dialog entries, built once per ROM load. Kept separate
-        // from the TreeView itself so the tree can be re-rendered filtered by active tab
-        // (RenderTreeForActiveTab) without re-walking the ROM every time.
+        // from the TreeView itself so the tree can be re-rendered
+        // (RenderTree) without re-walking the ROM every time.
         //
         // Two-level Zone -> Area hierarchy (matches Dragon Radar's own MapTreeBuilder.Build
         // labeling, "Zone {n}" / "Area {n}") -- previously this was a flat list of one
@@ -497,6 +508,14 @@ namespace Legacy
             int seq = 0;
             uint tableCursor = dialogArrayPtr;
             var createdInfos = new List<DialogNodeInfo>();
+
+            // Where the real entries stop. Each entry's Index is the slot the conversation moves to next, and a
+            // non-pointer slot is an end marker, so the table runs at least up to the highest Index seen. Past that,
+            // the first non-pointer slot is the end: anything after it is other data (Zone 4 Area 41's sprite 82
+            // table used to run on into sprite 83's table and list its lines a second time). The loop still runs
+            // on to the literal 0 slot so TerminatorSlotIndex below is unchanged.
+            int extent = 0;
+            bool pastEnd = false;
             while (true)
             {
                 uint dialogPtr = ReadU32(tableCursor);
@@ -506,6 +525,7 @@ namespace Legacy
 
                 if (!IsValidPtr(dialogPtr))
                 {
+                    if (seq - 1 > extent) pastEnd = true;
                     tableCursor += DialogSequenceTableEntrySize;
                     continue;
                 }
@@ -514,6 +534,24 @@ namespace Legacy
                 ushort index = ReadU16(dialogPtr + 0);
                 byte character = ReadU8(dialogPtr + 3);
 
+                if (pastEnd)
+                {
+                    tableCursor += DialogSequenceTableEntrySize;
+                    continue;
+                }
+                extent = Math.Max(extent, (int)index);
+
+                // The pointer table has no reliable terminator: after the real entries it can run on
+                // into unrelated data (e.g. the entries' own bytes), and a stray word that happens to
+                // look like a ROM pointer used to become a fake node such as "[unhandled DialogMode 104]"
+                // (Zone 4 Area 41, sprite 83: 0x08000313 -> the ROM header). A real entry's Index equals
+                // its slot number + 1 (= seq) in every table checked, and its mode is 0-5.
+                if (mode > 5 && index != seq)
+                {
+                    tableCursor += DialogSequenceTableEntrySize;
+                    continue;
+                }
+
                 string text = "";
                 bool editable = false;
                 uint scriptAddr = 0;
@@ -521,6 +559,7 @@ namespace Legacy
 
                 TextPosition position = TextPosition.Unspecified;
                 bool centerText = false;
+                bool interpolated = false;
 
                 if (mode == 0x0) // DIALOG_SCRIPT
                 {
@@ -537,6 +576,20 @@ namespace Legacy
                 {
                     (text, position, centerText) = ExtractTextFormat(ReadJcalg1String(dialogPtr + DialogHeaderSize));
                     editable = true;
+                }
+                else if (mode == 0x3 || mode == 0x4) // DIALOG_TEXT_INTERPOLATE / _COMPRESSED (read-only for now)
+                {
+                    // CONFIRMED via IDA 2026-09 (Dialog_CreateInterpolatedTextBox_Impl / ...FromCompressed_Impl):
+                    // a format string (%s etc.) plus a small script whose pushed values fill the placeholders.
+                    //   mode 3: [+4] ptr to the format string, script inline at +8 (ends with END 0x11)
+                    //   mode 4: [+4] ptr to the script, JCALG1-compressed format string inline at +8
+                    // Only the message is shown (placeholders left as %s); the node label says it is interpolated.
+                    uint fieldPtr = ReadU32(dialogPtr + 4);
+                    if (mode == 0x3)
+                        text = IsValidPtr(fieldPtr) ? ReadNullTerminatedString(fieldPtr) : "[bad format string pointer]";
+                    else
+                        text = ReadJcalg1String(dialogPtr + 8);
+                    interpolated = true;
                 }
                 else if (mode == 0x5) // DIALOG_JUMP
                 {
@@ -568,7 +621,7 @@ namespace Legacy
                     SequenceBaseAddr = dialogArrayPtr
                 };
 
-                target.Add(($"{labelPrefix} - Dialog #{seq}", info));
+                target.Add(($"{labelPrefix} - Dialog #{seq}{(interpolated ? " (interpolated)" : "")}", info));
                 createdInfos.Add(info);
 
                 tableCursor += DialogSequenceTableEntrySize;
@@ -587,6 +640,30 @@ namespace Legacy
             }
 
             return seq;
+        }
+
+        // A trigger whose payload (dataPtr+0x10) is one plain script rather than a dialog table. It is edited like a
+        // dialog script entry, except there is no table slot or entry header: the pointer to patch is the payload
+        // field itself and a grown script is written back without a header (see RawScript in Save).
+        private void AddRawScriptNode(List<(string Label, DialogNodeInfo Info)> target, uint payloadFieldAddr, uint scriptAddr, string label)
+        {
+            if (!IsValidPtr(scriptAddr) || scriptAddr + 2 > RomEnd) return;
+
+            string text = ReadScriptText(scriptAddr, out int scriptLen);
+            if (scriptLen <= 0) return; // did not disassemble to a script -- not something to offer for editing
+
+            target.Add((label, new DialogNodeInfo
+            {
+                TableSlotAddr = payloadFieldAddr,
+                Mode = 0x0,
+                Text = text,
+                Editable = true,
+                ScriptAddr = scriptAddr,
+                OriginalScriptLength = scriptLen,
+                EntryAddr = scriptAddr,
+                SequenceBaseAddr = scriptAddr, // what Dragon Radar's Edit Script passes for this trigger
+                RawScript = true
+            }));
         }
 
         private void PopulateDialogTree()
@@ -659,11 +736,11 @@ namespace Legacy
                         if (!IsValidPtr(triggerPtr)) continue; // filler/number, not a pointer
 
                         uint h1 = ReadU32(triggerPtr);
-                        uint h2 = ReadU32(triggerPtr + 4);
-                        if (h1 != DialogHandlerA || h2 != DialogHandlerB) continue;
-
-                        uint dialogArrayPtr = ReadU32(triggerPtr + 16);
-                        WalkDialogArray(GetZoneModel().Children, dialogArrayPtr, $"Z{zone}A{area} Trigger");
+                        uint payloadPtr = ReadU32(triggerPtr + 16);
+                        if (h1 == DialogHandlerA)
+                            WalkDialogArray(GetZoneModel().Children, payloadPtr, $"Z{zone}A{area} Trigger[{t}]");
+                        else if (h1 == ScriptTriggerHandler)
+                            AddRawScriptNode(GetZoneModel().Children, triggerPtr + 16, payloadPtr, $"Z{zone}A{area} Trigger[{t}] - Script");
                     }
                 }
 
@@ -730,25 +807,14 @@ namespace Legacy
             foreach (var zoneGroup in _dialogModel)
                 zoneGroup.Areas = zoneGroup.Areas.OrderBy(a => a.Area).ToList();
 
-            RenderTreeForActiveTab();
+            RenderTree();
         }
 
-        // Re-renders Legacy_ScriptFunctions from _dialogModel, filtered to only the entries
-        // the active tab can actually edit -- Script Editor shows Mode 0 (script) entries,
-        // Character/Text shows Mode 1/2 (text) entries. Other modes (e.g. Mode 5 jump) have
-        // no dedicated editor tab, so they're shown on both rather than hidden entirely.
-        // Cheap enough (hundreds of entries) to just rebuild rather than toggle visibility --
-        // TreeNode has no Visible property to toggle anyway.
-        private void RenderTreeForActiveTab()
+        // Re-renders Legacy_ScriptFunctions from _dialogModel. Every entry is shown (scripts, text,
+        // jumps and anything else); selecting one flips to the tab that edits it (see
+        // Legacy_ScriptFunctions_AfterSelect), so the tree is never filtered by tab.
+        private void RenderTree()
         {
-            // FIXED 2026-09-19: TabControl.SelectedTab can be unreliable before the form's
-            // window handle exists (confirmed root cause of "Legacy opens to an empty
-            // page" when launched from Dragon Radar with --zone/--area -- ApplyStartupArgs
-            // runs during Form.Load, calling this before that). SelectedIndex is a plain
-            // int and has no such timing dependency, and Legacy_TabScriptEditor is always
-            // added first (index 0) in InitializeComponent.
-            bool scriptTab = Legacy_MainTabs.SelectedIndex == 0;
-
             Legacy_ScriptFunctions.BeginUpdate();
             Legacy_ScriptFunctions.Nodes.Clear();
 
@@ -757,7 +823,7 @@ namespace Legacy
                 var zoneNode = new TreeNode(zoneGroup.Label);
                 foreach (var area in zoneGroup.Areas)
                 {
-                    var matching = area.Children.Where(c => MatchesActiveTab(c.Info, scriptTab)).ToList();
+                    var matching = area.Children.ToList();
                     if (matching.Count == 0) continue;
 
                     var areaNode = new TreeNode(area.Label);
@@ -781,7 +847,7 @@ namespace Legacy
 
         // Requested via command-line args (see Program.cs/ParseStartupArgs) or a future
         // launch-from-Dragon-Radar call -- applied once, right after the tree this needs
-        // to search has actually been rebuilt (RenderTreeForActiveTab runs synchronously
+        // to search has actually been rebuilt (RenderTree runs synchronously
         // at the end of PopulateDialogTree, so by the time that returns the ROM has
         // already been read and the tree populated).
         private (byte Zone, byte Area, uint? Addr)? _pendingFocus;
@@ -829,48 +895,58 @@ namespace Legacy
             }
         }
 
-        private static bool MatchesActiveTab(DialogNodeInfo info, bool scriptTab)
+        // Opcode usage search result -> select that script's node in the tree (selecting it opens the Script Editor tab).
+        private void NavigateToScript(Zenkai.OpcodeUsage.Hit hit)
         {
-            if (info.Mode == 0x0) return scriptTab;
-            if (info.Mode == 0x1 || info.Mode == 0x2) return !scriptTab;
-            return true;
+            Legacy_MainTabs.SelectedIndex = 0;
+            TreeNode? Find(TreeNodeCollection nodes)
+            {
+                foreach (TreeNode n in nodes)
+                {
+                    if (n.Tag is DialogNodeInfo info && info.ScriptAddr == hit.ScriptAddr) return n;
+                    var inner = Find(n.Nodes);
+                    if (inner != null) return inner;
+                }
+                return null;
+            }
+            var node = Find(Legacy_ScriptFunctions.Nodes);
+            if (node == null) { MessageBox.Show($"That script (0x{hit.ScriptAddr:X8}) is not in the tree.", "Opcode usage"); return; }
+            Legacy_ScriptFunctions.SelectedNode = node;
+            node.EnsureVisible();
+            Legacy_ScriptFunctions.Focus();
         }
+
+        // Set while the tree selection flips the tab itself, so that isn't treated as the user switching tabs.
+        private bool _switchingTab;
 
         private void Legacy_MainTabs_SelectedIndexChanged(object sender, EventArgs e)
         {
+            if (_switchingTab) return;
             CommitPendingEdit();
+        }
 
-            // The previously selected node's DialogNodeInfo may not be visible in the
-            // new filtered tree (e.g. it's a script node and we just switched to
-            // Character/Text) - clear the editors/selection rather than show stale state.
-            _currentNode = null;
-            Legacy_IDE.Text = "";
-            Legacy_TextBox.Text = "";
-            ClearCharacterPreview();
-            _suppressEndDialogChanged = true;
-            Legacy_ChkEndDialog.Enabled = false;
-            Legacy_ChkEndDialog.Checked = false;
-            _suppressEndDialogChanged = false;
-            _suppressTextFormatChanged = true;
-            Legacy_TextPositionCombo.Enabled = false;
-            Legacy_TextPositionCombo.SelectedIndex = -1;
-            Legacy_ChkCenterText.Enabled = false;
-            Legacy_ChkCenterText.Checked = false;
-            _suppressTextFormatChanged = false;
-
-            if (_rom != null)
-                RenderTreeForActiveTab();
+        // Script entries open on the Script Editor tab, text entries on Character / Text. Other modes
+        // have no editor of their own and leave the current tab alone.
+        private void ShowTabFor(DialogNodeInfo info)
+        {
+            int wanted = info.Mode == 0x0 ? 0 : (info.Mode >= 0x1 && info.Mode <= 0x4) ? 1 : -1;
+            if (wanted < 0 || Legacy_MainTabs.SelectedIndex == wanted) return;
+            _switchingTab = true;
+            try { Legacy_MainTabs.SelectedIndex = wanted; }
+            finally { _switchingTab = false; }
         }
 
         private TreeNode? _currentNode;
 
         private void Legacy_ScriptFunctions_AfterSelect(object sender, TreeViewEventArgs e)
         {
+            bool treeHadFocus = Legacy_ScriptFunctions.Focused;
             CommitPendingEdit();
             _currentNode = e.Node;
 
             if (e.Node.Tag is DialogNodeInfo info)
             {
+                ShowTabFor(info);
                 if (info.Mode == 0x0) // DIALOG_SCRIPT
                 {
                     Legacy_IDE.Text = info.Text;
@@ -885,7 +961,7 @@ namespace Legacy
                 }
 
                 _suppressEndDialogChanged = true;
-                Legacy_ChkEndDialog.Enabled = info.Editable;
+                Legacy_ChkEndDialog.Enabled = info.Editable && !info.RawScript;
                 Legacy_ChkEndDialog.Checked = info.EndsDialogHere;
                 _suppressEndDialogChanged = false;
 
@@ -919,6 +995,11 @@ namespace Legacy
                 UpdateDialogPreview();
                 UpdateFlowInfo();
             }
+
+            // Selecting a node flips the tab and loads the editors, and either can pull focus off the tree.
+            // Put it back afterwards (BeginInvoke: after the tab change settles) so Up/Down keeps working.
+            if (treeHadFocus)
+                BeginInvoke(new Action(() => { if (!Legacy_ScriptFunctions.Focused) Legacy_ScriptFunctions.Focus(); }));
         }
 
         private bool _suppressEndDialogChanged = false;
@@ -993,6 +1074,7 @@ namespace Legacy
             // already exists - MouseDwellTime and other native Scintilla calls silently
             // no-op if sent before the control has a real HWND, which broke hover call tips.
             Zenkai.ZenkaiEditor.Configure(Legacy_IDE);
+            Zenkai.OpcodeUsage.Attach(Legacy_IDE, () => _rom, NavigateToScript);
 
             toolStripButton1.Image = RenderGlyphIcon('\uE768', Color.Green, 32); // play
             toolStripButton2.Image = RenderGlyphIcon('\uE74E', Color.SteelBlue, 32); // save
@@ -1029,7 +1111,7 @@ namespace Legacy
             _saveTargetPath = romPath;
 
             if (zone != null && area != null)
-                _pendingFocus = (zone.Value, area.Value, focus); // consumed by RenderTreeForActiveTab, called at the end of PopulateDialogTree below
+                _pendingFocus = (zone.Value, area.Value, focus); // consumed by RenderTree, called at the end of PopulateDialogTree below
 
             PopulateDialogTree();
         }
@@ -1081,8 +1163,7 @@ namespace Legacy
             CommitPendingEdit();
 
             // Collect every dirty node across the whole model - NOT just the visible tree,
-            // which is now filtered per active tab (RenderTreeForActiveTab) and so can be
-            // missing dirty nodes edited on the other tab.
+            // which is rebuilt on demand and can lose nodes.
             var dirtyInfos = _dialogModel
                 .SelectMany(z => z.Areas)
                 .SelectMany(a => a.Children)
@@ -1162,12 +1243,16 @@ namespace Legacy
                     {
                         byte[] compiled = compiledScripts[info];
 
-                        if (compiled.Length <= info.OriginalScriptLength)
+                        // An original script is never overwritten: it can be shared (e.g. one trigger script used
+                        // by two areas), so an edit is always written at the end of the ROM and only this node's
+                        // pointer is repointed. A script this tool already appended (Relocated) is private to
+                        // this node, so it can be rewritten in place when it still fits, rather than growing the
+                        // ROM on every save.
+                        if (info.Relocated && compiled.Length <= info.OriginalScriptLength)
                         {
-                            // Fits in the space the original script occupied - overwrite in
-                            // place and zero-pad the rest. Safe: compiled bytes always end
-                            // with the END (0x11) opcode, so execution never reaches the
-                            // padding, and the table slot pointer doesn't need to change.
+                            // Fits in the space the appended copy occupies - overwrite in place and
+                            // zero-pad the rest. Safe: compiled bytes always end with the END (0x11)
+                            // opcode, so execution never reaches the padding, and the pointer doesn't change.
                             uint scriptOffset = info.ScriptAddr - RomBase;
                             Array.Copy(compiled, 0, newRom, scriptOffset, compiled.Length);
                             for (int i = compiled.Length; i < info.OriginalScriptLength; i++)
@@ -1192,9 +1277,14 @@ namespace Legacy
                             // Header is [u16 Index][u8 Mode] ONLY for scripts (ScriptHeaderSize,
                             // 3 bytes) - no Character byte, confirmed against
                             // Dialog_CreateScriptedElement_Impl's `pc: entryPtr + 3`.
-                            extension.Add((byte)(desiredIndex & 0xFF));
-                            extension.Add((byte)((desiredIndex >> 8) & 0xFF));
-                            extension.Add(0x0); // DIALOG_SCRIPT
+                            // A trigger's plain-script payload has no header at all: the payload
+                            // field points straight at the bytecode.
+                            if (!info.RawScript)
+                            {
+                                extension.Add((byte)(desiredIndex & 0xFF));
+                                extension.Add((byte)((desiredIndex >> 8) & 0xFF));
+                                extension.Add(0x0); // DIALOG_SCRIPT
+                            }
                             extension.AddRange(compiled);
 
                             uint slotOffset = info.TableSlotAddr - RomBase;
@@ -1204,8 +1294,9 @@ namespace Legacy
                             // Entry physically moved to the appended region - keep this node's
                             // addresses in sync so further edits (and the next Save) don't
                             // write to/measure against the old, now-dead location.
+                            info.Relocated = true;
                             info.EntryAddr = newEntryAddr;
-                            info.ScriptAddr = newEntryAddr + ScriptHeaderSize;
+                            info.ScriptAddr = newEntryAddr + (info.RawScript ? 0u : ScriptHeaderSize);
                             info.OriginalScriptLength = compiled.Length;
                             info.Index = desiredIndex;
                         }

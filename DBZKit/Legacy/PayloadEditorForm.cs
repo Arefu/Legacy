@@ -153,6 +153,7 @@ namespace Legacy
             Load += (_, _) =>
             {
                 ZenkaiEditor.Configure(_script);
+                OpcodeUsage.Attach(_script, () => _romForPreview);
                 RebuildList(selectIndex: 0);
             };
         }
@@ -321,6 +322,17 @@ namespace Legacy
             }
             if (showSuccess) SetStatus("Everything compiles.", isError: false);
             return compiled;
+        }
+
+        // Ctrl+S = Apply (commit and keep the window open), whichever control has focus.
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.S))
+            {
+                Apply();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         // Compiles everything and hands the result to the commit callback (which writes it into
