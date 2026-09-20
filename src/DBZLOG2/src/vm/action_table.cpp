@@ -36,7 +36,7 @@ const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount] = {
     BytecodeVM_ClearStoryFlag,   // 28
     BytecodeVM_FindCharacterEntity,   // 29
     BytecodeVM_FindEntityByType,   // 30
-    BytecodeVM_ShowChoicePrompt,   // 31
+    BytecodeVM_PanCameraToPosition,   // 31
     BytecodeVM_CenterCameraOnChar,   // 32
     BytecodeVM_SetActiveEntity,   // 33
     BytecodeVM_SetMapRestoreFlag,   // 34
@@ -48,8 +48,8 @@ const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount] = {
     BytecodeVM_FadeOut,   // 40
     BytecodeVM_FadeFromWhite,   // 41
     BytecodeVM_FadeToWhite,   // 42
-    BytecodeVM_TimedSceneWait_A,   // 43
-    BytecodeVM_TimedSceneWait_B,   // 44
+    BytecodeVM_WhiteFadeOut,   // 43
+    BytecodeVM_WhiteFlash,   // 44
     BytecodeVM_UploadSpritePalette,   // 45
     BytecodeVM_PlayAudio,   // 46
     BytecodeVM_StopAudio,   // 47
@@ -65,14 +65,14 @@ const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount] = {
     BytecodeVM_SetEntityAnimation,   // 57
     BytecodeVM_EntityWaitFrames,   // 58
     BytecodeVM_Deprecated_CharacterSpecialAttack,   // 59
-    BytecodeVM_EntityCmd_8025258,   // 60
+    BytecodeVM_EntityWaitTouchPlayer,   // 60
     BytecodeVM_Deprecated_CharacterFollow,   // 61
     BytecodeVM_SetEntityPositionInstant,   // 62
     BytecodeVM_BeginCommandBatch,   // 63
     BytecodeVM_CommitCommandBatch,   // 64
     BytecodeVM_PlayAudioBlocking,   // 65
     BytecodeVM_Deprecated_ShowImage,   // 66
-    BytecodeVM_RunFixedScreen_60,   // 67
+    BytecodeVM_WaitForConfirmButton,   // 67
     BytecodeVM_WaitFramesSimple,   // 68
     BytecodeVM_WaitFrames,   // 69
     BytecodeVM_SetActiveCharacter,   // 70
@@ -90,22 +90,22 @@ const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount] = {
     BytecodeVM_SetCharacterFlag_Bit5,   // 82
     BytecodeVM_SetCharacterFlag_Dynamic,   // 83
     BytecodeVM_TriggerMapEvent,   // 84
-    BytecodeVM_FadeIn,   // 85
+    BytecodeVM_DrawBossHealthBar,   // 85
     BytecodeVM_SetPlayerVisible,   // 86
     BytecodeVM_SpawnItem,   // 87
-    BytecodeVM_FindEntityType16,   // 88
-    BytecodeVM_EntityCmd_801094C_Link,   // 89
-    BytecodeVM_SpawnEntityForChar_80104C0,   // 90
+    BytecodeVM_FindPlayerEntity,   // 88
+    BytecodeVM_WalkByOffset,   // 89
+    BytecodeVM_DrawBossHealthBarRange,   // 90
     BytecodeVM_ClearCharacterInPartyFlag,   // 91
     BytecodeVM_SpawnItem,   // 92
     BytecodeVM_EntityStopMovement,   // 93
     BytecodeVM_EntitySetVelocity,   // 94
-    BytecodeVM_EntityCmd_8024DD0,   // 95
-    BytecodeVM_EntityCmd_8025514_Toward,   // 96
+    BytecodeVM_PlayDamageEffect,   // 95
+    BytecodeVM_NPCFireKiBlastAtEntity,   // 96
     BytecodeVM_ReturnToTitleScreen,   // 97
     BytecodeVM_SetCharacterLevel,   // 98
-    BytecodeVM_EntityCmd_8024A50_Arc,   // 99
-    BytecodeVM_EntityCmd_8025230_2arg,   // 100
+    BytecodeVM_NPCFireKiBlast,   // 99
+    BytecodeVM_SpawnDustCloud,   // 100
     BytecodeVM_SpawnTileEntity_A,   // 101
     BytecodeVM_SpawnTileEntity_B,   // 102
     BytecodeVM_SpawnEntity4Arg,   // 103
@@ -117,7 +117,7 @@ const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount] = {
     BytecodeVM_SetCharHP,   // 109
     BytecodeVM_SetCharEP,   // 110
     BytecodeVM_PlayAudioVolume,   // 111
-    BytecodeVM_EntityCmd_8025244_1arg,   // 112
+    BytecodeVM_PlaySFX,   // 112
     BytecodeVM_EnableMenuAccess,   // 113
     BytecodeVM_EnableDragonRadar,   // 114
     BytecodeVM_SetActiveCharacterNoReset,   // 115
@@ -126,28 +126,28 @@ const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount] = {
     BytecodeVM_AddRectToMask2,   // 118
     BytecodeVM_GetActiveEntityContext,   // 119
     BytecodeVM_SpawnEntityAtPoint_8016AB4,   // 120
-    BytecodeVM_EntityCmd_8025ED4_1arg,   // 121
+    BytecodeVM_SetEntityAnimationNoWait,   // 121
     BytecodeVM_DisableWorld,   // 122
     BytecodeVM_EnableWorld,   // 123
-    BytecodeVM_SpawnSpriteAt,   // 124
-    BytecodeVM_RunFullscreenSceneClearVram,   // 125
+    BytecodeVM_DrawSprite,   // 124
+    BytecodeVM_PlayCredits,   // 125
     BytecodeVM_PushActiveCharIsTransformed,   // 126
     BytecodeVM_SpawnMapEntity,   // 127
     BytecodeVM_SetPartyMemberFlag,   // 128
     BytecodeVM_PushSaveStatePtr,   // 129
     BytecodeVM_SpawnEntity_801C4B0,   // 130
-    BytecodeVM_PushLevelUpEndStat,   // 131
-    BytecodeVM_PushLevelUpPowStat,   // 132
-    BytecodeVM_PushLevelUpStrStat,   // 133
-    BytecodeVM_EntityCmd_8025550_2arg,   // 134
-    BytecodeVM_EntityCmd_8025528_4arg,   // 135
-    BytecodeVM_EntityCmd_8024C04_3arg,   // 136
-    BytecodeVM_EntityCmd_802521C_1arg,   // 137
+    BytecodeVM_PushLevelUpStat1,   // 131
+    BytecodeVM_PushLevelUpStat2,   // 132
+    BytecodeVM_PushLevelUpStat3,   // 133
+    BytecodeVM_ScreenShake,   // 134
+    BytecodeVM_FlashScreenColor,   // 135
+    BytecodeVM_GlideToPosition,   // 136
+    BytecodeVM_NPCFireKamehameha,   // 137
     BytecodeVM_EnterSleepMode,   // 138
     BytecodeVM_AddEXP,   // 139
-    BytecodeVM_EntityCmd_8025500_15_1arg,   // 140
+    BytecodeVM_LockEntityPose,   // 140
     BytecodeVM_RegisterScouterEntry,   // 141
-    BytecodeVM_EntityMoveTowardEntity,   // 142
+    BytecodeVM_NPCFireBigBangAtEntity,   // 142
     BytecodeVM_PushEntityPosition,   // 143
     BytecodeVM_SetEntityPosition,   // 144
 };
