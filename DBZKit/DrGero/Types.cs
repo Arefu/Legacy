@@ -60,7 +60,7 @@ namespace DrGero.Types
         // moving an entity -- for most kinds these are the same address, but
         // triggers store their identity in the mapTriggers vtable+dataPtr slot
         // while their x1/y1/x2/y2 coordinates live inside the dataPtr target.
-        public readonly record struct Entity(EntityKind Kind, int X, int Y, int TypeId, int SourceAddress, int Width = 0, int Height = 0, int PositionAddress = 0, int OnPickup = 0, int CollectionMsg = 0, int StatIndex = 0)
+        public readonly record struct Entity(EntityKind Kind, int X, int Y, int TypeId, int SourceAddress, int Width = 0, int Height = 0, int PositionAddress = 0, int OnPickup = 0, int CollectionMsg = 0, int StatIndex = 0, int Handler = 0, int Variant = 0)
         {
             public int PositionAddress { get; init; } = PositionAddress == 0 ? SourceAddress : PositionAddress;
         }

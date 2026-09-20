@@ -36,7 +36,9 @@ namespace DrGero
         public const int RunScriptFunc = 0x0801069B;
         public const int RunDialogFunc = 0x080106B3;
         public const int WaypointHandler = 0x0800D625;
-        public const int IdleHandler = 0x0800CB0F;
+        public const int IdleHandler = 0x0800CB0F;          // NpcBehavior_FaceAndWait_Create: face a direction, wait
+        public const int StandWaitHandler = 0x08010099;     // NpcBehavior_StandWait_Create: animation 0, wait N ticks
+        public const int WanderSolidHandler = 0x0800CFDD;   // NpcBehavior_WanderSolid_Create: wander, blocked by walls and the player
 
         public const int StatIndexOffset = 0x08;
         public const int PositionOffset = 0x0C;

@@ -246,7 +246,12 @@ namespace DrGero.Rendering
         // here (as EntityKind.Character, same as CharacterSpawnHandlerOffset)
         // because they're real spawned entities worth seeing on the map; the
         // status bar's "spriteId" label is this handler's actionData value.
-        private const int SpriteSpawnHandlerOffset = 0x00B711;
+        // CORRECTION 2026-09-19 (IDA): the paragraph above is WRONG about interactivity. This is
+        // MapScript_CreateNpcSprite: the ordinary town NPC. Its vtable is NpcSprite_vtable (0x80255CC,
+        // NOT 0x802560C) whose OnCollision slot is MapEntity_HandleCollisionInteract, so talking to it
+        // opens the dialog sequence at record+0xC (the "raw graphics pointer" noted above is exactly that);
+        // it is also registered in the collision lists, so it is solid. See Engine-Notes.md.
+        public const int SpriteSpawnHandlerOffset = 0x00B711; // MapScript_CreateNpcSprite: talkable, solid town NPCs
 
         public static List<Entity> ReadMapScripts(ROM rom, MapEntry entry)
         {
@@ -276,7 +281,7 @@ namespace DrGero.Rendering
                     int y = rom.ReadShort();
                     int spriteId = rom.ReadInt();
 
-                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress));
+                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress, Handler: CharacterSpawnHandlerOffset));
                 }
                 else if (handler == SpriteSpawnHandlerOffset)
                 {
@@ -287,7 +292,7 @@ namespace DrGero.Rendering
                     rom.Skip(4); // record+0xC -- passed through to the entity raw, not a display id (see comment above)
                     int spriteId = rom.ReadInt(); // record+0x10 (actionData) -- feeds Character_GetSpriteId
 
-                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress));
+                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress, Handler: SpriteSpawnHandlerOffset));
                 }
                 else if (handler == (EnemyRecords.SpawnHandler & 0x00FFFFFF)) // ReadPointer strips the 0x08 top byte
                 {
@@ -838,24 +843,54 @@ namespace DrGero.Rendering
             var newRecordAddresses = new List<int>();
             foreach (var character in newCharacters)
             {
-                // CORRECTED 2026-09-19 (IDA: EntityBehaviorList_Tick @0x800D156): "actionData" is
-                // NOT a value -- MapScript_CreateCharacter passes the ADDRESS of record+0x10, which
-                // is an inline behavior list {u32 count; ptr[count]}, cycled forever. The last two
-                // fields IDA calls next/spawnFunc are really the record's one inline behavior object
-                // (here {NpcBehavior_Idle_Create 0x0800CB0F, flags}: idle random wandering, chance
-                // 0x7D00/65536 per tick). The old code wrote count=1 with a NULL ptr[0], which the
-                // cycler would call straight through.
-                int addr = rom.AllocateFreeSpace(EntityReader.MapScriptRecordSize);
+                if (character.Variant == 2)
+                {
+                    // Script actor (MapScript_CreateCharacter): NOT solid, NOT talkable -- it is the
+                    // kind scripts drive by charIdx. Behavior list is inline at +0x10 (see
+                    // EntityBehaviorList_Tick); the +0x18 pair is its one inline behavior.
+                    int actorAddr = rom.AllocateFreeSpace(EntityReader.MapScriptRecordSize);
+                    var actor = new List<byte>();
+                    actor.AddRange(BitConverter.GetBytes(0x08000000 | EntityReader.CharacterSpawnHandlerOffset));
+                    actor.AddRange(BitConverter.GetBytes(0));
+                    actor.AddRange(BitConverter.GetBytes((short)character.X));
+                    actor.AddRange(BitConverter.GetBytes((short)character.Y));
+                    actor.AddRange(BitConverter.GetBytes(character.TypeId));
+                    actor.AddRange(BitConverter.GetBytes(1));
+                    actor.AddRange(BitConverter.GetBytes(0x08000000 | (actorAddr + 0x18)));
+                    actor.AddRange(BitConverter.GetBytes(EnemyRecords.IdleHandler));
+                    actor.AddRange(BitConverter.GetBytes(0x7D00));
+                    rom.WriteBytesAt(actorAddr, actor.ToArray());
+                    newRecordAddresses.Add(actorAddr);
+                    continue;
+                }
+
+                // Ordinary town NPC (MapScript_CreateNpcSprite, IDA 2026-09-19): solid (registered in
+                // g_WorldCollisionMap and g_EntityBlockList) and talkable -- collision type 3 runs
+                // MapEntity_HandleCollisionInteract, which opens the dialog sequence at record+0xC
+                // (0 = not talkable, so every new NPC gets a starter conversation). The behavior
+                // list is inline at +0x14 {count, entries[]}; ONE separately allocated behavior
+                // object: variant 0 = stand still (StandWait 0x7D00 ticks), 1 = wander (speed 0x59,
+                // what the game's own wandering NPCs use).
+                var starter = DrGero.Quests.DialogLine.TextLine(0, "Hello!");
+                int dialogPtr = DrGero.Quests.DialogWriter.WriteSequence(rom, new[] { starter });
+
+                bool wander = character.Variant == 1;
+                var behavior = new List<byte>();
+                behavior.AddRange(BitConverter.GetBytes(wander ? EnemyRecords.WanderSolidHandler : EnemyRecords.StandWaitHandler));
+                behavior.AddRange(BitConverter.GetBytes(wander ? 0x59 : 0x7D00));
+                int behaviorAddr = rom.AllocateFreeSpace(behavior.Count);
+                rom.WriteBytesAt(behaviorAddr, behavior.ToArray());
+
                 var record = new List<byte>();
-                record.AddRange(BitConverter.GetBytes(0x08000000 | EntityReader.CharacterSpawnHandlerOffset)); // handler
-                record.AddRange(BitConverter.GetBytes(0));               // flags/condition = null -> Condition_Evaluate always true
+                record.AddRange(BitConverter.GetBytes(0x08000000 | EntityReader.SpriteSpawnHandlerOffset)); // handler
+                record.AddRange(BitConverter.GetBytes(0));                       // flags: always spawns
                 record.AddRange(BitConverter.GetBytes((short)character.X));
                 record.AddRange(BitConverter.GetBytes((short)character.Y));
-                record.AddRange(BitConverter.GetBytes(character.TypeId)); // spriteId
-                record.AddRange(BitConverter.GetBytes(1));                // behavior count
-                record.AddRange(BitConverter.GetBytes(0x08000000 | (addr + 0x18))); // ptr[0] -> the inline object below
-                record.AddRange(BitConverter.GetBytes(EnemyRecords.IdleHandler));   // +0x18 behavior create-fn
-                record.AddRange(BitConverter.GetBytes(0x7D00));                     // +0x1C idle chance/direction flags
+                record.AddRange(BitConverter.GetBytes(dialogPtr));               // +0xC dialog sequence
+                record.AddRange(BitConverter.GetBytes(character.TypeId));        // +0x10 spriteId
+                record.AddRange(BitConverter.GetBytes(1));                       // +0x14 behavior count
+                record.AddRange(BitConverter.GetBytes(0x08000000 | behaviorAddr)); // +0x18 entries[0]
+                int addr = rom.AllocateFreeSpace(EntityReader.MapScriptRecordSize);
                 rom.WriteBytesAt(addr, record.ToArray());
                 newRecordAddresses.Add(addr);
             }
