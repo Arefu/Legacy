@@ -1,0 +1,2 @@
+# Exported ROM data blocks (regenerate with tools/extract_audio_assets.py). The manifests are tracked.
+assets/**/*.bin

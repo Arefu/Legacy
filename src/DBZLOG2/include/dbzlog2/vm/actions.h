@@ -1,0 +1,159 @@
+#pragma once
+// The bytecode "Step" actions (BytecodeVM_OpcodeTable, 0x083B5D28, 145 entries). One file each under src/vm/actions/ named <index>_<Name>.cpp.
+// Every handler receives the VM context and the script's program-counter pointer; most only pop their operands from the stack.
+// Certainty is in each file's header comment (HIGH = decompile agrees with the ROM data, MEDIUM = decompile only / layout from the disassembly,
+// LOW = purpose unknown, kept as a faithful transcription).
+#include "dbzlog2/vm/vm_stack.h"
+
+namespace dbzlog2::vm {
+
+constexpr int kActionCount = 145;
+
+void BytecodeVM_PushAccumulator(VmContext*, const u8**);   // 0, 0x08009392, HIGH
+void BytecodeVM_PushGlobalVar0(VmContext*, const u8**);   // 1, 0x080093A4, HIGH
+void BytecodeVM_PushGlobalVar1(VmContext*, const u8**);   // 2, 0x080093B6, HIGH
+void BytecodeVM_PushGlobalVar2(VmContext*, const u8**);   // 3, 0x080093C8, HIGH
+void BytecodeVM_PushScriptArg0(VmContext*, const u8**);   // 4, 0x080093DA, HIGH
+void BytecodeVM_PushScriptArg1(VmContext*, const u8**);   // 5, 0x080093EE, HIGH
+void BytecodeVM_PushScriptArg2(VmContext*, const u8**);   // 6, 0x08009402, HIGH
+void BytecodeVM_PushScriptArg3(VmContext*, const u8**);   // 7, 0x08009416, HIGH
+void BytecodeVM_PushCurrentWorld(VmContext*, const u8**);   // 8, 0x0800942A, HIGH
+void BytecodeVM_PushCurrentArea(VmContext*, const u8**);   // 9, 0x0800943E, HIGH
+void BytecodeVM_PushCurrentVariant(VmContext*, const u8**);   // 10, 0x08009452, HIGH
+void BytecodeVM_PushActiveCharIndex(VmContext*, const u8**);   // 11, 0x0800949C, HIGH
+void BytecodeVM_PushActiveCharName(VmContext*, const u8**);   // 12, 0x080094B0, HIGH
+void BytecodeVM_PushActiveCharHP(VmContext*, const u8**);   // 13, 0x080094E8, HIGH
+void BytecodeVM_PushActiveCharMaxHP(VmContext*, const u8**);   // 14, 0x08009508, HIGH
+void BytecodeVM_PushActiveCharEP(VmContext*, const u8**);   // 15, 0x08009528, HIGH
+void BytecodeVM_PushActiveCharMaxEP(VmContext*, const u8**);   // 16, 0x08009548, HIGH
+void BytecodeVM_StackRand(VmContext*, const u8**);   // 17, 0x08009568, HIGH
+void BytecodeVM_StackRandChance(VmContext*, const u8**);   // 18, 0x0800957A, HIGH
+void BytecodeVM_StackTestStoryFlag(VmContext*, const u8**);   // 19, 0x080095B4, HIGH
+void BytecodeVM_StackTestStoryFlagNot(VmContext*, const u8**);   // 20, 0x080095CA, HIGH
+void BytecodeVM_StackGetItemCount(VmContext*, const u8**);   // 21, 0x080095E4, HIGH
+void BytecodeVM_StackGetCharLevel(VmContext*, const u8**);   // 22, 0x08009608, HIGH
+void BytecodeVM_StackTestPartyMemberFlag(VmContext*, const u8**);   // 23, 0x08009628, MEDIUM
+void BytecodeVM_DisableLayer(VmContext*, const u8**);   // 24, 0x08009658, HIGH
+void BytecodeVM_EnableLayer(VmContext*, const u8**);   // 25, 0x08009670, HIGH
+void BytecodeVM_PickUpItem(VmContext*, const u8**);   // 26, 0x080096AA, HIGH
+void BytecodeVM_SetStoryFlag(VmContext*, const u8**);   // 27, 0x08009710, HIGH
+void BytecodeVM_ClearStoryFlag(VmContext*, const u8**);   // 28, 0x08009728, HIGH
+void BytecodeVM_FindCharacterEntity(VmContext*, const u8**);   // 29, 0x08009740, HIGH
+void BytecodeVM_FindEntityByType(VmContext*, const u8**);   // 30, 0x0800975E, HIGH
+void BytecodeVM_ShowChoicePrompt(VmContext*, const u8**);   // 31, 0x0800977A, LOW
+void BytecodeVM_CenterCameraOnChar(VmContext*, const u8**);   // 32, 0x080097B4, HIGH
+void BytecodeVM_SetActiveEntity(VmContext*, const u8**);   // 33, 0x08009814, HIGH
+void BytecodeVM_SetMapRestoreFlag(VmContext*, const u8**);   // 34, 0x0800984A, HIGH
+void BytecodeVM_LoadMapWithEntities(VmContext*, const u8**);   // 35, 0x08009852, HIGH
+void BytecodeVM_LoadMapNoEntities(VmContext*, const u8**);   // 36, 0x080098F2, HIGH
+void BytecodeVM_RestoreMap(VmContext*, const u8**);   // 37, 0x08009992, HIGH
+void BytecodeVM_WarpToMapWithEntities(VmContext*, const u8**);   // 38, 0x080099D2, HIGH
+void BytecodeVM_WarpToMapNoEntities(VmContext*, const u8**);   // 39, 0x08009A88, HIGH
+void BytecodeVM_FadeOut(VmContext*, const u8**);   // 40, 0x08009B1C, HIGH
+void BytecodeVM_FadeFromWhite(VmContext*, const u8**);   // 41, 0x08009B36, HIGH
+void BytecodeVM_FadeToWhite(VmContext*, const u8**);   // 42, 0x08009B5E, HIGH
+void BytecodeVM_TimedSceneWait_A(VmContext*, const u8**);   // 43, 0x08009B94, LOW
+void BytecodeVM_TimedSceneWait_B(VmContext*, const u8**);   // 44, 0x08009BBC, LOW
+void BytecodeVM_UploadSpritePalette(VmContext*, const u8**);   // 45, 0x08009BE4, HIGH
+void BytecodeVM_PlayAudio(VmContext*, const u8**);   // 46, 0x08009BF8, HIGH
+void BytecodeVM_StopAudio(VmContext*, const u8**);   // 47, 0x08009C54, HIGH
+void BytecodeVM_StopAllAudio(VmContext*, const u8**);   // 48, 0x08009C7A, HIGH
+void BytecodeVM_PlayMusic(VmContext*, const u8**);   // 49, 0x08009C8A, HIGH
+void BytecodeVM_StopMusic(VmContext*, const u8**);   // 50, 0x08009CBA, HIGH
+void BytecodeVM_SpawnCharacterEntity(VmContext*, const u8**);   // 51, 0x08009CC4, HIGH
+void BytecodeVM_DespawnEntity(VmContext*, const u8**);   // 52, 0x08009D00, HIGH
+void BytecodeVM_WalkToPosition(VmContext*, const u8**);   // 53, 0x08009D4A, HIGH
+void BytecodeVM_FlyToPosition(VmContext*, const u8**);   // 54, 0x08009E30, HIGH
+void BytecodeVM_SetEntityFacing(VmContext*, const u8**);   // 55, 0x08009EFC, HIGH
+void BytecodeVM_SetEntityFollow(VmContext*, const u8**);   // 56, 0x08009F7C, MEDIUM
+void BytecodeVM_SetEntityAnimation(VmContext*, const u8**);   // 57, 0x08009FC4, HIGH
+void BytecodeVM_EntityWaitFrames(VmContext*, const u8**);   // 58, 0x0800A044, MEDIUM
+void BytecodeVM_Deprecated_CharacterSpecialAttack(VmContext*, const u8**);   // 59, 0x0800A084, HIGH
+void BytecodeVM_EntityCmd_8025258(VmContext*, const u8**);   // 60, 0x0800A09A, LOW
+void BytecodeVM_Deprecated_CharacterFollow(VmContext*, const u8**);   // 61, 0x0800A438, HIGH
+void BytecodeVM_SetEntityPositionInstant(VmContext*, const u8**);   // 62, 0x0800A44E, MEDIUM
+void BytecodeVM_BeginCommandBatch(VmContext*, const u8**);   // 63, 0x0800A5A6, MEDIUM
+void BytecodeVM_CommitCommandBatch(VmContext*, const u8**);   // 64, 0x0800A5B2, MEDIUM
+void BytecodeVM_PlayAudioBlocking(VmContext*, const u8**);   // 65, 0x0800A5BE, MEDIUM
+void BytecodeVM_Deprecated_ShowImage(VmContext*, const u8**);   // 66, 0x0800A60C, HIGH
+void BytecodeVM_RunFixedScreen_60(VmContext*, const u8**);   // 67, 0x0800A622, LOW
+void BytecodeVM_WaitFramesSimple(VmContext*, const u8**);   // 68, 0x0800A638, HIGH
+void BytecodeVM_WaitFrames(VmContext*, const u8**);   // 69, 0x0800A65C, MEDIUM
+void BytecodeVM_SetActiveCharacter(VmContext*, const u8**);   // 70, 0x0800A784, HIGH
+void BytecodeVM_SetCollisionRect(VmContext*, const u8**);   // 71, 0x0800A7A0, HIGH
+void BytecodeVM_ClearCollisionRect(VmContext*, const u8**);   // 72, 0x0800A7F8, HIGH
+void BytecodeVM_SetCharacterTransformation(VmContext*, const u8**);   // 73, 0x0800A8EC, MEDIUM
+void BytecodeVM_ReloadMap(VmContext*, const u8**);   // 74, 0x0800A998, HIGH
+void BytecodeVM_PushActiveCharNameUpper(VmContext*, const u8**);   // 75, 0x080094CC, HIGH
+void BytecodeVM_RemoveItem(VmContext*, const u8**);   // 76, 0x080096CA, HIGH
+void BytecodeVM_RemoveItems(VmContext*, const u8**);   // 77, 0x080096E8, HIGH
+void BytecodeVM_SetBgLayerPriority(VmContext*, const u8**);   // 78, 0x08009688, HIGH
+void BytecodeVM_SetCharacterInPartyFlag(VmContext*, const u8**);   // 79, 0x0800A9B6, HIGH
+void BytecodeVM_SetCharacterFlag_Bit1(VmContext*, const u8**);   // 80, 0x0800AA10, MEDIUM
+void BytecodeVM_ClearCharacterFlag_Bit1(VmContext*, const u8**);   // 81, 0x0800AA34, MEDIUM
+void BytecodeVM_SetCharacterFlag_Bit5(VmContext*, const u8**);   // 82, 0x0800AA58, MEDIUM
+void BytecodeVM_SetCharacterFlag_Dynamic(VmContext*, const u8**);   // 83, 0x0800AA7C, MEDIUM
+void BytecodeVM_TriggerMapEvent(VmContext*, const u8**);   // 84, 0x0800AAAE, MEDIUM
+void BytecodeVM_FadeIn(VmContext*, const u8**);   // 85, 0x0800AB1A, MEDIUM
+void BytecodeVM_SetPlayerVisible(VmContext*, const u8**);   // 86, 0x0800AB82, MEDIUM
+void BytecodeVM_SpawnItem(VmContext*, const u8**);   // 87, 0x0800ABA4, MEDIUM
+void BytecodeVM_FindEntityType16(VmContext*, const u8**);   // 88, 0x0800AC00, LOW
+void BytecodeVM_EntityCmd_801094C_Link(VmContext*, const u8**);   // 89, 0x08009D94, LOW
+void BytecodeVM_SpawnEntityForChar_80104C0(VmContext*, const u8**);   // 90, 0x0800AB44, LOW
+void BytecodeVM_ClearCharacterInPartyFlag(VmContext*, const u8**);   // 91, 0x0800A9DA, HIGH
+void BytecodeVM_EntityStopMovement(VmContext*, const u8**);   // 93, 0x0800A49A, MEDIUM
+void BytecodeVM_EntitySetVelocity(VmContext*, const u8**);   // 94, 0x0800A526, MEDIUM
+void BytecodeVM_EntityCmd_8024DD0(VmContext*, const u8**);   // 95, 0x0800A572, LOW
+void BytecodeVM_EntityCmd_8025514_Toward(VmContext*, const u8**);   // 96, 0x0800A158, LOW
+void BytecodeVM_ReturnToTitleScreen(VmContext*, const u8**);   // 97, 0x0800A3E8, HIGH
+void BytecodeVM_SetCharacterLevel(VmContext*, const u8**);   // 98, 0x0800AC10, HIGH
+void BytecodeVM_EntityCmd_8024A50_Arc(VmContext*, const u8**);   // 99, 0x0800A210, LOW
+void BytecodeVM_EntityCmd_8025230_2arg(VmContext*, const u8**);   // 100, 0x0800A4DA, LOW
+void BytecodeVM_SpawnTileEntity_A(VmContext*, const u8**);   // 101, 0x0800AC5C, LOW
+void BytecodeVM_SpawnTileEntity_B(VmContext*, const u8**);   // 102, 0x0800ACAC, LOW
+void BytecodeVM_SpawnEntity4Arg(VmContext*, const u8**);   // 103, 0x0800ACEA, LOW
+void BytecodeVM_DespawnCharacterAndRecordPosition(VmContext*, const u8**);   // 104, 0x0800AAC6, MEDIUM
+void BytecodeVM_StackGetCharHP(VmContext*, const u8**);   // 105, 0x0800AD7A, HIGH
+void BytecodeVM_StackGetCharEP(VmContext*, const u8**);   // 106, 0x0800AD98, HIGH
+void BytecodeVM_StackGetCharMaxHP(VmContext*, const u8**);   // 107, 0x0800ADB6, HIGH
+void BytecodeVM_StackGetCharMaxEP(VmContext*, const u8**);   // 108, 0x0800ADD4, HIGH
+void BytecodeVM_SetCharHP(VmContext*, const u8**);   // 109, 0x0800ADF2, HIGH
+void BytecodeVM_SetCharEP(VmContext*, const u8**);   // 110, 0x0800AE32, HIGH
+void BytecodeVM_PlayAudioVolume(VmContext*, const u8**);   // 111, 0x08009C22, HIGH
+void BytecodeVM_EntityCmd_8025244_1arg(VmContext*, const u8**);   // 112, 0x0800AE76, LOW
+void BytecodeVM_EnableMenuAccess(VmContext*, const u8**);   // 113, 0x0800AEB8, MEDIUM
+void BytecodeVM_EnableDragonRadar(VmContext*, const u8**);   // 114, 0x0800AEC8, HIGH
+void BytecodeVM_SetActiveCharacterNoReset(VmContext*, const u8**);   // 115, 0x0800A680, HIGH
+void BytecodeVM_ResetNonActiveSprites(VmContext*, const u8**);   // 116, 0x0800A794, HIGH
+void BytecodeVM_RemoveRectFromMask2(VmContext*, const u8**);   // 117, 0x0800A850, MEDIUM
+void BytecodeVM_AddRectToMask2(VmContext*, const u8**);   // 118, 0x0800A89E, MEDIUM
+void BytecodeVM_GetActiveEntityContext(VmContext*, const u8**);   // 119, 0x08009840, MEDIUM
+void BytecodeVM_SpawnEntityAtPoint_8016AB4(VmContext*, const u8**);   // 120, 0x0800AD3E, LOW
+void BytecodeVM_EntityCmd_8025ED4_1arg(VmContext*, const u8**);   // 121, 0x0800A004, LOW
+void BytecodeVM_DisableWorld(VmContext*, const u8**);   // 122, 0x0800AED8, HIGH
+void BytecodeVM_EnableWorld(VmContext*, const u8**);   // 123, 0x0800AEE4, HIGH
+void BytecodeVM_SpawnSpriteAt(VmContext*, const u8**);   // 124, 0x0800AEF0, MEDIUM
+void BytecodeVM_RunFullscreenSceneClearVram(VmContext*, const u8**);   // 125, 0x0800AF44, LOW
+void BytecodeVM_PushActiveCharIsTransformed(VmContext*, const u8**);   // 126, 0x0800AF72, HIGH
+void BytecodeVM_SpawnMapEntity(VmContext*, const u8**);   // 127, 0x0800ABD6, MEDIUM
+void BytecodeVM_SetPartyMemberFlag(VmContext*, const u8**);   // 128, 0x0800AFA0, MEDIUM
+void BytecodeVM_PushSaveStatePtr(VmContext*, const u8**);   // 129, 0x0800AFC2, MEDIUM
+void BytecodeVM_SpawnEntity_801C4B0(VmContext*, const u8**);   // 130, 0x0800AFD4, LOW
+void BytecodeVM_PushLevelUpEndStat(VmContext*, const u8**);   // 131, 0x08009466, HIGH
+void BytecodeVM_PushLevelUpPowStat(VmContext*, const u8**);   // 132, 0x08009478, MEDIUM
+void BytecodeVM_PushLevelUpStrStat(VmContext*, const u8**);   // 133, 0x0800948A, MEDIUM
+void BytecodeVM_EntityCmd_8025550_2arg(VmContext*, const u8**);   // 134, 0x0800A276, LOW
+void BytecodeVM_EntityCmd_8025528_4arg(VmContext*, const u8**);   // 135, 0x0800A2C2, LOW
+void BytecodeVM_EntityCmd_8024C04_3arg(VmContext*, const u8**);   // 136, 0x0800A346, LOW
+void BytecodeVM_EntityCmd_802521C_1arg(VmContext*, const u8**);   // 137, 0x0800A3A2, LOW
+void BytecodeVM_EnterSleepMode(VmContext*, const u8**);   // 138, 0x0800AFE8, HIGH
+void BytecodeVM_AddEXP(VmContext*, const u8**);   // 139, 0x0800AFF0, HIGH
+void BytecodeVM_EntityCmd_8025500_15_1arg(VmContext*, const u8**);   // 140, 0x08009F3C, LOW
+void BytecodeVM_RegisterScouterEntry(VmContext*, const u8**);   // 141, 0x0800B00C, MEDIUM
+void BytecodeVM_EntityMoveTowardEntity(VmContext*, const u8**);   // 142, 0x0800A1B4, MEDIUM
+void BytecodeVM_PushEntityPosition(VmContext*, const u8**);   // 143, 0x08009E80, HIGH
+void BytecodeVM_SetEntityPosition(VmContext*, const u8**);   // 144, 0x08009EBA, MEDIUM
+
+extern const ActionHandler g_BytecodeVM_OpcodeTableImpl[kActionCount];
+
+}  // namespace dbzlog2::vm
