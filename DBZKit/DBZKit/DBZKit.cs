@@ -925,14 +925,15 @@ namespace DBZKit
             int listed = 0;
             void DumpList(ListView list, ImageList images, Func<ListViewItem, int, byte[]?> raw, string folder)
             {
-                string dir = Path.Combine(dialog.SelectedPath, "ROM", folder);
-                Directory.CreateDirectory(dir);
+                string pngDir = Path.Combine(dialog.SelectedPath, "ROM", folder, "PNG"), binDir = Path.Combine(dialog.SelectedPath, "ROM", folder, "BIN");
+                Directory.CreateDirectory(pngDir);
+                Directory.CreateDirectory(binDir);
                 foreach (ListViewItem item in list.Items)
                 {
                     string key = item.ImageKey;
-                    if (images.Images[key] is Bitmap bmp) bmp.Save(Path.Combine(dir, key + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                    if (images.Images[key] is Bitmap bmp) bmp.Save(Path.Combine(pngDir, key + ".png"), System.Drawing.Imaging.ImageFormat.Png);
                     var bytes = raw(item, list.Items.IndexOf(item));
-                    if (bytes != null) File.WriteAllBytes(Path.Combine(dir, key + ".bin"), bytes);
+                    if (bytes != null) File.WriteAllBytes(Path.Combine(binDir, key + ".bin"), bytes);
                     listed++;
                 }
             }

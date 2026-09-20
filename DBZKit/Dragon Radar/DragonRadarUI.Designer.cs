@@ -37,6 +37,7 @@
             fIleToolStripMenuItem = new ToolStripMenuItem();
             toolStrip_OpenROM = new ToolStripMenuItem();
             toolStrip_SaveROM = new ToolStripMenuItem();
+            toolStrip_SaveROMAs = new ToolStripMenuItem();
             viewportToolStrip = new ToolStrip();
             toolStrip_ShowCollision = new ToolStripButton();
             toolStrip_RefreshMap = new ToolStripButton();
@@ -161,7 +162,7 @@
             // 
             // fIleToolStripMenuItem
             // 
-            fIleToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { toolStrip_OpenROM, toolStrip_SaveROM });
+            fIleToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { toolStrip_OpenROM, toolStrip_SaveROM, toolStrip_SaveROMAs });
             fIleToolStripMenuItem.Name = "fIleToolStripMenuItem";
             fIleToolStripMenuItem.Size = new Size(37, 20);
             fIleToolStripMenuItem.Text = "&FIle";
@@ -179,8 +180,16 @@
             toolStrip_SaveROM.Name = "toolStrip_SaveROM";
             toolStrip_SaveROM.ShortcutKeys = Keys.Control | Keys.S;
             toolStrip_SaveROM.Size = new Size(193, 22);
-            toolStrip_SaveROM.Text = "&Save ROM As...";
+            toolStrip_SaveROM.Text = "&Save ROM";
             toolStrip_SaveROM.Click += toolStrip_SaveROM_Click;
+            //
+            // toolStrip_SaveROMAs
+            //
+            toolStrip_SaveROMAs.Name = "toolStrip_SaveROMAs";
+            toolStrip_SaveROMAs.ShortcutKeys = Keys.Control | Keys.Shift | Keys.S;
+            toolStrip_SaveROMAs.Size = new Size(193, 22);
+            toolStrip_SaveROMAs.Text = "Save ROM &As...";
+            toolStrip_SaveROMAs.Click += toolStrip_SaveROMAs_Click;
             //
             // viewportToolStrip
             //
@@ -604,6 +613,7 @@
         private ToolStripMenuItem fIleToolStripMenuItem;
         private ToolStripMenuItem toolStrip_OpenROM;
         private ToolStripMenuItem toolStrip_SaveROM;
+        private ToolStripMenuItem toolStrip_SaveROMAs;
         private ToolStrip viewportToolStrip;
         private ToolStripButton toolStrip_ShowCollision;
         private ToolStripButton toolStrip_RefreshMap;

@@ -47,6 +47,8 @@ namespace Dragon_Radar
 
             mapTreeView.KeyDown += MapTreeView_KeyDown;
             BuildLevelGatePanel();
+            BuildViewportPanel();
+            mapPictureBox.Paint += DrawViewportOverlay; // after mapPictureBox_Paint so it draws on top
             BuildEditorTab();
         }
 
@@ -970,6 +972,81 @@ namespace Dragon_Radar
 
             UpdatePropertiesPanel();
             mapPictureBox.Invalidate();
+        }
+
+        // "Show GBA viewport" (Properties tab): a movable 240x160 rectangle on the map, so the
+        // top-left the PanCameraToPosition(x, y, speed) opcode wants can be read off instead of
+        // worked out by hand. The map is drawn 1:1, so picture-box coordinates are world pixels.
+        // Drag the outline to move it; the labels show its top-left, its centre and the call.
+        private const int GbaViewWidth = 240, GbaViewHeight = 160, ViewportGrabMargin = 6;
+        private CheckBox _showViewportCheck = null!;
+        private Panel _viewportPanel = null!;
+        private Label _viewportTopLeftLabel = null!, _viewportCentreLabel = null!, _viewportCallLabel = null!;
+        private Point _viewportPos;
+        private bool _draggingViewport;
+        private Point _viewportGrabOffset;
+
+        private void BuildViewportPanel()
+        {
+            _showViewportCheck = new CheckBox { Text = "Show GBA viewport", AutoSize = true, Location = new Point(8, 8) };
+            _viewportTopLeftLabel = new Label { AutoSize = true, Location = new Point(8, 34), Enabled = false };
+            _viewportCentreLabel = new Label { AutoSize = true, Location = new Point(8, 54), Enabled = false };
+            _viewportCallLabel = new Label { AutoSize = false, Size = new Size(190, 34), Location = new Point(8, 74), Enabled = false };
+            _viewportPanel = new Panel { Dock = DockStyle.Bottom, Height = 116 };
+            _viewportPanel.Controls.AddRange(new Control[] { _showViewportCheck, _viewportTopLeftLabel, _viewportCentreLabel, _viewportCallLabel });
+            propertiesTabPage.Controls.Add(_viewportPanel);
+            new ToolTip().SetToolTip(_showViewportCheck, "Draws the 240x160 GBA screen on the map. Drag its outline to move it; the labels give the top-left (x, y) that PanCameraToPosition wants.");
+            _showViewportCheck.CheckedChanged += (_, _) =>
+            {
+                _draggingViewport = false;
+                UpdateViewportLabels();
+                mapPictureBox.Invalidate();
+            };
+            UpdateViewportLabels();
+        }
+
+        private void UpdateViewportLabels()
+        {
+            bool on = _showViewportCheck.Checked;
+            _viewportTopLeftLabel.Enabled = _viewportCentreLabel.Enabled = _viewportCallLabel.Enabled = on;
+            _viewportTopLeftLabel.Text = $"Top-left: ({_viewportPos.X}, {_viewportPos.Y})";
+            _viewportCentreLabel.Text = $"Centre: ({_viewportPos.X + GbaViewWidth / 2}, {_viewportPos.Y + GbaViewHeight / 2})";
+            _viewportCallLabel.Text = $"PanCameraToPosition({_viewportPos.X}, {_viewportPos.Y}, speed)";
+        }
+
+        private Rectangle ViewportRect => new(_viewportPos.X, _viewportPos.Y, GbaViewWidth, GbaViewHeight);
+
+        // True when p is on the rectangle's outline (a band either side of the edge), so clicks in
+        // the middle still select entities underneath.
+        private bool IsOnViewportEdge(Point p)
+        {
+            if (!_showViewportCheck.Checked) return false;
+            var outer = Rectangle.Inflate(ViewportRect, ViewportGrabMargin, ViewportGrabMargin);
+            var inner = Rectangle.Inflate(ViewportRect, -ViewportGrabMargin, -ViewportGrabMargin);
+            return outer.Contains(p) && !inner.Contains(p);
+        }
+
+        private void MoveViewportTo(Point topLeft)
+        {
+            int maxX = Math.Max(0, (_currentMapBitmap?.Width ?? GbaViewWidth) - GbaViewWidth);
+            int maxY = Math.Max(0, (_currentMapBitmap?.Height ?? GbaViewHeight) - GbaViewHeight);
+            _viewportPos = new Point(Math.Clamp(topLeft.X, 0, maxX), Math.Clamp(topLeft.Y, 0, maxY));
+            UpdateViewportLabels();
+            mapPictureBox.Invalidate();
+        }
+
+        private void DrawViewportOverlay(object? sender, PaintEventArgs e)
+        {
+            if (!_showViewportCheck.Checked || _currentMapBitmap == null) return;
+            var rect = ViewportRect;
+            using var fill = new SolidBrush(Color.FromArgb(28, 0, 200, 255));
+            using var pen = new Pen(Color.FromArgb(230, 0, 200, 255), 2);
+            e.Graphics.FillRectangle(fill, rect);
+            e.Graphics.DrawRectangle(pen, rect);
+            using var thin = new Pen(Color.FromArgb(160, 0, 200, 255)) { DashStyle = DashStyle.Dot };
+            int cx = rect.X + rect.Width / 2, cy = rect.Y + rect.Height / 2;
+            e.Graphics.DrawLine(thin, cx - 6, cy, cx + 6, cy);
+            e.Graphics.DrawLine(thin, cx, cy - 6, cx, cy + 6);
         }
 
         private void DragonRadarUI_KeyDown(object? sender, KeyEventArgs e)
@@ -2005,6 +2082,14 @@ namespace Dragon_Radar
                 return;
             }
 
+            if (e.Button == MouseButtons.Left && IsOnViewportEdge(e.Location))
+            {
+                _draggingViewport = true;
+                _viewportGrabOffset = new Point(e.X - _viewportPos.X, e.Y - _viewportPos.Y);
+                mapPictureBox.Capture = true;
+                return;
+            }
+
             // Paint mode: click and HOLD paints (see PaintStrokeTo); nothing gets selected/dragged.
             if ((_paintTilesButton.Checked || _paintCollisionButton.Checked) && e.Button == MouseButtons.Left)
             {
@@ -2109,6 +2194,12 @@ namespace Dragon_Radar
 
         private void mapPictureBox_MouseMove(object? sender, MouseEventArgs e)
         {
+            if (_draggingViewport)
+            {
+                MoveViewportTo(new Point(e.X - _viewportGrabOffset.X, e.Y - _viewportGrabOffset.Y));
+                return;
+            }
+
             if (_painting)
             {
                 PaintStrokeTo(e.Location);
@@ -2226,6 +2317,13 @@ namespace Dragon_Radar
 
         private void mapPictureBox_MouseUp(object? sender, MouseEventArgs e)
         {
+            if (_draggingViewport)
+            {
+                _draggingViewport = false;
+                mapPictureBox.Capture = false;
+                return;
+            }
+
             if (_painting)
             {
                 FinishTileStroke();
@@ -3663,7 +3761,15 @@ namespace Dragon_Radar
         // file, the old array storage is zeroed out, and the owning MapEntry /
         // Map_VariationEntry fields are repointed at the new location (see
         // EntityWriter.PersistNewItems for the full rationale/caveats).
-        private void toolStrip_SaveROM_Click(object sender, EventArgs e)
+        // The file the last save went to. Once a ROM has been saved, Ctrl+S overwrites that same file with no
+        // dialog; "Save ROM As..." (Ctrl+Shift+S) always asks and changes the target.
+        private string? _savedRomPath;
+
+        private void toolStrip_SaveROM_Click(object sender, EventArgs e) => SaveRom(promptForPath: _savedRomPath == null);
+
+        private void toolStrip_SaveROMAs_Click(object sender, EventArgs e) => SaveRom(promptForPath: true);
+
+        private void SaveRom(bool promptForPath)
         {
             if (_rom == null)
             {
@@ -3671,14 +3777,24 @@ namespace Dragon_Radar
                 return;
             }
 
-            using var dialog = new SaveFileDialog
+            string savePath;
+            if (promptForPath)
             {
-                Title = "Save edited ROM As",
-                Filter = "GBA ROM|*.gba"
-            };
+                using var dialog = new SaveFileDialog
+                {
+                    Title = "Save edited ROM As",
+                    Filter = "GBA ROM|*.gba"
+                };
 
-            if (dialog.ShowDialog() != DialogResult.OK)
-                return;
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                savePath = dialog.FileName;
+            }
+            else
+            {
+                savePath = _savedRomPath!;
+            }
 
             var editedRom = ROM.FromBytes(_rom.ToArray());
 
@@ -3748,7 +3864,8 @@ namespace Dragon_Radar
 
             // editedRom may have grown (PersistNewObjects can allocate free space
             // within it), so pull the final bytes from it rather than an earlier snapshot.
-            File.WriteAllBytes(dialog.FileName, editedRom.ToArray());
+            File.WriteAllBytes(savePath, editedRom.ToArray());
+            _savedRomPath = savePath;
 
             if (placeError != null)
                 MessageBox.Show(placeError, "Couldn't place new item(s)", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -3764,7 +3881,7 @@ namespace Dragon_Radar
 
             // Set after the reload above -- mapTreeView_AfterSelect ends by calling
             // UpdateStatusLabel() itself, which would otherwise overwrite this immediately.
-            statusLabel.Text = $"Saved {written} entity position(s) and {placed} newly-placed item(s) to {Path.GetFileName(dialog.FileName)}.";
+            statusLabel.Text = $"Saved {written} entity position(s) and {placed} newly-placed item(s) to {Path.GetFileName(savePath)}.";
         }
     }
 }

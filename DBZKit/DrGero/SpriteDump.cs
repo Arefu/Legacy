@@ -9,9 +9,9 @@ namespace DrGero.Engine
     /// Dumps character sprites to a folder tree and puts them back.
     ///
     ///   &lt;root&gt;/sprite_072/manifest.json
-    ///   &lt;root&gt;/sprite_072/g05_down_f0.png   indexed 8bpp PNG using the game's shared OBJ palette (index 0 = transparent), in the orientation
+    ///   &lt;root&gt;/sprite_072/png/g05_down_f0.png   indexed 8bpp PNG using the game's shared OBJ palette (index 0 = transparent), in the orientation
     ///                                        the game shows it (a stock "Right" frame is the Left image flipped, so it is exported flipped)
-    ///   &lt;root&gt;/sprite_072/g05_down_f0.bin   the raw 8x8-tile bytes (64 per tile, row-major tile order) the game decompresses
+    ///   &lt;root&gt;/sprite_072/bin/g05_down_f0.bin   the raw 8x8-tile bytes (64 per tile, row-major tile order) the game decompresses
     ///
     /// A sprite record holds 20 groups (Down/Up/Left/Right) and every slot points at an array of frames (see FrameImport.WriteFrameArray),
     /// so a file is named by group (g05), direction and frame (f0, f1, ...). The manifest keeps each frame's x/y offsets so an unedited dump
@@ -102,8 +102,10 @@ namespace DrGero.Engine
                         bool flipped = (d[7] & 0x10) != 0;
                         var indices = TilesToIndices(tiles, w, h);
                         if (flipped) FlipX(indices, w, h);
-                        SaveIndexedPng(Path.Combine(dir, stem + ".png"), indices, w, h, palette);
-                        File.WriteAllBytes(Path.Combine(dir, stem + ".bin"), tiles[..(w * h)]);
+                        Directory.CreateDirectory(Path.Combine(dir, "png"));
+                        Directory.CreateDirectory(Path.Combine(dir, "bin"));
+                        SaveIndexedPng(Path.Combine(dir, "png", stem + ".png"), indices, w, h, palette);
+                        File.WriteAllBytes(Path.Combine(dir, "bin", stem + ".bin"), tiles[..(w * h)]);
                         manifest.Frames.Add(new FrameEntry(g, slot, f, w, h, (sbyte)d[0], (sbyte)d[1], flipped, stem));
                     }
                 }
@@ -129,7 +131,9 @@ namespace DrGero.Engine
                 var list = new List<(FrameImport.Converted, sbyte, sbyte)>();
                 foreach (var f in slotGroup.OrderBy(f => f.Index))
                 {
-                    string png = Path.Combine(folder, f.File + ".png");
+                    // PNGs live in <folder>/png (older dumps kept them next to the manifest: still accepted)
+                    string png = Path.Combine(folder, "png", f.File + ".png");
+                    if (!File.Exists(png)) png = Path.Combine(folder, f.File + ".png");
                     if (!File.Exists(png)) throw new FileNotFoundException($"Missing {f.File}.png listed in the manifest.");
                     var c = FrameImport.FromPng(png, rom);
                     if (c.Width != f.Width || c.Height != f.Height) sizeChanges.Add($"{f.File} {f.Width}x{f.Height} -> {c.Width}x{c.Height}");
