@@ -184,6 +184,94 @@ Documented separately in `DBZKit/Dialog_Format.md` — covers the 6 dialog entry
 `sequence[]`/`Index`-chaining mechanism, and a fully-traced real example (`PickUpItem` used as a
 mode-0 "run an event" dialog step).
 
+### Session 2026-09-19: quest opcode renames, StackRand check, NPC dialog trace, unknown-opcode arity audit
+
+**Renamed** (IDA + `OpcodeTable.cs` + `BYTECODE_VM.cs` + `opcode_data.js` + `OpcodeDocs.xml`, all kept
+in sync): opcode 19/20 `StackTestQuestFlag`/`Not` → `StackTestStoryFlag`/`Not`, opcode 27/28
+`StackSetPartyFlag`/`StackClearPartyFlag` → `SetStoryFlag`/`ClearStoryFlag`, opcode 128
+`SetQuestFlag` → `SetPartyMemberFlag` (arity corrected 1→2, confirmed via disasm it pops two
+values), opcode 31 `sub_800977A` → `ShowChoicePrompt` (already confidently named in
+`Dialog_Format.md` from 2026-09-14 but never actually applied in IDA/the table until now). Full
+rationale in `DBZKit/Quest-System.md` — short version: two completely unrelated flag storages in
+this ROM used to share "Quest"/"PartyFlag" names, which is exactly backwards (the story-flag
+system, 19/20/27/28, is what the Quest Log reads; the party-member-flag system, 23/128, isn't).
+Also renamed the underlying IDA functions: `BytecodeVM_StackSetPartyFlag`→`BytecodeVM_SetStoryFlag`,
+`BytecodeVM_StackClearPartyFlag`→`BytecodeVM_ClearStoryFlag`, `BytecodeVM_StackTestFlag`→
+`_Raw`/`BytecodeVM_SetFlag`→`_Raw`/`BytecodeVM_ClearFlag`→`_Raw` (the low-level bit-array ops,
+now distinguished from the opcode wrappers), `PartyState_SetQuestFlag`/`TestQuestFlag`→
+`PartyState_SetMemberFlag`/`TestMemberFlag`, `BytecodeVM_SetQuestFlag`→`BytecodeVM_SetPartyMemberFlag`,
+`dword_86F6C7C`→`g_PartyMemberFlagCategories`. Also newly learned: `Map_LoadInternal` calls
+`PartyState_SetMemberFlag(&g_PartyState, zone, area)` on every single map load — the party-member-flag
+system is (at least partly) a "have you visited this zone/area" tracker, not anything about
+individual party members despite the name. `StackTestPartyMemberFlag`'s argument order is now
+CONFIRMED (disasm of `0x8009628`): the first-pushed value becomes `PartyState_TestMemberFlag`'s
+`a2`, the second/top-of-stack becomes `a3` — there's no separate category selector, the function
+brute-force-scans all 68 `g_PartyMemberFlagCategories` entries for a descriptor matching the exact
+`(a2, a3)` pair.
+
+**`StackRand` (17) arity check** — user reported seeing scripts push 3 values before a `StackRand`
+call. Disasm of `BytecodeVM_StackRand`/`BytecodeVM_StackRandChance` (`0x8009568`/`0x800957A`)
+confirms both pop exactly ONE value (peek-and-replace, no net stack change) — `GetRandomRange`/
+`RandomChance` (`0x802141C`/`0x802142E`) each take a single `Max`/`Threshold` argument, nothing
+more. Conclusion: the arity is correct as documented; a script pushing 3 values before `StackRand`
+is pushing extra operands for OTHER opcodes later in the same sequence, not for `StackRand` itself
+— totally normal stack-machine behavior, not a bug in the table.
+
+**NPC dialog / how "talk to an NPC to advance a quest" actually works** — traced the full
+collision-interact chain for every entity constructor found (`CharacterSprite_OnCollision` /
+`CombatEntity_OnCollision` → `Entity_HandleCollision_Shared` → `_Ext1` → `_Ext2`, used by the
+player, party-member sprites, generic map NPCs via `MapScript_CreateCharacter`, and the 496-byte
+combat/Scouter entity). **Collision type 3 ("interact") does nothing in every one of them** —
+confirmed by reading all the way to the terminal link (`Entity_HandleCollision_Shared_Ext2`,
+`0x800786A`), which explicitly falls through as a no-op for type 3. So walking up to an NPC and
+bumping into it is NEVER how dialogue starts, for any entity type in this ROM.
+`MapEntity_HandleCollisionInteract` (`0x800B632`) — the ONE function that reads an entity's own
+`dialogSeq`/`seqIndex` fields (offsets +384/+364) and would start a conversation — is provably
+unreachable from any checked constructor's vtable; almost certainly dead code left over from an
+earlier design. **Real dialogue is entirely trigger-zone driven**: `MapTrigger_OnEnter`
+(`0x800D7E0`) builds a wrapper object whose `dialogSeq` field is `*(source+0x10)` (source =
+the trigger's own `dataPtr`), and `MapTriggerDialog_Update` (`0x800D7A0`) is what actually calls
+`InteractionHandler_Init` with it once the trigger's own `Condition_Evaluate` passes. **This means
+a walking NPC's visual sprite (from `MapScript_CreateCharacter`) and its dialogue (a nearby/
+overlapping Dialog-type map trigger) are two completely independent placements in the ROM** —
+there is no field linking one to the other; whoever authored a map just had to place both near
+each other. The NPC record's own `actionData` field (`MapScriptSpawnMultiConditional+0x10`,
+confirmed via `type_inspect`) gets stored into the spawned entity's interaction-state buffer but,
+per the dead-code finding above, is never read back by anything reachable — for ordinary walking
+NPCs it looks like inert data.
+
+Once a Dialog trigger's conversation is running, `DBZKit/Dialog_Format.md`'s mode-0
+`DIALOG_SCRIPT` entries are the actual "run game logic mid-conversation" hook — confirmed real
+example there is a `PickUpItem` call chained between two lines of dialogue via the entry's own
+`Index` field. This is genuinely how quest-flag-setting NPCs work: a mode-0 entry somewhere in
+their conversation's `sequence[]` runs `PushByte(flagId); Step(27=SetStoryFlag); END`. Implemented
+this properly in code: `DrGero.Quests.DialogScanner` (`LooksLikeDialogSequence` /
+`FindFlagWritesInDialog`) walks a `sequence[]` array, finds mode-0 entries, and decodes each one's
+embedded script for opcode 27/28 flag writes — wired into Dragon Radar's trigger-to-quest link
+(`FindQuestsSetByScript` now tries both raw-bytecode and dialog-sequence interpretation, since a
+trigger's payload slot can be either depending on which of the four trigger variants it is).
+**Corrected a real bug found while wiring this up**: Dragon Radar was reading a trigger's payload
+from `dataPtr+4`, which disasm of `MapTrigger_OnEnter` shows is actually a NESTED constructible
+sub-object (passed through `call_ctor`), not the payload at all — the real payload/dialogSeq field
+is at `dataPtr+0x10`. Fixed.
+
+**Unknown-opcode audit** — re-decompiled every remaining `op_unkNN` entry (31, 43/44, 58, 60, 62,
+67, 68, 78, 88, 89, 90, 93-96, 99-103, 112, 117/118, 120/121, 124/125, 130, 134-137, 140, 142) from
+scratch against real disasm. Every single arity already in `OpcodeTable.cs` checked out exactly —
+no arity bugs found in this batch (unlike opcode 128 above). Almost all of them follow one of two
+shared shapes: (a) `Entity_GetByCharIndex` + `ArenaAlloc` a small struct with a FIXED vtable
+pointer + `Entity_EnqueueCommand` onto `g_CommandQueue` (the "entity visual command" family --
+walking/animation/velocity-type commands), or (b) a spawn via a shared factory function
+(`sub_8012A68`/`sub_8012B38`/etc) + `EntityList_Add`. In every case the exact runtime EFFECT
+depends on a vtable's own update function, which wasn't traced (that's a per-vtable investigation,
+not a per-opcode one) -- so none of these were renamed beyond the confidence already recorded
+against them individually above; forcing a name without that confirmation would just be a
+guess wearing a real-looking label. Notable structural findings worth keeping: the same "×1966"
+frame/angle scaling constant appears in THREE different opcodes (96, 99, 142) -- a shared
+move/rotate-toward-entity family; opcodes 93/94 and 117/118 and 101/102 are each a 0-arg/N-arg or
+set/clear PAIR sharing one vtable, matching the SetStoryFlag/ClearStoryFlag pattern seen elsewhere
+in this table.
+
 ## Wiki
 
 Every Step-table opcode (this file's second table) and the main dispatch table now has a
