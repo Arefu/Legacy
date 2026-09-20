@@ -1084,6 +1084,11 @@ namespace Dragon_Radar
         // next map click drops a new EntityKind.Enemy with this (statIndex, spriteId) pair --
         // always a pair the game itself already ships (see EnemyRecords.FindTemplates).
         private (int StatIndex, int SpriteId)? _placingEnemy;
+        private int _placingNpcVariant; // Entity.Variant for the next placed NPC: 0 standing, 1 wandering, 2 script actor
+
+        private static bool IsTalkableNpc(Entity entity) =>
+            entity.Kind == EntityKind.Character &&
+            (entity.Handler == EntityReader.SpriteSpawnHandlerOffset || (entity.SourceAddress == 0 && entity.Variant != 2));
         private List<EnemyRecords.Template>? _enemyTemplates;
 
         // Scans g_ItemsInGame once per ROM load and fills the Items tab with an
@@ -1177,6 +1182,59 @@ namespace Dragon_Radar
         /// launches Legacy focused on that sequence through the same path as Edit Script --
         /// including its live save-watch, so each Save in Legacy reaches this window at once.
         /// </summary>
+        /// <summary>
+        /// Lets an entity you just placed be edited straight away: writes every pending new entity into the in-memory ROM
+        /// (the same persist calls Save ROM As makes -- nothing reaches disk), reloads the map, and reselects the entity by
+        /// its new record. Returns false (after telling the user) if that can't be done. A no-op for an entity that is
+        /// already in the ROM.
+        /// </summary>
+        private bool MaterializeSelected()
+        {
+            if (_rom == null || _game == null || _currentEntry == null) return false;
+            if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return false;
+
+            var want = _currentEntities[_selectedIndex];
+            if (want.SourceAddress != 0) return true;
+
+            int? mapEntryAddress = CurrentMapEntryAddress();
+            if (mapEntryAddress == null) return false;
+
+            try
+            {
+                foreach (var e2 in _currentEntities)
+                    WriteEntityPositionLive(e2);
+
+                EntityWriter.PersistNewObjects(_rom, _currentEntry, mapEntryAddress.Value, _currentEntities);
+                EntityWriter.PersistNewCharacters(_rom, _currentEntry, mapEntryAddress.Value, _currentEntities);
+                EnemyRecords.PersistNewEnemies(_rom, _game.MapEntries, _currentEntry, mapEntryAddress.Value, _currentEntities);
+                _currentEntry.RefreshFrom(_rom, mapEntryAddress.Value);
+            }
+            catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(ex.Message, "Couldn't write it into the ROM yet", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            RescanQuestsAndFlags();
+            if (mapTreeView.SelectedNode != null)
+                mapTreeView_AfterSelect(this, new TreeViewEventArgs(mapTreeView.SelectedNode));
+            _dirty = true;
+
+            int idx = _currentEntities.FindLastIndex(e => e.Kind == want.Kind && e.SourceAddress != 0 && e.X == want.X && e.Y == want.Y
+                && e.TypeId == want.TypeId && (want.Kind != EntityKind.Enemy || e.StatIndex == want.StatIndex));
+            if (idx < 0)
+            {
+                MessageBox.Show("It was written to the ROM but couldn't be found on the reloaded map.", "Edit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            _selectedIndex = idx;
+            UpdateStatusLabel();
+            UpdatePropertiesPanel();
+            mapPictureBox.Invalidate();
+            return true;
+        }
+
         private void BeginCustomPickupEditing(int entityIndex)
         {
             if (_rom == null || _game == null || _currentEntry == null) return;
@@ -1742,7 +1800,7 @@ namespace Dragon_Radar
                 EntityKind.Item => $"Item #{n} — id {entity.TypeId} (position approximate)",
                 EntityKind.Decoration => $"Decoration #{n} — frame {entity.TypeId}",
                 EntityKind.LevelGate => $"Level Gate #{n} — requires level {entity.TypeId}",
-                EntityKind.Character => $"NPC #{n} — sprite {entity.TypeId}",
+                EntityKind.Character => $"{(IsTalkableNpc(entity) || entity.SourceAddress == 0 && entity.Variant != 2 ? "NPC" : "Actor")} #{n} — sprite {entity.TypeId}",
                 EntityKind.Enemy => $"Enemy #{n} — sprite {entity.TypeId}, stat {entity.StatIndex}",
                 EntityKind.SpawnScript => $"Spawn Script #{n}",
                 _ => entity.Kind.ToString()
@@ -1772,11 +1830,31 @@ namespace Dragon_Radar
             foreach (int idx in editable)
             {
                 int captured = idx;
-                menu.Items.Add($"Edit {Name(captured)} code...", null, (_, _) =>
+                var ent = _currentEntities[captured];
+                if (ent.Kind is EntityKind.Character or EntityKind.Enemy)
                 {
-                    SelectEntity(captured);
-                    EditSelectedPayload();
-                });
+                    // NPCs and enemies get separate entries for what they SAY and for when they appear. All of these work on an
+                    // entity you just placed -- the first edit writes it into the ROM (MaterializeSelected).
+                    bool talkable = IsTalkableNpc(ent);
+                    if (ent.Kind == EntityKind.Enemy)
+                        menu.Items.Add($"Edit {Name(captured)} action (dialogue / script)...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(dialogue: true); });
+                    else if (talkable)
+                        menu.Items.Add($"Edit {Name(captured)} dialogue...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(dialogue: true); });
+
+                    if (ent.Kind == EntityKind.Character)
+                        menu.Items.Add($"Edit {Name(captured)} script (spawn condition)...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(); });
+
+                    if (!talkable)
+                        menu.Items.Add($"Add a dialogue trigger over {Name(captured)}...", null, (_, _) => { SelectEntity(captured); AddDialogueTriggerForSelected(); });
+                }
+                else
+                {
+                    menu.Items.Add($"Edit {Name(captured)} code...", null, (_, _) =>
+                    {
+                        SelectEntity(captured);
+                        EditSelectedPayload();
+                    });
+                }
             }
             if (editable.Count > 0) menu.Items.Add(new ToolStripSeparator());
 
@@ -1982,7 +2060,7 @@ namespace Dragon_Radar
 
             if (_placingCharacterSpriteId.HasValue)
             {
-                _currentEntities.Add(new Entity(EntityKind.Character, e.Location.X, e.Location.Y, _placingCharacterSpriteId.Value, SourceAddress: 0));
+                _currentEntities.Add(new Entity(EntityKind.Character, e.Location.X, e.Location.Y, _placingCharacterSpriteId.Value, SourceAddress: 0, Variant: _placingNpcVariant));
                 _selectedIndex = _currentEntities.Count - 1;
                 _placingCharacterSpriteId = null;
                 _dirty = true;
@@ -2273,7 +2351,7 @@ namespace Dragon_Radar
             }
 
             var entity = _currentEntities[_selectedIndex];
-            addDialogueTriggerButton.Enabled = (entity.Kind is EntityKind.Character or EntityKind.Enemy) && entity.SourceAddress != 0;
+            addDialogueTriggerButton.Enabled = (entity.Kind is EntityKind.Character or EntityKind.Enemy) && !IsTalkableNpc(entity);
             var lines = new List<string>
             {
                 $"Kind: {entity.Kind}",
@@ -2372,7 +2450,13 @@ namespace Dragon_Radar
                     lines.Add($"Sprite ID: {entity.TypeId}");
                     lines.Add($"Enemy stat entry: {entity.StatIndex} (g_ScouterStatDatabase)");
                     lines.Add("");
-                    if (entity.SourceAddress != 0 && _rom != null)
+                    if (entity.SourceAddress == 0)
+                    {
+                        editScriptButton.Enabled = true;
+                        editDialogueButton.Enabled = true;
+                        lines.Add("Action: default (written to the ROM when you open the editor).");
+                    }
+                    else if (_rom != null)
                     {
                         int actionObj = EnemyRecords.ActionObject(_rom, entity.SourceAddress);
                         if (actionObj > 0 && actionObj + 8 <= _rom.Length)
@@ -2395,6 +2479,20 @@ namespace Dragon_Radar
                 case EntityKind.Character:
                     lines.Add($"Sprite ID: {entity.TypeId}");
                     lines.Add("");
+                    // Works before saving too: the first edit writes the pending entity into the ROM (MaterializeSelected).
+                    {
+                        editScriptButton.Enabled = true; // edits the spawn condition
+                        if (IsTalkableNpc(entity))
+                        {
+                            editDialogueButton.Enabled = true;
+                            lines.Add("Talkable NPC: solid, and talking to it opens the dialogue at record+0xC. Edit Dialogue changes what it says; Edit Script changes when it appears.");
+                        }
+                        else
+                        {
+                            lines.Add("Script actor: NOT solid and NOT talkable (no collision registration, no interact handler). It is driven by scripts through its sprite id. Use \"Add Dialogue Trigger Here\" to give it dialogue.");
+                        }
+                        lines.Add("");
+                    }
                     // CONFIRMED via IDA (Entity_GetByCharIndex -> Character_GetSpriteId,
                     // 2026-09): this is the EXACT same id space Legacy/Zenkai scripts pass
                     // as charIdx to WalkToPosition/FlyToPosition/SetEntityFacing/etc, not
@@ -2893,12 +2991,17 @@ namespace Dragon_Radar
         // and the Zenkai tooling, so Dragon Radar doesn't need to reference it.
         private void editScriptButton_Click(object? sender, EventArgs e) => EditSelectedPayload();
 
-        private void editDialogueButton_Click(object? sender, EventArgs e) => EditSelectedPayload();
+        private void editDialogueButton_Click(object? sender, EventArgs e) => EditSelectedPayload(dialogue: true);
 
-        private async void EditSelectedPayload()
+        private async void EditSelectedPayload(bool dialogue = false)
         {
             if (_rom == null || _selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
             var entity = _currentEntities[_selectedIndex];
+            if (entity.SourceAddress == 0 && entity.Kind is EntityKind.Character or EntityKind.Enemy)
+            {
+                if (!MaterializeSelected()) return;
+                entity = _currentEntities[_selectedIndex];
+            }
             string title = $"Edit {DescribeEntityAt(_selectedIndex)}";
 
             string kind;
@@ -2906,12 +3009,20 @@ namespace Dragon_Radar
             switch (entity.Kind)
             {
                 case EntityKind.Character:
-                    // An NPC's "code" is its spawn condition: the record's flags field (+4).
                     if (entity.SourceAddress == 0)
                     {
                         MessageBox.Show("Save this NPC into the ROM first (it hasn't been written yet).", "Edit NPC code", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
+                    if (dialogue && IsTalkableNpc(entity))
+                    {
+                        // record+0xC is the dialog sequence[] pointer (see MapEntity_HandleCollisionInteract).
+                        kind = "dialog";
+                        field = entity.SourceAddress + 0xC;
+                        title += " dialogue";
+                        break;
+                    }
+                    // Otherwise an NPC's "code" is its spawn condition: the record's flags field (+4).
                     kind = "npc";
                     field = entity.SourceAddress + 4;
                     title += " spawn condition";
@@ -3447,7 +3558,7 @@ namespace Dragon_Radar
             // Enemies mode lists the (stat, sprite) pairs the game ships, most common first;
             // NPC mode lists every drawable sprite id. Tag is the Template (enemy) or the id (NPC).
             var palette = new List<(int SpriteId, string Label, object Tag)>();
-            if (npcPlaceModeCombo.SelectedIndex == 1)
+            if (npcPlaceModeCombo.SelectedIndex == 3)
             {
                 _enemyTemplates ??= EnemyRecords.FindTemplates(_rom, _game.MapEntries);
                 palette.AddRange(_enemyTemplates.Select(t => (t.SpriteId, $"Enemy {t.StatIndex} x{t.Count}", (object)t)));
@@ -3500,13 +3611,20 @@ namespace Dragon_Radar
         /// covering it. Builds the zone around the selected NPC/enemy's sprite, then opens the
         /// new trigger's dialogue editor -- the same flow as Add Trigger, then Edit Dialogue.
         /// </summary>
-        private void addDialogueTriggerButton_Click(object? sender, EventArgs e)
+        private void addDialogueTriggerButton_Click(object? sender, EventArgs e) => AddDialogueTriggerForSelected();
+
+        private void AddDialogueTriggerForSelected()
         {
             if (_rom == null || _game == null || _currentEntry == null) return;
             if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
 
             var entity = _currentEntities[_selectedIndex];
-            if (entity.Kind is not (EntityKind.Character or EntityKind.Enemy) || entity.SourceAddress == 0) return;
+            if (entity.Kind is not (EntityKind.Character or EntityKind.Enemy)) return;
+            if (entity.SourceAddress == 0)
+            {
+                if (!MaterializeSelected()) return;
+                entity = _currentEntities[_selectedIndex];
+            }
 
             var icon = CharacterIconReader.GetIcon(_rom, _game.Config, entity.TypeId);
             int w = icon?.Width ?? 16, h = icon?.Height ?? 32;
@@ -3531,6 +3649,7 @@ namespace Dragon_Radar
             }
             if (item?.Tag is not int spriteId) return;
             _placingEnemy = null;
+            _placingNpcVariant = Math.Clamp(npcPlaceModeCombo.SelectedIndex, 0, 2);
 
             _placingCharacterSpriteId = spriteId;
             statusLabel.Text = $"Placing NPC (sprite {spriteId}) — click the map to place it, Esc to cancel";

@@ -322,7 +322,7 @@
             npcHintLabel.Dock = DockStyle.Bottom;
             npcHintLabel.Height = 100;
             npcHintLabel.Name = "npcHintLabel";
-            npcHintLabel.Text = "Click a sprite, then click the map to place it. Esc cancels.\r\n\r\nIdle NPCs wander in place. Enemies use a stat/sprite pair the game already ships. To give either one dialogue, select it and use \"Add Dialogue Trigger Here\".";
+            npcHintLabel.Text = "Click a sprite, then click the map to place it. Esc cancels.\r\n\r\nStanding/Wandering NPCs are solid and start a conversation when you talk to them (Edit Dialogue changes it). Script actors are for cutscenes: not solid, not talkable. Enemies use a stat/sprite pair the game already ships.";
             //
             // propertiesTabPage
             //
@@ -396,7 +396,7 @@
             //
             npcPlaceModeCombo.Dock = DockStyle.Top;
             npcPlaceModeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-            npcPlaceModeCombo.Items.AddRange(new object[] { "Place: Idle NPCs", "Place: Enemies" });
+            npcPlaceModeCombo.Items.AddRange(new object[] { "Place: Standing NPCs (talk)", "Place: Wandering NPCs (talk)", "Place: Script actors", "Place: Enemies" });
             npcPlaceModeCombo.Name = "npcPlaceModeCombo";
             npcPlaceModeCombo.SelectedIndex = 0;
             npcPlaceModeCombo.SelectedIndexChanged += npcPlaceModeCombo_SelectedIndexChanged;
