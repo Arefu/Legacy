@@ -766,11 +766,12 @@
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(1264, 681);
+            ClientSize = new Size(1600, 900);
             Controls.Add(DBZKit_TabControl);
             Controls.Add(menuStrip1);
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MinimumSize = new Size(1280, 720);
+            StartPosition = FormStartPosition.CenterScreen;
             Name = "DBZKit";
             Text = "DBZ Kit";
             DBZKit_TabControl.ResumeLayout(false);

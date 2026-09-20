@@ -19,6 +19,10 @@ namespace DBZKit
 
         private byte[]? _GBARom;
 
+        // The editor tabs (Engine tools, Sprite editor, Sound) all work on this one private copy of the ROM;
+        // "Apply to DBZKit" replaces _GBARom with the edited bytes and "Save ROM As..." writes them to disk.
+        private readonly EditSession _session;
+
         // Confirmed offsets from Dragon Radar's games/ALFE.json (this ROM) -- only the
         // two fields CharacterIconReader actually needs, so a plain Game POCO built here
         // avoids pulling in Bulma's GameFactory/GameLibrary just for this.
@@ -31,6 +35,11 @@ namespace DBZKit
         public DBZKit()
         {
             InitializeComponent();
+
+            _session = new EditSession(edited => _GBARom = edited);
+            AddEditorTab("Engine tools", new EngineToolsPanel(_session));
+            AddEditorTab("Sprite editor", new SpriteEditorPanel(_session));
+            AddEditorTab("Sound", new AudioPanel(_session));
 
             _PortraitImageList = new ImageList
             {
@@ -155,6 +164,7 @@ namespace DBZKit
             }
 
             _GBARom = File.ReadAllBytes(OpenFile.FileName);
+            _session.Load(_GBARom, OpenFile.FileName);
             PopulateSpriteTree();
             Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
             Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
@@ -979,6 +989,13 @@ namespace DBZKit
             ListView_SpriteViewer.BeginUpdate();
             ListView_SpriteViewer.Items.AddRange(items.ToArray());
             ListView_SpriteViewer.EndUpdate();
+        }
+
+        private void AddEditorTab(string title, Control panel)
+        {
+            var tab = new TabPage(title) { Padding = new Padding(0) };
+            tab.Controls.Add(panel);
+            DBZKit_TabControl.TabPages.Add(tab);
         }
     }
 }
