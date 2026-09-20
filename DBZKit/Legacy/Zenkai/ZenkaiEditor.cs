@@ -119,7 +119,7 @@ namespace Legacy.Zenkai
             int autoCAnchor = -1;
 
             string AllNames() => string.Join(" ",
-                OpcodeTable.ByIndex.Select(o => o.Name).Concat(JumpFamily).Distinct()
+                OpcodeTable.ByIndex.Where(o => !OpcodeTable.UnusedInGame.Contains(o.Index)).Select(o => o.Name).Concat(JumpFamily).Distinct()
                     .OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
 
             void ShowAutoComplete()

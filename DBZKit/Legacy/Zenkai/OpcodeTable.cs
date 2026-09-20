@@ -62,11 +62,10 @@ namespace Legacy.Zenkai
             new(28, "ClearStoryFlag", 1),
             new(29, "FindCharacterEntity", 1),
             new(30, "FindEntityByType", 1),
-            // CONFIRMED via Dialog_Format.md 2026-09-14 (real yes/no-style prompt usage
-            // documented) and renamed in IDA 2026-09-19: builds a choice-prompt struct via
-            // sub_800DF1C and blocks on GameLoop_ExecuteAndWait. Pair with a mode-0 dialog
-            // script entry + JumpIfFalse to branch dialogue on the player's answer.
-            new(31, "ShowChoicePrompt", 3, "sub_800977A"),
+            // RENAMED 2026-09 (was ShowChoicePrompt -- a guess that never held up): CONFIRMED in-game
+            // as a camera pan to (x, y) = camera TOP-LEFT in world px, with a `speed`; uses the same camera-pan constructor
+            // (sub_800DF1C) as CenterCameraOnChar and blocks on GameLoop_ExecuteAndWait until done.
+            new(31, "PanCameraToPosition", 3, "sub_800977A"),
             new(32, "CenterCameraOnChar", 1),
             new(33, "SetActiveEntity", 1),
             new(34, "SetMapRestoreFlag", 1),
@@ -78,8 +77,8 @@ namespace Legacy.Zenkai
             new(40, "FadeOut", 1),
             new(41, "FadeFromWhite", 1),
             new(42, "FadeToWhite", 1),
-            new(43, "op_unk43", 1, "sub_8009B94"),
-            new(44, "op_unk44", 1, "sub_8009BBC"),
+            new(43, "WhiteFadeOut", 1, "sub_8009B94"),
+            new(44, "WhiteFlash", 1, "sub_8009BBC"),
             new(45, "UploadSpritePalette", 0),
             new(46, "PlayAudio", 1),
             new(47, "StopAudio", 1),
@@ -95,19 +94,19 @@ namespace Legacy.Zenkai
             new(55, "SetEntityFacing", 2),
             new(56, "SetEntityFollow", 2),
             new(57, "SetEntityAnimation", 2),
-            new(58, "op_unk58", 2, "sub_800A044"),
+            new(58, "EntityWaitFrames", 2, "sub_800A044"),
             new(59, "Deprecated_CharacterSpecialAttack", 0),
-            new(60, "op_unk60", 1, "sub_800A09A"),
+            new(60, "EntityWaitTouchPlayer", 1, "sub_800A09A"),
             new(61, "Deprecated_CharacterFollow", 0),
-            new(62, "op_unk62", 3, "sub_800A44E"),
+            new(62, "SetEntityPositionInstant", 3, "sub_800A44E"),   // TELEPORT (character index, x, y): confirmed by playing a script that uses it; IDA: BytecodeVM_SetEntityPositionInstant
             new(63, "BeginCommandBatch", 0),
             new(64, "CommitCommandBatch", 0),
             // ARITY CORRECTED 2026-09-16: was 1, confirmed via IDA decompile (0x800A5BE)
             // it pops 2 values -- see opcode_data.js for details (semantics still unclear).
             new(65, "PlayAudioBlocking", 2),
             new(66, "Deprecated_ShowImage", 0),
-            new(67, "op_unk67", 0, "sub_800A622"),
-            new(68, "op_unk68", 1, "sub_800A638"),
+            new(67, "WaitForConfirmButton", 0, "sub_800A622"),
+            new(68, "WaitFramesSimple", 1, "sub_800A638"),
             new(69, "WaitFrames", 1),
             new(70, "SetActiveCharacter", 1),
             new(71, "SetCollisionRect", 4),
@@ -117,7 +116,7 @@ namespace Legacy.Zenkai
             new(75, "PushActiveCharNameUpper", 0),
             new(76, "RemoveItem", 1),
             new(77, "RemoveItems", 2),
-            new(78, "op_unk78", 2, "sub_8009688"),
+            new(78, "SetBgLayerPriority", 2, "sub_8009688"),
             // RENAMED 2026-09-16: was SetCharacterFlag_Bit0. CONFIRMED via IDA
             // (Character_GetActiveCount, 0x8003E00, tests exactly this bit) -- bit0
             // marks a character as an active party member.
@@ -127,23 +126,23 @@ namespace Legacy.Zenkai
             new(82, "SetCharacterFlag_Bit5", 1),
             new(83, "SetCharacterFlag_Dynamic", 2),
             new(84, "TriggerMapEvent", 1),
-            new(85, "FadeIn", 1),
+            new(85, "DrawBossHealthBar", 1, "sub_800AB1A"),
             new(86, "SetPlayerVisible", 1),
             new(87, "SpawnItem", 3),
-            new(88, "op_unk88", 0, "sub_800AC00"),
-            new(89, "op_unk89", 4, "sub_8009D94"),
-            new(90, "op_unk90", 3, "sub_800AB44"),
+            new(88, "FindPlayerEntity", 0, "sub_800AC00"),
+            new(89, "WalkByOffset", 4, "sub_8009D94"),
+            new(90, "DrawBossHealthBarRange", 3, "sub_800AB44"),
             // RENAMED 2026-09-16: was ClearCharacterFlag_Bit0 -- inverse of SetCharacterInPartyFlag.
             new(91, "ClearCharacterInPartyFlag", 1),
             new(92, "SpawnItem", 3),
-            new(93, "op_unk93", 1, "sub_800A49A"),
-            new(94, "op_unk94", 3, "sub_800A526"),
-            new(95, "op_unk95", 1, "sub_800A572"),
-            new(96, "op_unk96", 3, "sub_800A158"),
+            new(93, "EntityStopMovement", 1, "sub_800A49A"),
+            new(94, "EntitySetVelocity", 3, "sub_800A526"),
+            new(95, "PlayDamageEffect", 1, "sub_800A572"),
+            new(96, "NPCFireKiBlastAtEntity", 3, "sub_800A158"),
             new(97, "ReturnToTitleScreen", 0),
             new(98, "SetCharacterLevel", 2),
-            new(99, "op_unk99", 4, "sub_800A210"),
-            new(100, "op_unk100", 3, "sub_800A4DA"),
+            new(99, "NPCFireKiBlast", 4, "sub_800A210"),
+            new(100, "SpawnDustCloud", 3, "sub_800A4DA"),
             new(101, "op_unk101", 2, "sub_800AC5C"),
             new(102, "op_unk102", 2, "sub_800ACAC"),
             new(103, "op_unk103", 4, "sub_800ACEA"),
@@ -155,7 +154,7 @@ namespace Legacy.Zenkai
             new(109, "SetCharHP", 2),
             new(110, "SetCharEP", 2),
             new(111, "PlayAudioVolume", 2),
-            new(112, "op_unk112", 2, "sub_800AE76"),
+            new(112, "PlaySFX", 2, "sub_800AE76"),
             // RENAMED 2026-09-16: were SetSaveExistsFlag_Bit2/Bit3. IDA readers: sub_8004CAC
             // gates the overworld pause-menu shortcuts on bit2 (medium confidence, unverified);
             // sub_8017ACC (world map draw) gates location marker highlighting on bit3 --
@@ -164,15 +163,15 @@ namespace Legacy.Zenkai
             new(114, "EnableDragonRadar", 0),
             new(115, "SetActiveCharacterNoReset", 1),
             new(116, "ResetNonActiveSprites", 0),
-            new(117, "op_unk117", 4, "sub_800A850"),
-            new(118, "op_unk118", 4, "sub_800A89E"),
+            new(117, "RemoveRectFromMask2", 4, "sub_800A850"),
+            new(118, "AddRectToMask2", 4, "sub_800A89E"),
             new(119, "GetActiveEntityContext", 0),
             new(120, "op_unk120", 2, "sub_800AD3E"),
-            new(121, "op_unk121", 2, "sub_800A004"),
+            new(121, "SetEntityAnimationNoWait", 2, "sub_800A004"),
             new(122, "DisableWorld", 1),
             new(123, "EnableWorld", 1),
-            new(124, "op_unk124", 3, "sub_800AEF0"),
-            new(125, "op_unk125", 0, "sub_800AF44"),
+            new(124, "DrawSprite", 3, "sub_800AEF0"),
+            new(125, "PlayCredits", 0, "sub_800AF44"),
             new(126, "PushActiveCharIsTransformed", 0),
             new(127, "SpawnMapEntity", 3),
             // RENAMED 2026-09-19 (was SetQuestFlag -- despite the name, does NOT feed the
@@ -185,20 +184,28 @@ namespace Legacy.Zenkai
             new(131, "PushLevelUpStat1", 0),
             new(132, "PushLevelUpStat2", 0),
             new(133, "PushLevelUpStat3", 0),
-            new(134, "op_unk134", 3, "sub_800A276"),
-            new(135, "op_unk135", 4, "sub_800A2C2"),
-            new(136, "op_unk136", 4, "sub_800A346"),
-            new(137, "op_unk137", 2, "sub_800A3A2"),
+            new(134, "ScreenShake", 3, "sub_800A276"),
+            // ARITY CORRECTED 2026-09-20: was 4. The handler pops FIVE values (charIdx, r, g, b, frames) -- the shipped scripts push five (e.g. 1D 05 62 83 7E 00 00 14).
+            new(135, "FlashScreenColor", 5, "sub_800A2C2"),
+            new(136, "GlideToPosition", 4, "sub_800A346"),
+            new(137, "NPCFireKamehameha", 2, "sub_800A3A2"),
             new(138, "EnterSleepMode", 0),
-            new(139, "AddEXP", 2),
-            new(140, "op_unk140", 2, "sub_8009F3C"),
+            // ARITY CORRECTED 2026-09-20: was 2. The handler pops ONE value (the amount) and gives it to the active party character; every shipped call is AddEXP(amount).
+            new(139, "AddEXP", 1),
+            new(140, "LockEntityPose", 2, "sub_8009F3C"),
             new(141, "RegisterScouterEntry", 1),
-            new(142, "op_unk142", 3, "sub_800A1B4"),
+            new(142, "NPCFireBigBangAtEntity", 3, "sub_800A1B4"),
             new(143, "PushEntityPosition", 1),
             new(144, "SetEntityPosition", 3),
         };
 
         internal static readonly Dictionary<int, OpcodeInfo> IndexMap = ByIndex.ToDictionary(o => o.Index);
+
+        // Unresolved opcodes that no script in the shipped ROM calls (checked over every dialog, trigger, NPC and enemy
+        // script with OpcodeUsage). Tested in-game: 101/102/103 only put a small sprite on screen (101 a 3x3 dot at screen
+        // pixel x,y; 103 a teal square), with no known purpose. They still assemble and disassemble as usual; they are just
+        // left out of autocomplete so they don't clutter it.
+        internal static readonly HashSet<int> UnusedInGame = new() { 101, 102, 103, 118, 120, 130 };
 
         // Name is not unique (index 87 and 92 are both "SpawnItem", same handler address
         // per BytecodeVM_OpCodes.md) -- assembling by name uses the FIRST/lowest index.

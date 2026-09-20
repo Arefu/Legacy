@@ -123,7 +123,7 @@ namespace Legacy.Zenkai
             {
                 if (v.Kind == ValKind.Literal) return v.Text;
                 string t = $"t{tempCounter++}";
-                sb.AppendLine(v.Kind == ValKind.Call ? $"var {t} = {v.Text};" : $"var {t} = ({v.Text});");
+                sb.AppendLine($"var {t} = {v.Text};");   // an assignment needs no parentheses
                 return t;
             }
 
@@ -264,6 +264,28 @@ namespace Legacy.Zenkai
                             var operands = Take(arity);
                             string O(int i) => i < operands.Count ? Inline(operands[i]) : "?";
 
+                            // Constant folding (display only): arithmetic on plain literals is shown as the literal it computes, so
+                            // `PushByte 8; StackNegate` reads `-8` (a legal Zenkai literal) instead of a temp `var t = (NEG(8));`.
+                            // Same 32-bit signed semantics as the VM handlers; division by zero is left unfolded.
+                            if (produces && operands.Count == arity && operands.All(o => o.Kind == ValKind.Literal && long.TryParse(o.Text, out _)))
+                            {
+                                var n = operands.Select(o => (int)long.Parse(o.Text)).ToArray();
+                                int? folded = insn.StepOpcode switch
+                                {
+                                    0x06 => unchecked(-n[0]),
+                                    0x07 => unchecked(n[0] + n[1]),
+                                    0x08 => unchecked(n[0] - n[1]),
+                                    0x09 => unchecked(n[0] * n[1]),
+                                    0x0A when n[1] != 0 && !(n[0] == int.MinValue && n[1] == -1) => n[0] / n[1],
+                                    _ => null,
+                                };
+                                if (folded is int f)
+                                {
+                                    stack.Add(new Val(f.ToString(), ValKind.Literal));
+                                    break;
+                                }
+                            }
+
                             if (!produces)
                             {
                                 string text = $"{symbol}({string.Join(", ", operands.Select(o => o.Text))})";
@@ -289,8 +311,26 @@ namespace Legacy.Zenkai
                     case "end":
                         FlushRemainingStack("end");
                         break;
+
+                    case "invalid":
+                        {
+                            if (stack.Count > 0) FlushRemainingStack($"invalid opcode at offset {insn.Offset}");
+                            int remaining = Math.Max(0, data.Length - insn.Offset);
+                            var head = data.Skip(insn.Offset).Take(24).Select(b => b.ToString("X2"));
+                            Emit($"// invalid main opcode 0x{insn.StepOpcode:X2} at offset {insn.Offset}: the game's table only has 0x00-0x1D, so this is not script bytecode " +
+                                 $"(text / other data, or a wrong start offset). Decoding stopped; {remaining} byte(s) left: {string.Join(" ", head)}{(remaining > 24 ? " ..." : "")}");
+                            break;
+                        }
                 }
             }
+
+            // A jump can target the byte just past the final instruction (typically "skip the rest, fall off the end"). No instruction
+            // sits at that offset, so the loop above never emitted its label and Structure() could not find it to fold the JumpIfFalse
+            // into an if block -- it printed the raw `// JumpIfFalse condition` + `JumpIfFalse(L0);` pair instead. Put those labels at the end.
+            var instructionOffsets = insns.Select(i => i.Offset).ToHashSet();
+            foreach (var t in targets)
+                if (!instructionOffsets.Contains(t))
+                    lines.Add(new LabelLine(labelNames[t]));
 
             var nodes = Structure(lines, 0, lines.Count);
             var outSb = new StringBuilder();
@@ -500,9 +540,17 @@ namespace Legacy.Zenkai
                         result.Add(new RawInsn(start, offset, "stack", new List<long>(), StepOpcode: op));
                         break;
 
-                    default:
+                    case 0x04: case 0x05: case 0x06: case 0x07: case 0x08: case 0x09: case 0x0A: case 0x0B:
+                    case 0x0C: case 0x0D: case 0x0E: case 0x0F: case 0x10: case 0x14: case 0x1B:
                         result.Add(new RawInsn(start, offset, "stack", new List<long>(), StepOpcode: op));
                         break;
+
+                    default:
+                        // The game's main dispatch table has exactly 30 entries (0x00-0x1D). Anything above is NOT an instruction: this is data
+                        // (text, a compressed blob, another table) or a script decoded from the wrong offset. Stop here instead of pretending
+                        // every following byte is an opcode, which used to print hundreds of lines of "arity mismatch" noise.
+                        result.Add(new RawInsn(start, offset, "invalid", new List<long>(), StepOpcode: op));
+                        return result;
                 }
             }
 
