@@ -67,6 +67,8 @@ namespace DrGero.Engine
                         {
                             switch (effect)
                             {
+                                case 1: fx = 0x0F; param = Math.Clamp(efParam, 1, 31); break;   // set speed (ticks per row)
+                                case 27: fx = 0x0E; param = 0xD0 | (efParam & 0xF); break;   // note delay = XM EDx
                                 case 24: fx = 0x08; param = Math.Clamp(128 + (sbyte)efParam * 2, 0, 255); break;
                                 case 20: fx = 0x0F; param = Math.Clamp(efParam, 32, 255); break;
                                 case 15: fx = 0x09; param = efParam & 0xFF; break;
@@ -185,9 +187,11 @@ namespace DrGero.Engine
                         {
                             case 0x08: e.Effect = 24; e.EffectParam = (byte)(sbyte)Math.Clamp((param - 128) / 2, -64, 63); break;
                             case 0x0F when param >= 32: e.Effect = 20; e.EffectParam = param; break;
-                            case 0x0F: if (pi != 0 || r != 0) warnings.Add("mid-song speed changes ignored"); break;
+                            case 0x0F when param >= 1: e.Effect = 1; e.EffectParam = param; break;   // < 32: set speed
+                            case 0x0F: break;
                             case 0x09: e.Effect = 15; e.EffectParam = param; break;
                             case 0x0E when (param >> 4) == 9 && (param & 0xF) != 0: e.Effect = 17; e.EffectParam = param & 0xF; break;
+                            case 0x0E when (param >> 4) == 0xD: e.Effect = 27; e.EffectParam = param & 0xF; break;
                             case 0x0C: e.Volume = Math.Clamp(param, 0, 64); break;
                             case 0x00: break;
                             default: warnings.Add($"effect {fx:X}xx dropped"); break;

@@ -1111,7 +1111,7 @@ namespace DrGero.Rendering
     {
         private const int FramePointersOffset = 0x4C; // CharacterSpriteEntry.framePointers
         private const int FramePointerCount = 12;
-        private const int ExtraPointersOffset = 0xAC; // CharacterSpriteEntry.extraPointers -- second/alternate frame set, not yet characterized
+        private const int ExtraPointersOffset = 0xAC; // slots of group 7 (0x4C + 16*7): more frame slots. The full record layout (21+ groups of Down/Up/Left/Right, each slot an ARRAY of frames) is in SpriteFrames.cs / SpriteDump.cs; this older reader only takes a fixed subset
         private const int ExtraPointerCount = 4;
         private const int BytesPerTile = 64; // 8bpp
 
@@ -1215,7 +1215,7 @@ namespace DrGero.Rendering
         /// <summary>
         /// One rendered frame per non-null entry across BOTH <c>framePointers[12]</c> (SlotIndex
         /// 0-11 -- CONFIRMED real, e.g. a walk-cycle) and <c>extraPointers[4]</c> (SlotIndex
-        /// 12-15 -- a second/alternate frame set, not yet characterized) of the
+        /// 12-15 -- slots of group 7, see SpriteFrames.cs for the real layout) of the
         /// <c>CharacterSpriteEntry</c> record, for browsing a character's animation frames.
         /// GetIcon only ever returns the FIRST non-null framePointers entry (a single static
         /// icon); this returns all of them, in array order, so a walk-cycle etc. can be

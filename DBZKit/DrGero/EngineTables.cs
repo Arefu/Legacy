@@ -249,7 +249,7 @@ namespace DrGero.Engine
         /// <summary>True when the sprite's record has 4 valid frame pointers at <paramref name="blockOffset"/>.</summary>
         public static bool SpriteHasBlock(ROM rom, int spriteId, int blockOffset)
         {
-            uint rec = BitConverter.ToUInt32(rom.ReadBytesAt(CharacterSpriteIndex + spriteId * 4, 4));
+            uint rec = BitConverter.ToUInt32(rom.ReadBytesAt(FrameImport.IndexAddress(rom) + spriteId * 4, 4));
             if (!IsRomPtr(rec, rom)) return false;
             int r = (int)(rec & 0x00FFFFFF);
             for (int i = 0; i < 4; i++)

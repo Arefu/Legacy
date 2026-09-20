@@ -105,6 +105,86 @@ namespace DrGero.Engine
 
         public const int CharacterSpriteIndex = 0x3B4E74, ObjPalette = 0x1DA6C8, RecordCopySize = 0x1A0;
 
+        // g_CharacterSpriteIndex (file 0x3B4E74) is reached through ONE code literal: Character_GetSpriteId (0x08009324) loads 0x083B4E90
+        // (= table + 7 words, because ids 1-6 are the party) from file offset 0x959C and indexes it with no bounds check. Moving the table only
+        // needs that literal patched, so it can be relocated to make room for new sprite ids (HIGH: it is the only word in the ROM near the table).
+        public const int IndexLiteral = 0x959C, IndexCapacity = 256;
+
+        /// <summary>File offset of sprite id 0's entry in the (possibly relocated) sprite index table.</summary>
+        public static int IndexAddress(ROM rom)
+        {
+            uint lit = BitConverter.ToUInt32(rom.ReadBytesAt(IndexLiteral, 4));
+            return IsRomPtr(lit, rom) ? (int)(lit & 0x00FFFFFF) - 7 * 4 : CharacterSpriteIndex;
+        }
+
+        public static bool IndexRelocated(ROM rom) => IndexAddress(rom) != CharacterSpriteIndex;
+
+        private static bool IsDescriptorPointer(ROM rom, uint v)
+        {
+            if (!IsRomPtr(v, rom) || (v & 3) != 0) return false;
+            var d = rom.ReadBytesAt((int)(v & 0x00FFFFFF), 12);
+            return Shapes.Any(t => t.W == d[2] && t.H == d[3]) && IsRomPtr(BitConverter.ToUInt32(d, 8), rom);
+        }
+
+        /// <summary>
+        /// How many bytes a sprite record really uses: the 0x4C-byte header plus as many 16-byte groups (Down/Up/Left/Right) as hold frame pointers.
+        /// A record is followed directly by its frame descriptors (or the next resource), so the first non-null word that is not a frame pointer ends it.
+        /// Records are NOT a fixed size: 7 groups is common, some run past 0x1A0 (sprite 61 has 22 groups). Fixed-size copies used to truncate those.
+        /// </summary>
+        public static int RecordExtent(ROM rom, int recordAddress)
+        {
+            int last = 0;
+            for (int k = FirstGroup; k < FirstGroup + 64 * GroupSize && recordAddress + k + 4 <= rom.Length; k += 4)
+            {
+                uint w = BitConverter.ToUInt32(rom.ReadBytesAt(recordAddress + k, 4));
+                if (w == 0) continue;
+                if (!IsDescriptorPointer(rom, w)) break;
+                last = k;
+            }
+            int groups = last == 0 ? 0 : (last + 4 - FirstGroup + GroupSize - 1) / GroupSize;
+            return FirstGroup + groups * GroupSize;
+        }
+
+        /// <summary>Bytes a record needs when copied or edited: at least <see cref="RecordCopySize"/> (so ability blocks like +364 exist) or its real extent.</summary>
+        public static int RecordLimit(ROM rom, int recordAddress) => Math.Max(RecordCopySize, RecordExtent(rom, recordAddress));
+
+        /// <summary>The groups of a sprite that can hold frames (the ones "Dump all sprites" walks and the Sprite editor offers). 0 when it has no record.</summary>
+        public static int GroupsIn(ROM rom, int spriteId)
+        {
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
+            return IsRomPtr(ptr, rom) ? (RecordLimit(rom, (int)(ptr & 0x00FFFFFF)) - FirstGroup) / GroupSize : 0;
+        }
+
+        /// <summary>
+        /// Makes a NEW sprite id whose record is a copy of <paramref name="sourceId"/>'s (its frames are shared until edited; the Sprite editor copies a
+        /// record before writing to it, so editing the clone never touches the original). The index table is relocated on first use to hold
+        /// <see cref="IndexCapacity"/> ids. Returns the new id, which a display row can use as its sprite id.
+        /// </summary>
+        public static int CloneSprite(ROM rom, int sourceId)
+        {
+            uint src = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + sourceId * 4, 4));
+            if (!IsRomPtr(src, rom)) throw new InvalidOperationException($"Sprite {sourceId} has no record to copy.");
+            if (!IndexRelocated(rom))
+            {
+                var table = new byte[IndexCapacity * 4];
+                rom.ReadBytesAt(CharacterSpriteIndex, 157 * 4).CopyTo(table, 0);      // ids 0..156 are the real entries; what follows is other data
+                int at = rom.AllocateFreeSpace(table.Length);
+                rom.WriteBytesAt(at, table);
+                rom.PatchInt32(IndexLiteral, (int)(0x08000000u | (uint)(at + 7 * 4)));
+            }
+            int index = IndexAddress(rom);
+            int newId = -1;
+            for (int id = 157; id < IndexCapacity; id++)
+                if (BitConverter.ToUInt32(rom.ReadBytesAt(index + id * 4, 4)) == 0) { newId = id; break; }
+            if (newId < 0) throw new InvalidOperationException("The sprite index table is full.");
+            int size = RecordLimit(rom, (int)(src & 0x00FFFFFF));
+            var record = rom.ReadBytesAt((int)(src & 0x00FFFFFF), size);
+            int copy = rom.AllocateFreeSpace(size);
+            rom.WriteBytesAt(copy, record);
+            rom.WriteBytesAt(index + newId * 4, BitConverter.GetBytes(0x08000000u | (uint)copy));
+            return newId;
+        }
+
         public sealed record Converted(int Width, int Height, byte[] Indices, string Report);
 
         /// <summary>Reads a PNG (indexed: indices used as-is; otherwise: exact/nearest match to the OBJ palette, alpha &lt; 128 = 0).</summary>
@@ -236,7 +316,7 @@ namespace DrGero.Engine
         /// <summary>True when the sprite id has a record with at least one valid frame pointer in its frame run.</summary>
         public static bool HasRecord(ROM rom, int spriteId)
         {
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(CharacterSpriteIndex + spriteId * 4, 4));
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
             if (!IsRomPtr(ptr, rom)) return false;
             int rec = (int)(ptr & 0x00FFFFFF);
             for (int k = FirstGroup; k < FirstGroup + 12 * 4; k += 4)
@@ -249,7 +329,7 @@ namespace DrGero.Engine
             return false;
         }
 
-        private static bool IsRomPtr(uint v, ROM r) => v is >= 0x08000000 and < 0x0A000000 && (int)(v & 0x00FFFFFF) + 12 <= r.Length;
+        public static bool IsRomPtr(uint v, ROM r) => v is >= 0x08000000 and < 0x0A000000 && (int)(v & 0x00FFFFFF) + 12 <= r.Length;
 
         /// <summary>
         /// Copies a sprite's record to free space (0x1A0 bytes), zeroes any frame-pointer word that isn't null or a sane descriptor (past the
@@ -257,10 +337,11 @@ namespace DrGero.Engine
         /// </summary>
         public static int RelocateRecord(ROM rom, int spriteId)
         {
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(CharacterSpriteIndex + spriteId * 4, 4));
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
             if (!IsRomPtr(ptr, rom)) throw new InvalidOperationException($"Sprite {spriteId} has no record.");
-            var rec = rom.ReadBytesAt((int)(ptr & 0x00FFFFFF), RecordCopySize);
-            for (int k = 0x4C; k + 4 <= RecordCopySize; k += 4)
+            int size = RecordLimit(rom, (int)(ptr & 0x00FFFFFF));
+            var rec = rom.ReadBytesAt((int)(ptr & 0x00FFFFFF), size);
+            for (int k = 0x4C; k + 4 <= size; k += 4)
             {
                 uint w = BitConverter.ToUInt32(rec, k);
                 bool keep = w == 0;
@@ -271,9 +352,9 @@ namespace DrGero.Engine
                 }
                 if (!keep) BitConverter.GetBytes(0u).CopyTo(rec, k);
             }
-            int addr = rom.AllocateFreeSpace(RecordCopySize);
+            int addr = rom.AllocateFreeSpace(size);
             rom.WriteBytesAt(addr, rec);
-            rom.WriteBytesAt(CharacterSpriteIndex + spriteId * 4, BitConverter.GetBytes(0x08000000u | (uint)addr));
+            rom.WriteBytesAt(IndexAddress(rom) + spriteId * 4, BitConverter.GetBytes(0x08000000u | (uint)addr));
             return addr;
         }
 
@@ -282,11 +363,13 @@ namespace DrGero.Engine
         /// <paramref name="mirrorSlotOffset"/> is given, that slot gets an X-FLIPPED descriptor sharing the same tile data -- exactly how stock
         /// frames make "right" from "left" (attr1 bit 12; x offset mirrored to 16 - width - x).
         /// </summary>
-        public static void WriteFrame(ROM rom, int spriteId, int slotOffset, Converted c, sbyte xOffset, sbyte yOffset, int mirrorSlotOffset = -1)
+        public static void WriteFrame(ROM rom, int spriteId, int slotOffset, Converted c, sbyte xOffset, sbyte yOffset, int mirrorSlotOffset = -1, int frame = -1)
         {
+            uint checkPtr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
+            int limit = IsRomPtr(checkPtr, rom) ? RecordLimit(rom, (int)(checkPtr & 0x00FFFFFF)) : RecordCopySize;
             foreach (int so in new[] { slotOffset, mirrorSlotOffset })
-                if (so != -1 && (so < 0x4C || so + 4 > RecordCopySize || so % 4 != 0)) throw new ArgumentOutOfRangeException(nameof(slotOffset));
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(CharacterSpriteIndex + spriteId * 4, 4));
+                if (so != -1 && (so < 0x4C || so + 4 > limit || so % 4 != 0)) throw new ArgumentOutOfRangeException(nameof(slotOffset));
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
             if (!IsRomPtr(ptr, rom)) throw new InvalidOperationException($"Sprite {spriteId} has no record.");
             int rec = (int)(ptr & 0x00FFFFFF);
 
@@ -294,13 +377,13 @@ namespace DrGero.Engine
             int blobAddr = rom.AllocateFreeSpace(blob.Length);
             rom.WriteBytesAt(blobAddr, blob);
             var desc = ToDescriptor(c, xOffset, yOffset, 0x08000000u | (uint)blobAddr);
-            WriteFrameArray(rom, rec + slotOffset, desc, rec);
+            WriteFrameArray(rom, rec + slotOffset, desc, rec, frame);
 
             if (mirrorSlotOffset != -1)
             {
                 var d = ToDescriptor(c, (sbyte)(16 - c.Width - xOffset), yOffset, 0x08000000u | (uint)blobAddr);
                 d[7] |= 0x10; // attr1 bit 12 = horizontal flip
-                WriteFrameArray(rom, rec + mirrorSlotOffset, d, rec);
+                WriteFrameArray(rom, rec + mirrorSlotOffset, d, rec, frame);
             }
         }
 
@@ -312,28 +395,22 @@ namespace DrGero.Engine
         /// (crash / never returns to idle). So the replacement array has as many descriptors as the stock one. If every stock frame is the same
         /// (a static pose, like ki blast) all of them become the new image; otherwise only frame 0 is replaced and the other frames stay stock.
         /// </summary>
-        private static void WriteFrameArray(ROM rom, int slotAddress, byte[] newDescriptor, int recordAddress)
+        private static void WriteFrameArray(ROM rom, int slotAddress, byte[] newDescriptor, int recordAddress, int frame = -1)
         {
-            uint old = BitConverter.ToUInt32(rom.ReadBytesAt(slotAddress, 4));
-            var stock = new List<byte[]>();
-            if (IsRomPtr(old, rom) && (old & 3) == 0)
+            if (frame >= 0)
             {
-                int at = (int)(old & 0x00FFFFFF);
-                // Stock arrays are packed back to back, so a valid-looking run can spill into the NEXT slot's array: stop at the nearest
-                // higher slot pointer in the same record.
-                int limit = MaxFrames;
-                for (int k = FirstGroup; k + 4 <= RecordCopySize; k += 4)
-                {
-                    uint other = BitConverter.ToUInt32(rom.ReadBytesAt(recordAddress + k, 4));
-                    if (IsRomPtr(other, rom) && (int)(other & 0x00FFFFFF) > at) limit = Math.Min(limit, ((int)(other & 0x00FFFFFF) - at) / 12);
-                }
-                for (int i = 0; i < limit && at + 12 * (i + 1) <= rom.Length; i++)
-                {
-                    var d = rom.ReadBytesAt(at + 12 * i, 12);
-                    if (!Shapes.Any(t => t.W == d[2] && t.H == d[3]) || !IsRomPtr(BitConverter.ToUInt32(d, 8), rom)) break;
-                    stock.Add(d);
-                }
+                // Replace ONLY animation frame `frame` of this slot; every other frame keeps its own picture.
+                var existing = ReadStockArray(rom, recordAddress, BitConverter.ToUInt32(rom.ReadBytesAt(slotAddress, 4)));
+                if (frame >= existing.Count) throw new InvalidOperationException($"This slot has {existing.Count} frame(s); frame {frame} does not exist.");
+                var whole = new byte[12 * existing.Count];
+                for (int i = 0; i < existing.Count; i++) (i == frame ? newDescriptor : existing[i]).CopyTo(whole, 12 * i);
+                int where = rom.AllocateFreeSpace(whole.Length);
+                rom.WriteBytesAt(where, whole);
+                rom.WriteBytesAt(slotAddress, BitConverter.GetBytes(0x08000000u | (uint)where));
+                return;
             }
+            uint old = BitConverter.ToUInt32(rom.ReadBytesAt(slotAddress, 4));
+            var stock = ReadStockArray(rom, recordAddress, old);
             int n = stock.Count == 0 ? 4 : stock.Count; // an empty slot: 4 frames covers every index the animations use (0-3)
             bool allSame = stock.Count == 0 || stock.All(d => d.AsSpan().SequenceEqual(stock[0]));
             var array = new byte[12 * n];
@@ -343,22 +420,79 @@ namespace DrGero.Engine
             rom.WriteBytesAt(slotAddress, BitConverter.GetBytes(0x08000000u | (uint)addr));
         }
 
+        /// <summary>
+        /// The descriptors of the array a record slot points at (its animation frames). Stock arrays are packed back to back, so a valid-looking
+        /// run can spill into the NEXT slot's array: it stops at the nearest higher slot pointer in the same record.
+        /// </summary>
+        public static List<byte[]> ReadStockArray(ROM rom, int recordAddress, uint slotPointer)
+        {
+            var stock = new List<byte[]>();
+            if (!IsRomPtr(slotPointer, rom) || (slotPointer & 3) != 0) return stock;
+            int at = (int)(slotPointer & 0x00FFFFFF), limit = MaxFrames;
+            for (int k = FirstGroup; k + 4 <= RecordLimit(rom, recordAddress); k += 4)
+            {
+                uint other = BitConverter.ToUInt32(rom.ReadBytesAt(recordAddress + k, 4));
+                if (IsRomPtr(other, rom) && (int)(other & 0x00FFFFFF) > at) limit = Math.Min(limit, ((int)(other & 0x00FFFFFF) - at) / 12);
+            }
+            for (int i = 0; i < limit && at + 12 * (i + 1) <= rom.Length; i++)
+            {
+                var d = rom.ReadBytesAt(at + 12 * i, 12);
+                if (!Shapes.Any(t => t.W == d[2] && t.H == d[3]) || !IsRomPtr(BitConverter.ToUInt32(d, 8), rom)) break;
+                stock.Add(d);
+            }
+            return stock;
+        }
+
+        /// <summary>
+        /// Points record slot <paramref name="slotOffset"/> at a NEW array with exactly these frames (each with its own blob and offsets), one
+        /// descriptor per animation frame. Used by the sprite-folder import; nothing of the stock frames is kept.
+        /// </summary>
+        public static void WriteFrameSequence(ROM rom, int spriteId, int slotOffset, IReadOnlyList<(Converted C, sbyte X, sbyte Y)> frames)
+        {
+            if (frames.Count == 0) throw new InvalidOperationException("A slot needs at least one frame.");
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
+            if (!IsRomPtr(ptr, rom)) throw new InvalidOperationException($"Sprite {spriteId} has no record.");
+            int rec = (int)(ptr & 0x00FFFFFF);
+            if (slotOffset < 0x4C || slotOffset + 4 > RecordLimit(rom, rec) || slotOffset % 4 != 0) throw new ArgumentOutOfRangeException(nameof(slotOffset));
+            var array = new byte[12 * frames.Count];
+            for (int i = 0; i < frames.Count; i++)
+            {
+                var (c, x, y) = frames[i];
+                var blob = ToBlob(c);
+                int blobAddr = rom.AllocateFreeSpace(blob.Length);
+                rom.WriteBytesAt(blobAddr, blob);
+                ToDescriptor(c, x, y, 0x08000000u | (uint)blobAddr).CopyTo(array, 12 * i);
+            }
+            int addr = rom.AllocateFreeSpace(array.Length);
+            rom.WriteBytesAt(addr, array);
+            rom.WriteBytesAt(rec + slotOffset, BitConverter.GetBytes(0x08000000u | (uint)addr));
+        }
+
         private const int MaxFrames = 8;
 
         /// <summary>Slot layout of a 4-frame group: 0 = down, 1 = up, 2 = left, 3 = right (stock: an X-flipped copy of 2). Confirmed on sprites 57 and 60.</summary>
         public static readonly string[] SlotNames = ["Down", "Up", "Left", "Right"];
-        public const int FirstGroup = 0x4C, GroupSize = 16, GroupCount = 20; // groups at 0x4C + 16n, n = 0..19 (0x9C = 5, 0x16C = 18, 0x17C = 19); Goku's record has 3 more frames after that
+        public const int FirstGroup = 0x4C, GroupSize = 16, GroupCount = 21; // the base record (0x1A0 bytes) has groups at 0x4C + 16n, n = 0..20; a sprite can have more, see GroupsIn (0x9C = 5, 0x16C = 18, 0x17C = 19); Goku's record has 3 more frames after that
 
         /// <summary>The frame at a slot, drawn with the OBJ palette (index 0 transparent) and X-flip applied; null if the slot is empty/invalid.</summary>
-        public static Bitmap? RenderSlot(ROM rom, int spriteId, int slotOffset)
+        public static int SlotFrameCount(ROM rom, int spriteId, int slotOffset)
+        {
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
+            if (!IsRomPtr(ptr, rom)) return 0;
+            int rec = (int)(ptr & 0x00FFFFFF);
+            return ReadStockArray(rom, rec, BitConverter.ToUInt32(rom.ReadBytesAt(rec + slotOffset, 4))).Count;
+        }
+
+        public static Bitmap? RenderSlot(ROM rom, int spriteId, int slotOffset, int frame = 0)
         {
             try
             {
-                uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(CharacterSpriteIndex + spriteId * 4, 4));
+                uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
                 if (!IsRomPtr(ptr, rom)) return null;
-                uint fp = BitConverter.ToUInt32(rom.ReadBytesAt((int)(ptr & 0x00FFFFFF) + slotOffset, 4));
-                if (!IsRomPtr(fp, rom)) return null;
-                var d = rom.ReadBytesAt((int)(fp & 0x00FFFFFF), 12);
+                int recAddr = (int)(ptr & 0x00FFFFFF);
+                var stock = ReadStockArray(rom, recAddr, BitConverter.ToUInt32(rom.ReadBytesAt(recAddr + slotOffset, 4)));
+                if (frame < 0 || frame >= stock.Count) return null;
+                var d = stock[frame];
                 int w = d[2], h = d[3];
                 if (w == 0 || h == 0 || w % 8 != 0 || h % 8 != 0) return null;
                 var tiles = Rendering.JCALG1.Decompress(rom, (int)(BitConverter.ToUInt32(d, 8) & 0x00FFFFFF));
@@ -383,11 +517,11 @@ namespace DrGero.Engine
         public static string Inspect(ROM rom, int spriteId)
         {
             var sb = new System.Text.StringBuilder();
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(CharacterSpriteIndex + spriteId * 4, 4));
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
             if (!IsRomPtr(ptr, rom)) return $"Sprite {spriteId} has no record.";
             int rec = (int)(ptr & 0x00FFFFFF);
             sb.AppendLine($"Sprite {spriteId}: record at file 0x{rec:X}.");
-            for (int n = 0; n < GroupCount; n++)
+            for (int n = 0; n < GroupsIn(rom, spriteId); n++)
             {
                 int off = FirstGroup + n * GroupSize;
                 var parts = new List<string>();

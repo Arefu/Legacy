@@ -1,5 +1,5 @@
-// WORK STATUS (2026-09-20): renderer written and smoke-tested (durations match rows*speed*tick, levels sane, all 44 songs render in ~0.5 s).
-// Not yet compared with real hardware/emulator output. Open questions: effect 27, exact envelope/slide parameter ranges (see Audio-Notes.md).
+// STATUS (2026-09-20): complete for the effects the songs use (1, 4-8, 15, 17, 20, 24, 27). Effects 11, 12 and 21 are not used by any song and are
+// played as plain notes. Not compared with real hardware output (see Audio-Notes.md).
 using DrGero.IO;
 
 namespace DrGero.Engine
@@ -31,7 +31,7 @@ namespace DrGero.Engine
 
         private const int NoteTable = 0x7FC93C, VibratoDownTable = 0x7FCB9C, VibratoUpTable = 0x7FCC1C, PitchBendUpTable = 0x7FCE1C, PitchBendDownTable = 0x7FCE9C, SineTable = 0x7FD09C;
 
-        private enum Handler { None, Attack, DecayStop, SlideDown, SlideUp, PortamentoDown, PortamentoUp, Vibrato, Retrigger }
+        private enum Handler { None, Attack, DecayStop, SlideDown, SlideUp, PortamentoDown, PortamentoUp, Vibrato, Retrigger, NoteDelay }
 
         private sealed class Voice
         {
@@ -100,7 +100,7 @@ namespace DrGero.Engine
                     }
                     for (int c = 1; c <= 15; c++) v[c].Flags = 0;
                     foreach (var e in pattern!.Rows[row]) ApplyEvent(v[e.Channel], e);
-                    for (int c = 1; c <= 15; c++) RunChannelEffect(ctx, v[c], ref tickLen);
+                    for (int c = 1; c <= 15; c++) RunChannelEffect(ctx, v[c], ref tickLen, ref speed);
                     tickCounter = speed;
                 }
                 else
@@ -125,7 +125,7 @@ namespace DrGero.Engine
         }
 
         // ---- Sequencer_RunChannelEffect ---------------------------------------------------------------------------
-        private static void RunChannelEffect(Ctx x, Voice c, ref int tickLen)
+        private static void RunChannelEffect(Ctx x, Voice c, ref int tickLen, ref int speed)
         {
             c.State = (c.State >> 2) << 2;                  // handler bits cleared on every new row
             if ((c.State & 4) != 0 && c.FreqCur != c.FreqBase) { c.FreqCur = c.FreqBase; c.Pending |= 2; }
@@ -133,6 +133,8 @@ namespace DrGero.Engine
             int effect = (c.Flags & 0x88) == 0 ? 0 : c.Effect;
             switch (effect)
             {
+                // Effect 1 stores its param in MusicChannel+3 (g_LastNoteChannel in the old IDA name) = ticks per row: it is SET SPEED (params 3-7 in the ROM).
+                case 1: NoteOn(x, c); speed = Math.Max(1, c.Param); break;
                 case 4: NoteOn(x, c); Envelope(c); break;
                 case 5: NoteOn(x, c); SlideSetup(x, c, down: true); break;
                 case 6: NoteOn(x, c); SlideSetup(x, c, down: false); break;
@@ -142,6 +144,9 @@ namespace DrGero.Engine
                 case 17: NoteOn(x, c); if (c.Param != 0) c.Retrig = c.Param; c.Handler = Handler.Retrigger; c.RetrigCounter = c.Retrig & 0xF; c.State = ((c.State >> 2) << 2) + 2; break;
                 case 20: NoteOn(x, c); if (c.Param > 0) tickLen = TickNumerator / c.Param; break;
                 case 24: NoteOn(x, c); c.Pan = (sbyte)c.Param; c.Pending |= 0x10; break;
+                // Effect 27 = NOTE DELAY (Audio_Fx27_NoteDelay 0x0802054C): the note is NOT triggered now; RetrigCounter = param and the per-tick
+                // handler calls NoteOn when it reaches 0 (handler mode 2 = always runs).
+                case 27: c.RetrigCounter = c.Param; c.Handler = Handler.NoteDelay; c.State = ((c.State >> 2) << 2) + 2; break;
                 default: NoteOn(x, c); break;
             }
         }
@@ -267,6 +272,9 @@ namespace DrGero.Engine
                     int m = c.VibDepth * x.Sine[c.VibPhase] >> 6;
                     c.FreqCur = (int)(m >= 0 ? (long)c.FreqBase * x.VibDown[m] >> 15 : (long)c.FreqBase * x.Up[-m] >> 16);
                     c.Pending |= 2;
+                    break;
+                case Handler.NoteDelay:
+                    if (--c.RetrigCounter == 0) NoteOn(x, c);
                     break;
                 case Handler.Retrigger:
                     if (--c.RetrigCounter == 0) { c.Pending |= 5; c.RetrigCounter = c.Retrig & 0xF; c.State |= 4; }
