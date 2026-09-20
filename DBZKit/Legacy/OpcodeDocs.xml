@@ -75,11 +75,11 @@
       <param name="percent">Chance out of 100 (or similar scale — not fully confirmed).</param>
     </member>
     <member name="StackTestStoryFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_StackTestStoryFlag" index="19">
-      <summary>RENAMED 2026-09-19 (was StackTestQuestFlag). Pops a flag id and pushes whether that global story flag is set — this is the mechanism the in-game Quest Log actually reads. Pushes a boolean onto the VM stack.</summary>
+      <summary>RENAMED 2026-09-19 (was StackTestQuestFlag). Pushes a boolean onto the VM stack.</summary>
       <param name="flagId">Story flag id.</param>
     </member>
     <member name="StackTestStoryFlagNot" arity="1" confidence="confirmed" originalName="BytecodeVM_StackTestStoryFlagNot" index="20">
-      <summary>RENAMED 2026-09-19 (was StackTestQuestFlagNot). Pops a flag id and pushes whether that global story flag is not set — the negated sibling of StackTestStoryFlag, saving a separate StackNot (0x05) instruction in common scripts. Pushes a boolean (inverted) onto the VM stack.</summary>
+      <summary>RENAMED 2026-09-19 (was StackTestQuestFlagNot). Pushes a boolean (inverted) onto the VM stack.</summary>
       <param name="flagId">Story flag id.</param>
     </member>
     <member name="StackGetItemCount" arity="1" confidence="confirmed" originalName="BytecodeVM_StackGetItemCount" index="21">
@@ -91,7 +91,7 @@
       <param name="charIdx">Character roster index.</param>
     </member>
     <member name="StackTestPartyMemberFlag" arity="2" confidence="confirmed" originalName="BytecodeVM_StackTestPartyMemberFlag" index="23">
-      <summary>CONFIRMED 2026-09-19. Pops two values in push order and calls PartyState_TestMemberFlag(&amp;g_PartyState, a, b), pushing the result. No separate category selector -- brute-force scans all 68 entries of g_PartyMemberFlagCategories for a descriptor matching (a, b). Unrelated to StackTestStoryFlag (opcode 19), a different storage entirely. Pushes a boolean onto the VM stack.</summary>
+      <summary>CONFIRMED 2026-09-19 (disasm of 0x8009628): pops two values in push order (a pushed first, b pushed last) and calls PartyState_TestMemberFlag(&amp;g_PartyState, a, b), pushing the result. Pushes a boolean onto the VM stack.</summary>
       <param name="a">First key part, pushed first (deeper on the stack).</param>
       <param name="b">Second key part, pushed last (top of stack).</param>
     </member>
@@ -108,11 +108,11 @@
       <param name="itemId">Item id to grant.</param>
     </member>
     <member name="SetStoryFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_SetStoryFlag" index="27">
-      <summary>RENAMED 2026-09-19 (was StackSetPartyFlag — the old name wrongly implied a link to the unrelated party-member-flag system). Pops a value and calls BytecodeVM_SetFlag_Raw(&amp;g_PartyState, val) — sets a global story flag, the same one StackTestStoryFlag reads. This is the real "advance a quest" opcode.</summary>
+      <summary>RENAMED 2026-09-19 (was StackSetPartyFlag -- the old name wrongly implied a link to the unrelated &quot;party member flag&quot; system).</summary>
       <param name="flagId">Story flag id, popped from the stack.</param>
     </member>
     <member name="ClearStoryFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_ClearStoryFlag" index="28">
-      <summary>RENAMED 2026-09-19 (was StackClearPartyFlag). Pops a value and calls BytecodeVM_ClearFlag_Raw(&amp;g_PartyState, val) — clears a global story flag.</summary>
+      <summary>RENAMED 2026-09-19 (was StackClearPartyFlag).</summary>
       <param name="flagId">Story flag id, popped from the stack.</param>
     </member>
     <member name="FindCharacterEntity" arity="1" confidence="confirmed" originalName="BytecodeVM_FindCharacterEntity" index="29">
@@ -123,11 +123,11 @@
       <summary>Finds the first map entity of a given type. Pushes a handle to the first matching entity onto the VM stack.</summary>
       <param name="type">Entity type id.</param>
     </member>
-    <member name="sub_800977A" arity="3" confidence="low" index="31">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3 values, packs two of them into a small struct, builds a UI object via sub_800DF1C, then blocks with GameLoop_ExecuteAndWait — i.e.</summary>
-      <param name="a">Not confirmed.</param>
-      <param name="b">Not confirmed — packed with a into a 2-word struct passed to the prompt builder.</param>
-      <param name="msgOrId">Popped last; passed as the &quot;message&quot; argument.</param>
+    <member name="PanCameraToPosition" arity="3" confidence="confirmed" index="31">
+      <summary>Pans the camera so the top-left of the viewport reaches (x, y), blocking the script until the pan finishes.</summary>
+      <param name="x">X of the top-left of the viewport, in world pixels (not the centre; the viewport is 240x160). To centre on world point wx pass wx-120.</param>
+      <param name="y">Y of the top-left of the viewport, in world pixels. To centre on world point wy pass wy-80.</param>
+      <param name="speed">Pan speed. Larger is faster.</param>
     </member>
     <member name="CenterCameraOnChar" arity="1" confidence="confirmed" originalName="BytecodeVM_CenterCameraOnChar" index="32">
       <summary>Pops a character index and centers the camera on that character&apos;s entity.</summary>
@@ -188,11 +188,11 @@
       <summary>Fades the screen to white over the given number of frames — used for the level-up transition in the real ROM example below.</summary>
       <param name="frames">Duration of the fade, in frames.</param>
     </member>
-    <member name="sub_8009B94" arity="1" confidence="low" index="43">
+    <member name="WhiteFadeOut" arity="1" confidence="low" index="43">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 1 value, allocates a 12-byte async command object with vtable 0x802545C, and blocks via GameLoop_ExecuteAndWait.</summary>
       <param name="param">Single popped value, stored into the command object and passed to its vtable.</param>
     </member>
-    <member name="sub_8009BBC" arity="1" confidence="low" index="44">
+    <member name="WhiteFlash" arity="1" confidence="low" index="44">
       <summary>[Low confidence] LOW CONFIDENCE. Identical shape to sub_8009B94, vtable 0x8024778 instead.</summary>
       <param name="param">Single popped value.</param>
     </member>
@@ -224,13 +224,13 @@
       <param name="entityHandle">Entity handle.</param>
     </member>
     <member name="WalkToPosition" arity="3" confidence="confirmed" originalName="BytecodeVM_WalkToPosition" index="53">
-      <summary>Walks an entity toward a specific position (ground pathing) -- CONFIRMED 2026-09 (user), distinct from FlyToPosition's direct/airborne move. Resolves an entity by character index, builds a move-command via sub_8026620, and enqueues it.</summary>
+      <summary>CONFIRMED 2026-09 (user): walks an entity toward a specific position (ground pathing), distinct from opcode 54 (FlyToPosition, direct/airborne move).</summary>
       <param name="charIdx">Popped last — the entity to command, resolved via Entity_GetByCharIndex.</param>
       <param name="y">Popped second.</param>
       <param name="x">Popped first.</param>
     </member>
     <member name="FlyToPosition" arity="3" confidence="confirmed" originalName="BytecodeVM_FlyToPosition" index="54">
-      <summary>Flies an entity directly to a specific position -- CONFIRMED 2026-09 (user), distinct from WalkToPosition's ground pathing. Renamed from MoveEntityToPosition.</summary>
+      <summary>CONFIRMED 2026-09 (user): flies an entity directly to a specific position, distinct from opcode 53 (WalkToPosition, ground pathing).</summary>
       <param name="charIdx">Entity to move.</param>
       <param name="x">Target X.</param>
       <param name="y">Target Y.</param>
@@ -246,11 +246,11 @@
       <param name="targetIdx">Entity to follow.</param>
     </member>
     <member name="SetEntityAnimation" arity="2" confidence="confirmed" originalName="BytecodeVM_SetEntityAnimation" index="57">
-      <summary>Sets an entity&apos;s current animation.</summary>
-      <param name="charIdx">Entity to animate.</param>
+      <summary>Sets an entity&apos;s current animation and holds that entity&apos;s command queue until the animation has finished.</summary>
+      <param name="charIdx">Entity to animate. Must exist on the current map.</param>
       <param name="animId">Animation id.</param>
     </member>
-    <member name="sub_800A044" arity="2" confidence="low" index="58">
+    <member name="EntityWaitFrames" arity="2" confidence="low" index="58">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 2, builds an entity command with vtable unk_8024878 and one payload word, enqueues it.</summary>
       <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
       <param name="value">Popped first — single payload word.</param>
@@ -258,14 +258,14 @@
     <member name="Deprecated_CharacterSpecialAttack" arity="0" confidence="confirmed" originalName="BytecodeVM_Deprecated_CharacterSpecialAttack" index="59">
       <summary>Marked deprecated by the original developers&apos; own naming convention pattern (Deprecated_ prefix already present pre-analysis) — likely dead code from an earlier build.</summary>
     </member>
-    <member name="sub_800A09A" arity="1" confidence="low" index="60">
+    <member name="EntityWaitTouchPlayer" arity="1" confidence="low" index="60">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 1, builds an entity command with vtable unk_8025258 and no payload word, enqueues it.</summary>
       <param name="charIdx">Popped — resolved via Entity_GetByCharIndex.</param>
     </member>
     <member name="Deprecated_CharacterFollow" arity="0" confidence="confirmed" originalName="BytecodeVM_Deprecated_CharacterFollow" index="61">
       <summary>Marked deprecated — superseded by SetEntityFollow.</summary>
     </member>
-    <member name="sub_800A44E" arity="3" confidence="low" index="62">
+    <member name="SetEntityPositionInstant" arity="3" confidence="low" index="62">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 3, builds an entity command with vtable unk_8024DE4 and 2 payload words, enqueues it.</summary>
       <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
       <param name="b">Popped second.</param>
@@ -288,10 +288,10 @@
     <member name="Deprecated_ShowImage" arity="0" confidence="confirmed" originalName="BytecodeVM_Deprecated_ShowImage" index="66">
       <summary>Marked deprecated.</summary>
     </member>
-    <member name="sub_800A622" arity="0" confidence="low" index="67">
+    <member name="WaitForConfirmButton" arity="0" confidence="low" index="67">
       <summary>[Low confidence] LOW CONFIDENCE. No arguments.</summary>
     </member>
-    <member name="sub_800A638" arity="1" confidence="low" index="68">
+    <member name="WaitFramesSimple" arity="1" confidence="low" index="68">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 1, builds a command with vtable unk_8023D2C and blocks via GameLoop_ExecuteAndWait.</summary>
       <param name="param">Popped — passed as a payload word to the command object.</param>
     </member>
@@ -305,10 +305,10 @@
     </member>
     <member name="SetCollisionRect" arity="4" confidence="medium" originalName="BytecodeVM_SetCollisionRect" index="71">
       <summary>Sets a collision rectangle (blocking region) on the current map.</summary>
-      <param name="x">Rect X.</param>
-      <param name="y">Rect Y.</param>
-      <param name="w">Rect width.</param>
-      <param name="h">Rect height.</param>
+      <param name="x1">Left edge of the rectangle, in world pixels.</param>
+      <param name="y1">Top edge, in world pixels.</param>
+      <param name="x2">Right edge, in world pixels.</param>
+      <param name="y2">Bottom edge, in world pixels.</param>
     </member>
     <member name="ClearCollisionRect" arity="0" confidence="medium" originalName="BytecodeVM_ClearCollisionRect" index="72">
       <summary>Clears a previously set collision rectangle.</summary>
@@ -333,7 +333,7 @@
       <param name="itemId">Item id.</param>
       <param name="count">Number to remove.</param>
     </member>
-    <member name="sub_8009688" arity="2" confidence="low" index="78">
+    <member name="SetBgLayerPriority" arity="2" confidence="low" index="78">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 2 and calls sub_80062C0(g_MapRenderer, a, b) — a map-renderer parameter setter.</summary>
       <param name="a">Popped first.</param>
       <param name="b">Popped second.</param>
@@ -363,9 +363,9 @@
       <summary>Fires a named map event by id — the general-purpose &quot;trigger something the map itself defines&quot; hook, separate from dialog-embedded scripts.</summary>
       <param name="eventId">Map event id.</param>
     </member>
-    <member name="FadeIn" arity="1" confidence="confirmed" originalName="BytecodeVM_FadeIn" index="85">
-      <summary>Fades the screen in from black over the given number of frames — pairs with FadeOut.</summary>
-      <param name="frames">Duration of the fade, in frames.</param>
+    <member name="DrawBossHealthBar" arity="1" confidence="medium" index="85">
+      <summary>Draws a boss health bar: it slides down into the top right of the screen and tracks the entity&apos;s current health (tested in-game).</summary>
+      <param name="charIdx">The sprite id of the boss (an enemy&apos;s spriteId; 0 is the player) whose health the bar shows. It must be on the map. An id with no matching entity gives an empty bar.</param>
     </member>
     <member name="SetPlayerVisible" arity="1" confidence="confirmed" originalName="BytecodeVM_SetPlayerVisible" index="86">
       <summary>Shows or hides the player&apos;s sprite without despawning the entity (e.g.</summary>
@@ -377,66 +377,66 @@
       <param name="x">Spawn X.</param>
       <param name="y">Spawn Y.</param>
     </member>
-    <member name="sub_800AC00" arity="0" confidence="low" index="88">
-      <summary>[Low confidence] LOW CONFIDENCE. No arguments. Pushes a handle to the player entity (hypothesis) onto the VM stack.</summary>
+    <member name="FindPlayerEntity" arity="0" confidence="medium" index="88">
+      <summary>Looks up the player entity (entity kind 16) in the entity list.</summary>
     </member>
-    <member name="sub_8009D94" arity="4" confidence="low" index="89">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 4 values (resolving two of them as character indices via Entity_GetByCharIndex), builds a command via sub_801094C, and enqueues it.</summary>
-      <param name="charA">Popped first.</param>
-      <param name="charB">Popped second.</param>
-      <param name="p1">Popped third.</param>
-      <param name="p2">Popped fourth (last).</param>
+    <member name="WalkByOffset" arity="4" confidence="confirmed" index="89">
+      <summary>Makes an entity walk a distance from where it currently stands, with its walk animation (tested in-game: WalkByOffset(54, 0, 0, 100) walks 100 pixels down and (7, 0, 100, 0) walks 100 pixels right).</summary>
+      <param name="charIdx">Must exist on the current map. The entity that walks.</param>
+      <param name="otherChar">Ignored. The game always passes 0; any value gives the same result (tested in-game).</param>
+      <param name="offX">Distance to walk sideways from where it stands, in pixels. Positive is right, negative is left.</param>
+      <param name="offY">Distance to walk vertically from where it stands, in pixels. Positive is down, negative is up.</param>
     </member>
-    <member name="sub_800AB44" arity="3" confidence="low" index="90">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3, builds an entity via sub_80104C0 (attached to the resolved character) and adds it to the entity list.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="b">Popped second.</param>
-      <param name="a">Popped first.</param>
+    <member name="DrawBossHealthBarRange" arity="3" confidence="medium" index="90">
+      <summary>Draws a boss health bar like DrawBossHealthBar, but the enemy only drains part of the bar.</summary>
+      <param name="charIdx">The sprite id of the boss (an enemy&apos;s spriteId; 0 is the player) whose health the bar shows. It must be on the map. An id with no matching entity gives an empty bar.</param>
+      <param name="minPercent">How full the bar is (0 to 100) when the enemy&apos;s health reaches 0. With 0 the bar empties completely; with 25 it stops a quarter full.</param>
+      <param name="maxPercent">How full the bar is (0 to 100) when the enemy is at full health. With 100 the bar starts completely full; with 50 it starts half full.</param>
     </member>
     <member name="ClearCharacterInPartyFlag" arity="1" confidence="confirmed" originalName="BytecodeVM_ClearCharacterInPartyFlag" index="91">
       <summary>Clears bit 0 of characters[charIdx].flags.</summary>
       <param name="charIdx">Character roster index.</param>
     </member>
-    <member name="sub_800A49A" arity="1" confidence="low" index="93">
+    <member name="EntityStopMovement" arity="1" confidence="low" index="93">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 1, builds an entity command with vtable 0x8024BF0 and both payload words zeroed.</summary>
       <param name="charIdx">Popped — resolved via Entity_GetByCharIndex.</param>
     </member>
-    <member name="sub_800A526" arity="3" confidence="low" index="94">
+    <member name="EntitySetVelocity" arity="3" confidence="low" index="94">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 3, builds an entity command with vtable 0x8024BF0 (same vtable as sub_800A49A) and 2 payload words.</summary>
       <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
       <param name="y">Popped second.</param>
       <param name="x">Popped first.</param>
     </member>
-    <member name="sub_800A572" arity="1" confidence="low" index="95">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 1, builds an entity command with vtable 0x8024DD0 and no payload.</summary>
-      <param name="charIdx">Popped — resolved via Entity_GetByCharIndex.</param>
+    <member name="PlayDamageEffect" arity="1" confidence="medium" index="95">
+      <summary>Plays the &quot;damage taken&quot; effect on a character: a short colour flash lasting 12 frames.</summary>
+      <param name="charIdx">Must exist on the current map. The character the effect is played on.</param>
     </member>
-    <member name="sub_800A158" arity="3" confidence="low" index="96">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3, resolves two entities by character index, builds a command with vtable 0x8025514 and the scaled duration as a payload word.</summary>
-      <param name="duration">Popped first — scaled by ×1966 (a frame/angle scaling constant seen again in opcode 99 and 142) before being stored.</param>
-      <param name="targetCharIdx">Popped second.</param>
-      <param name="charIdx">Popped third (last) — the entity to command.</param>
+    <member name="NPCFireKiBlastAtEntity" arity="3" confidence="medium" index="96">
+      <summary>Makes an NPC fire a ki blast at another character.</summary>
+      <param name="charIdx">The NPC firing the blast. Must exist on the current map.</param>
+      <param name="targetCharIdx">The character the blast is aimed at. Must exist on the current map.</param>
+      <param name="speed">Projectile speed. Larger is faster.</param>
     </member>
     <member name="ReturnToTitleScreen" arity="0" confidence="confirmed" originalName="BytecodeVM_ReturnToTitleScreen" index="97">
       <summary>No arguments.</summary>
     </member>
     <member name="SetCharacterLevel" arity="2" confidence="confirmed" originalName="BytecodeVM_SetCharacterLevel" index="98">
-      <summary>Directly sets a character&apos;s level (as opposed to AddEXP&apos;s gradual leveling). Only levels up, not down -- if level &lt;= current level, does nothing. Capped at 50.</summary>
+      <summary>Directly sets a character&apos;s level (as opposed to AddEXP&apos;s gradual leveling).</summary>
       <param name="charIdx">Character roster index.</param>
       <param name="level">New level.</param>
     </member>
-    <member name="sub_800A210" arity="4" confidence="low" index="99">
-      <summary>[Low confidence] LOW CONFIDENCE — the most complex unresolved opcode. Pops 4 values and builds a 32-byte command struct with fixed constants 32/64 alongside the ×1966-scaled duration.</summary>
-      <param name="p1">Popped first.</param>
-      <param name="p2">Popped second.</param>
-      <param name="duration">Popped third — scaled by ×1966, same constant as opcode 96/142.</param>
-      <param name="charIdx">Popped fourth (last) — the entity to command.</param>
+    <member name="NPCFireKiBlast" arity="4" confidence="confirmed" index="99">
+      <summary>Makes an NPC fire a ki blast toward (x, y).</summary>
+      <param name="charIdx">The NPC firing the blast. Must exist on the current map.</param>
+      <param name="x">Destination X.</param>
+      <param name="y">Destination Y.</param>
+      <param name="speed">Projectile speed. Larger is faster.</param>
     </member>
-    <member name="sub_800A4DA" arity="3" confidence="low" index="100">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3, builds an entity command with vtable 0x8025230 and 2 payload words.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="b">Popped second.</param>
-      <param name="a">Popped first.</param>
+    <member name="SpawnDustCloud" arity="3" confidence="confirmed" index="100">
+      <summary>Spawns a small dust-cloud effect at (x, y).</summary>
+      <param name="charIdx">Must exist on the current map.</param>
+      <param name="x">X position of the dust cloud.</param>
+      <param name="y">Y position of the dust cloud.</param>
     </member>
     <member name="sub_800AC5C" arity="2" confidence="low" index="101">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 2 (each adjusted by -1, suggesting 1-based tile coordinates from the map format), spawns an entity via sub_8012A68 against lookup table dword_83B5CA8.</summary>
@@ -491,10 +491,10 @@
       <param name="soundId">Sound effect id.</param>
       <param name="volume">Playback volume.</param>
     </member>
-    <member name="sub_800AE76" arity="2" confidence="low" index="112">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 2, builds an entity command with vtable 0x8025244 and 1 payload word.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="value">Popped first.</param>
+    <member name="PlaySFX" arity="2" confidence="medium" index="112">
+      <summary>Plays sound effect sfxId.</summary>
+      <param name="charIdx">Must exist on the current map. Selects the entity command queue the sound is queued on.</param>
+      <param name="sfxId">Index into the game&apos;s sound-effect table.</param>
     </member>
     <member name="EnableMenuAccess" arity="0" confidence="medium" originalName="BytecodeVM_EnableMenuAccess" index="113">
       <summary>No arguments.</summary>
@@ -509,19 +509,19 @@
     <member name="ResetNonActiveSprites" arity="0" confidence="medium" originalName="BytecodeVM_ResetNonActiveSprites" index="116">
       <summary>No arguments.</summary>
     </member>
-    <member name="sub_800A850" arity="4" confidence="low" index="117">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 4 raw values and calls sub_80063E0(args, unk_3001100, 1) — the literal 1 last argument is the only difference from sub_800A89E, which passes 0.</summary>
-      <param name="p1">Popped first.</param>
-      <param name="p2">Popped second.</param>
-      <param name="p3">Popped third.</param>
-      <param name="p4">Popped fourth (last).</param>
+    <member name="RemoveRectFromMask2" arity="4" confidence="medium" index="117">
+      <summary>Removes a rectangle from the map&apos;s second collision bitmap (&quot;mask 2&quot;), the one projectiles are checked against (the ki blast update routines destroy a projectile that hits it).</summary>
+      <param name="x1">Left edge of the rectangle, in world pixels.</param>
+      <param name="y1">Top edge, in world pixels.</param>
+      <param name="x2">Right edge, in world pixels.</param>
+      <param name="y2">Bottom edge, in world pixels.</param>
     </member>
-    <member name="sub_800A89E" arity="4" confidence="low" index="118">
-      <summary>[Low confidence] LOW CONFIDENCE. Identical to sub_800A850 except it calls sub_80063E0(args, unk_3001100, 0) — the 0 suggests this is the &quot;clear&quot; half of that set/clear pair.</summary>
-      <param name="p1">Popped first.</param>
-      <param name="p2">Popped second.</param>
-      <param name="p3">Popped third.</param>
-      <param name="p4">Popped fourth (last).</param>
+    <member name="AddRectToMask2" arity="4" confidence="medium" index="118">
+      <summary>Adds a rectangle to the map&apos;s second collision bitmap (&quot;mask 2&quot;), the one projectiles are checked against.</summary>
+      <param name="x1">Left edge of the rectangle, in world pixels.</param>
+      <param name="y1">Top edge, in world pixels.</param>
+      <param name="x2">Right edge, in world pixels.</param>
+      <param name="y2">Bottom edge, in world pixels.</param>
     </member>
     <member name="GetActiveEntityContext" arity="0" confidence="medium" originalName="BytecodeVM_GetActiveEntityContext" index="119">
       <summary>No arguments. Pushes a fixed context pointer (0x30020F4) onto the VM stack.</summary>
@@ -531,27 +531,27 @@
       <param name="y">Popped first, offset by +15.</param>
       <param name="x">Popped second, offset by +15.</param>
     </member>
-    <member name="sub_800A004" arity="2" confidence="low" index="121">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 2, builds an entity command with vtable unk_8025ED4 and 1 payload word.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="value">Popped first.</param>
+    <member name="SetEntityAnimationNoWait" arity="2" confidence="confirmed" index="121">
+      <summary>Starts an entity&apos;s animation without waiting for it to finish.</summary>
+      <param name="charIdx">Must exist on the current map. The entity to animate.</param>
+      <param name="animId">Animation id.</param>
     </member>
-    <member name="DisableWorld" arity="1" confidence="medium" originalName="Bytecode_DisableWorld" index="122">
+    <member name="DisableWorld" arity="1" confidence="medium" index="122">
       <summary>Disables a world (likely gating it from selection/travel until re-enabled) — pairs with Bytecode_EnableWorld.</summary>
       <param name="worldId">World id.</param>
     </member>
-    <member name="EnableWorld" arity="1" confidence="medium" originalName="Bytecode_EnableWorld" index="123">
+    <member name="EnableWorld" arity="1" confidence="medium" index="123">
       <summary>Enables a previously disabled world.</summary>
       <param name="worldId">World id.</param>
     </member>
-    <member name="sub_800AEF0" arity="3" confidence="low" index="124">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3, looks up a character&apos;s sprite id, spawns an entity via sub_8019F5C using that sprite, and adds it to the entity list.</summary>
-      <param name="charIdx">Popped third (last) — used to look up a sprite id via Character_GetSpriteId.</param>
-      <param name="p2">Popped second.</param>
-      <param name="p1">Popped first.</param>
+    <member name="DrawSprite" arity="3" confidence="medium" index="124">
+      <summary>Draws a character sprite at a position on the map.</summary>
+      <param name="spriteId">The sprite to draw (for example 54 is Gohan). It does not have to be on the map already.</param>
+      <param name="x">X position, in world pixels.</param>
+      <param name="y">Y position, in world pixels.</param>
     </member>
-    <member name="sub_800AF44" arity="0" confidence="low" index="125">
-      <summary>[Low confidence] LOW CONFIDENCE. No arguments.</summary>
+    <member name="PlayCredits" arity="0" confidence="confirmed" index="125">
+      <summary>Plays the credits.</summary>
     </member>
     <member name="PushActiveCharIsTransformed" arity="0" confidence="confirmed" originalName="BytecodeVM_PushActiveCharIsTransformed" index="126">
       <summary>Pushes whether the active character is currently in a transformed state (see SetCharacterTransformation). Pushes a boolean onto the VM stack.</summary>
@@ -563,7 +563,7 @@
       <param name="y">Spawn Y.</param>
     </member>
     <member name="SetPartyMemberFlag" arity="2" confidence="confirmed" originalName="BytecodeVM_SetPartyMemberFlag" index="128">
-      <summary>RENAMED 2026-09-19 (was SetQuestFlag — despite the name, does NOT feed the in-game Quest Log). ARITY CORRECTED: pops two values, not one. Write counterpart to StackTestPartyMemberFlag (opcode 23) — same two-part-key storage, unrelated to opcode 19/20/27/28's story flags.</summary>
+      <summary>RENAMED 2026-09-19 (was SetQuestFlag — despite the name, this does NOT feed the in-game Quest Log; see Quest-System.md).</summary>
       <param name="a">First key part, pushed first.</param>
       <param name="b">Second key part, pushed last.</param>
     </member>
@@ -582,53 +582,53 @@
     <member name="PushLevelUpStat3" arity="0" confidence="medium" originalName="BytecodeVM_PushLevelUpStat3" index="133">
       <summary>Third of three level-up stat values. Pushes a stat value related to the pending level-up onto the VM stack.</summary>
     </member>
-    <member name="sub_800A276" arity="3" confidence="low" index="134">
+    <member name="ScreenShake" arity="3" confidence="low" index="134">
       <summary>[Low confidence] LOW CONFIDENCE. Pops 3, builds an entity command with vtable 0x8025550 and 2 payload words.</summary>
       <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
       <param name="b">Popped second.</param>
       <param name="a">Popped first.</param>
     </member>
-    <member name="sub_800A2C2" arity="4" confidence="low" index="135">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 4, builds a 36-byte command with vtable 0x8025528.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="c">Popped, becomes the primary payload word and is also right-shifted by 1 and divided by 256 for a secondary word.</param>
-      <param name="b">Popped.</param>
-      <param name="a">Popped.</param>
+    <member name="FlashScreenColor" arity="5" confidence="confirmed" index="135">
+      <summary>Flashes the whole screen a colour: it blends toward (r, g, b) over the first half of frames, reaching the full colour in the middle, then fades back.</summary>
+      <param name="charIdx">Must exist on the current map (0 is the player). Selects the entity command queue the flash runs on.</param>
+      <param name="r">Red, 0 to 255.</param>
+      <param name="g">Green, 0 to 255.</param>
+      <param name="b">Blue, 0 to 255.</param>
+      <param name="frames">How long the flash lasts, in frames (60 is one second).</param>
     </member>
-    <member name="sub_800A346" arity="4" confidence="low" index="136">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3 (plus the char index), builds a 28-byte command with vtable 0x8024C04.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="c">Popped third.</param>
-      <param name="b">Popped second.</param>
-      <param name="a">Popped first.</param>
+    <member name="GlideToPosition" arity="4" confidence="confirmed" index="136">
+      <summary>Moves an entity to a position at a given speed without playing a walking animation (tested in-game).</summary>
+      <param name="charIdx">Must exist on the current map. The entity to move.</param>
+      <param name="x">Destination X, in world pixels.</param>
+      <param name="y">Destination Y, in world pixels.</param>
+      <param name="speed">How fast it moves. The game uses 1000. Larger is faster.</param>
     </member>
-    <member name="sub_800A3A2" arity="2" confidence="low" index="137">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 2, builds a 20-byte command with vtable 0x802521C.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="value">Popped first — stored directly, and also as value - 8 in a second payload word.</param>
+    <member name="NPCFireKamehameha" arity="2" confidence="confirmed" index="137">
+      <summary>Makes a character fire a Kamehameha.</summary>
+      <param name="charIdx">Must exist on the current map (0 is the player). The character firing the Kamehameha.</param>
+      <param name="frames">How long the attack lasts, in frames. The beam fires 8 frames in and ends at frames, so a value of 8 or less fires nothing. The game uses 140.</param>
     </member>
     <member name="EnterSleepMode" arity="0" confidence="medium" originalName="BytecodeVM_EnterSleepMode" index="138">
       <summary>No arguments.</summary>
     </member>
-    <member name="AddEXP" arity="2" confidence="confirmed" originalName="BytecodeVM_AddEXP" index="139">
-      <summary>Adds experience points to a character, potentially triggering a level-up.</summary>
-      <param name="charIdx">Character roster index.</param>
+    <member name="AddEXP" arity="1" confidence="confirmed" originalName="BytecodeVM_AddEXP" index="139">
+      <summary>Adds experience points to the active party character (the character set by SetActiveCharacter), potentially triggering a level-up.</summary>
       <param name="amount">EXP amount to add.</param>
     </member>
-    <member name="sub_8009F3C" arity="2" confidence="low" index="140">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 2, builds an entity command using vtable slot dword_8025500[15] (index 15 of a vtable array shared with other opcodes in this range) and 1 payload word.</summary>
-      <param name="charIdx">Popped last — resolved via Entity_GetByCharIndex.</param>
-      <param name="value">Popped first.</param>
+    <member name="LockEntityPose" arity="2" confidence="medium" index="140">
+      <summary>Locks an entity in a pose: it holds and does not reset, and the scene stays locked until something changes it (tested in-game).</summary>
+      <param name="charIdx">Must exist on the current map. The entity to lock.</param>
+      <param name="value">Selects the pose to lock. The game uses 41 right after animation 29; 27 and 42 also work (they raise the arm). Values that are not valid for the sprite show nothing.</param>
     </member>
     <member name="RegisterScouterEntry" arity="1" confidence="confirmed" originalName="BytecodeVM_RegisterScouterEntry" index="141">
       <summary>Registers an entry in the in-game &quot;Scouter&quot; log (the series&apos; bestiary/scan mechanic) — typically called the first time the player scouters a given enemy.</summary>
       <param name="entryId">Scouter/bestiary entry id.</param>
     </member>
-    <member name="sub_800A1B4" arity="3" confidence="low" index="142">
-      <summary>[Low confidence] LOW CONFIDENCE. Pops 3, resolves two entities by character index, builds a command with vtable 0x80263DC and the scaled duration.</summary>
-      <param name="duration">Popped first — scaled by ×1966, the same constant as opcodes 96 and 99.</param>
-      <param name="targetCharIdx">Popped second.</param>
-      <param name="charIdx">Popped third (last) — the entity to command.</param>
+    <member name="NPCFireBigBangAtEntity" arity="3" confidence="medium" index="142">
+      <summary>Makes an NPC fire a Big Bang attack (a large ki blast, as Vegeta uses) at another character.</summary>
+      <param name="charIdx">The NPC firing the attack. Must exist on the current map.</param>
+      <param name="targetCharIdx">The character the attack is aimed at. Must exist on the current map.</param>
+      <param name="speed">Projectile speed. Larger is faster. Must not be 0.</param>
     </member>
     <member name="PushEntityPosition" arity="1" confidence="confirmed" originalName="BytecodeVM_PushEntityPosition" index="143">
       <summary>Pushes an entity&apos;s current position onto the stack. Pushes that entity&apos;s (x, y) position, as two stack values onto the VM stack.</summary>

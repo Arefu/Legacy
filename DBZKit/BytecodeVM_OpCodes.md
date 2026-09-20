@@ -87,7 +87,7 @@ opcodes, and each handler pops its own argument count (visible in the decompilat
 | 23 | sub_8009628 | pops 2, calls `PartyState_TestQuestFlag(state, a, b)`, pushes bool | `StackTestPartyMemberFlag` | high |
 | 27 | sub_8009710 | pops 1, calls `BytecodeVM_SetFlag(&g_PartyState, val)` | `StackSetPartyFlag` (sibling of quest-flag Set/Clear at 24/25?) | high |
 | 28 | sub_8009728 | pops 1, calls `BytecodeVM_ClearFlag(&g_PartyState, val)` | `StackClearPartyFlag` | high |
-| 31 | sub_800977A | pops 3, builds a struct via `sub_800DF1C`, blocks on `GameLoop_ExecuteAndWait` | `ShowChoicePrompt` (yes/no or multi-choice menu) | **low — please confirm/rename, this blocks gameplay so it's UI-visible** |
+| 31 | sub_800977A | pops 3, builds a struct via `sub_800DF1C`, blocks on `GameLoop_ExecuteAndWait` | `PanCameraToPosition` (camera pan; x/y = camera top-left in world px, third = speed; tested in-game, was wrongly guessed as a choice prompt) | **medium — speed unit unconfirmed** |
 | 43 | sub_8009B94 | pops 1, allocs a 12-byte async "command" object (vtable `0x802545C`), blocks via `GameLoop_ExecuteAndWait` | `BytecodeVM_ShowCutsceneCommand_A` | **low, needs vtable inspection or in-game correlation** |
 | 44 | sub_8009BBC | same shape as #43, different vtable `0x8024778` | `BytecodeVM_ShowCutsceneCommand_B` | **low** |
 | 51 | sub_8009CC4 | pops 3 (world/area/variant?), calls `MapScript_CreateCharacter`, adds to entity list | `SpawnCharacterEntity` | high |
@@ -103,16 +103,16 @@ opcodes, and each handler pops its own argument count (visible in the decompilat
 | 81 | sub_800AA34 | `flags &= ~2` | `ClearCharacterFlag_Bit1` (pairs with #80) | medium |
 | 82 | sub_800AA58 | `flags |= 0x20` | `SetCharacterFlag_Bit5` | medium |
 | 83 | sub_800AA7C | pops 2 (char, bit), `flags |= (4 << bit)` | `SetCharacterFlag_Dynamic` (generic bit-set, bits 2+) | medium |
-| 88 | sub_800AC00 | no pops, `EntityList_FindByTypeAndIndex(list, type=16, null)` | `PushPlayerEntityHandle` (type 16 = player?) | **low** |
-| 89 | sub_8009D94 | pops 4 (2 char indices + 2 params), entity command via `sub_801094C` | `SetEntityLookAtChar` or `EntityAttachToChar` | **low** |
-| 90 | sub_800AB44 | pops 3, builds entity via `sub_80104C0`, adds to entity list | `SpawnEffectAttachedToChar` | **low** |
+| 88 | sub_800AC00 (`FindPlayerEntity`) | no pops, `EntityList_FindByTypeAndIndex(list, kind=16, null)`; the result is discarded (nothing pushed) | `FindPlayerEntity` -- no visible effect (tested); boss scripts call it before `AddEXP`, which takes only the amount | **medium** |
+| 89 | sub_8009D94 (`WalkByOffset`) | pops 4 (char, other char, offX, offY); command via `sub_801094C` walks the entity to its own position + (offX, offY) | `WalkByOffset(charIdx, otherChar, offX, offY)` -- tested in-game: walks that many pixels with the walk animation; the second character is ignored; a zero offset just returns the entity to idle facing right | confirmed |
+| 90 | sub_800AB44 (`DrawBossHealthBarRange`) | pops 3, builds the health-bar effect via `sub_80104C0` (`BossHealthBar_Create`), adds to entity list | `DrawBossHealthBarRange(charIdx, minPercent, maxPercent)` -- entity must be on screen; opcode 85 (`DrawBossHealthBar`, was misnamed `FadeIn`) is the same bar with (0, 100) | **medium** |
 | 91 | sub_800A9DA | pops 1, `flags &= ~1` (clears bit0) | `ClearCharacterFlag_Bit0` (inverse of #79) | medium |
 | 93 | sub_800A49A | pops 1, entity-cmd vtable `0x8024BF0`, both payload words zeroed | `StopEntityMovement` (0-arg sibling of #94) | medium |
 | 94 | sub_800A526 | pops 3, same vtable `0x8024BF0`, 2 payload words | `SetEntityTargetVelocity(x,y)` | medium |
-| 95 | sub_800A572 | pops 1, entity-cmd vtable `0x8024DD0` | — | **low** |
-| 96 | sub_800A158 | pops 3, entity-cmd vtable `0x8025514`, one payload = `param * 1966` (frame/angle scaling constant) | `EntityMoveTowardEntity(duration)` | **low** |
-| 99 | sub_800A210 | pops 4, complex 32-byte cmd struct, same `*1966` scaling, nested fixed constants 32/64 | `EntityMoveAlongCurve`/`JumpArc` | **low — most complex one, worth checking in-game** |
-| 100 | sub_800A4DA | pops 3, entity-cmd vtable `0x8025230` | `SetEntityScale` or `SetEntityTint` | **low** |
+| 95 | sub_800A572 (`PlayDamageEffect`) | pops 1, entity-cmd vtable `0x8024DD0`; execute slot installs a 12-frame palette-remap flash on the entity | `PlayDamageEffect` (the "damage taken" flash, not the hit animation) | **medium** |
+| 96 | sub_800A158 (`NPCFireKiBlastAtEntity`) | pops 3, entity-cmd vtable `0x8025514`, one payload = `speed * 1966`; update slot spawns a projectile aimed at the target's hit-rect centre | `NPCFireKiBlastAtEntity(charIdx, targetCharIdx, speed)` -- non-blocking, both characters must exist on the map | **medium** |
+| 99 | sub_800A210 (`NPCFireKiBlast`) | pops 4, complex 32-byte cmd struct, same `*1966` scaling, nested fixed constants 32/64 | `NPCFireKiBlast` (tested in-game: character fires a ki blast) | **medium — actor, x/y destination, speed (tested in-game)** |
+| 100 | sub_800A4DA (`SpawnDustCloud`) | pops 3, entity-cmd vtable `0x8025230` | `SpawnDustCloud` (tested: dust-cloud explosion at x/y) | **medium** |
 | 101 | sub_800AC5C | pops 2 (each -1), spawns via `sub_8012A68` + lookup table `dword_83B5CA8` | tile-indexed entity spawn (decoration?) | **low** |
 | 102 | sub_800ACAC | pops 2 (each -3), same factory, different table `unk_83B5CE8` | sibling of #101, different entity class | **low** |
 | 103 | sub_800ACEA | pops 4 raw params, spawns via `sub_8012B38` | generic 4-param map entity spawn | **low** |
@@ -147,32 +147,18 @@ struct, sets a vtable pointer, pops N args into fixed payload words, enqueues on
 `g_CommandQueue` via `Entity_EnqueueCommand`, or spawns via `EntityList_Add`) where **the vtable's
 own update function was not traced** — so the exact runtime effect (as opposed to the argument
 shape) is a hypothesis, not a fact. Left as `sub_XXXXXX` deliberately; do not treat the guessed
-names in the wiki pages under `opcodes/unknown/` as confirmed. Full list, with vtable address and
+names in the wiki pages under `opcodes/unknown/` as confirmed. (Opcodes 31, 85, 88, 90, 95, 96, 99, 100, 112, 117, 118 and 121 were resolved 2026-09 and are no longer in this list -- 137 is `NPCFireKamehameha(charIdx, frames)` (the beam fires 8 frames in, in the direction the entity faces; the attack is fixed and the number is only a duration); 136 is `GlideToPosition(charIdx, x, y, speed)` (moves an entity with no walk animation; the only use is Cell knocking Hercule back in Z14 A2); 124 is `DrawSprite(spriteId, x, y)` (draws a plain character sprite; only shipped use is Zone 8 Area 50's three-trigger puzzle); 135 is `FlashScreenColor(charIdx, r, g, b, frames)` (five arguments; the old table said four); note 85 was misnamed `FadeIn` and is `DrawBossHealthBar` (90 is `DrawBossHealthBarRange`, 88 is `FindPlayerEntity`, 121 is `SetEntityAnimationNoWait`, 117/118 are `RemoveRectFromMask2`/`AddRectToMask2`): `PanCameraToPosition`, `PlayDamageEffect`, `NPCFireKiBlastAtEntity`, `NPCFireKiBlast`, `SpawnDustCloud`, `PlaySFX` -- 112 plays sound effect `sfxId` through the entity's command queue, and `charIdx` must exist on the map.) Full list, with vtable address and
 payload shape (see the individual wiki pages for byte-level detail):
 
-`sub_800977A`(31, menu/prompt), `sub_8009B94`(43, vtable `0x802545C`), `sub_8009BBC`(44, vtable
+`sub_8009B94`(43, vtable `0x802545C`), `sub_8009BBC`(44, vtable
 `0x8024778`), `sub_800A044`(58, vtable `unk_8024878`),
 `sub_800A09A`(60, vtable `unk_8025258`), `sub_800A44E`(62, vtable `unk_8024DE4`), `sub_800A622`(67,
 opens fixed menu/table slot `dword_8025B98[60]`), `sub_800A638`(68, vtable `unk_8023D2C`),
-`sub_8009688`(78, calls `sub_80062C0(g_MapRenderer, a, b)`), `sub_800AC00`(88,
-`EntityList_FindByTypeAndIndex(type=16)`), `sub_8009D94`(89, via `sub_801094C`, 2 char indices +
-2 params), `sub_800AB44`(90, via `sub_80104C0`), `sub_800A49A`/`sub_800A526`(93/94, shared vtable
-`0x8024BF0`, 0-arg vs 2-arg pair), `sub_800A572`(95, vtable `0x8024DD0`), `sub_800A158`(96, vtable
-`0x8025514`, arg×1966 scaling constant), `sub_800A210`(99, most complex — 32-byte struct, same
-×1966 scaling plus fixed 32/64 constants), `sub_800A4DA`(100, vtable `0x8025230`),
-`sub_800AC5C`/`sub_800ACAC`(101/102, tile-indexed spawns via `sub_8012A68`, tables
+`sub_8009688`(78, calls `sub_80062C0(g_MapRenderer, a, b)`), `sub_800A49A`/`sub_800A526`(93/94, shared vtable
+`0x8024BF0`, 0-arg vs 2-arg pair), `sub_800AC5C`/`sub_800ACAC`(101/102, tile-indexed spawns via `sub_8012A68`, tables
 `dword_83B5CA8`/`unk_83B5CE8`, args offset by -1/-3 respectively), `sub_800ACEA`(103, generic
-4-param spawn via `sub_8012B38`), `sub_800AE76`(112, vtable `0x8025244`), `sub_800A850`/
-`sub_800A89E`(117/118, both call `sub_80063E0(args, unk_3001100, 1|0)` — a set/clear pair over some
-map-local flag region), `sub_800AD3E`(120, spawn via `sub_8016AB4`, args +15), `sub_800A004`(121,
-vtable `unk_8025ED4`), `sub_800AEF0`(124, spawns via `sub_8019F5C` using
-`Character_GetSpriteId`), `sub_800AF44`(125, allocs 84 bytes, vtable `0x8024DB8`, then a large DMA
-transfer — looks like a screen-wipe/transition effect), `sub_800AFD4`(130, spawn via
-`sub_801C4B0`), `sub_800A276`(134, vtable `0x8025550`), `sub_800A2C2`(135, vtable `0x8025528`,
-includes a `Div32(arg>>1, 256)` — likely an angle/speed pair), `sub_800A346`(136, vtable
-`0x8024C04`, 28-byte struct), `sub_800A3A2`(137, vtable `0x802521C`, one payload word computed as
-`arg-8`), `sub_8009F3C`(140, vtable `dword_8025500[15]`), `sub_800A1B4`(142, vtable `0x80263DC`,
-same ×1966 scaling as 96/99 — likely the rotate/face-toward sibling of `EntityMoveTowardEntity`).
+4-param spawn via `sub_8012B38`), `sub_800AD3E`(120, spawn via `sub_8016AB4`, args +15), `sub_800AFD4`(130, spawn via
+`sub_801C4B0`), `sub_800A276`(134, vtable `0x8025550`), (Opcode 125, `sub_800AF44`, is `PlayCredits()`: it plays the credits and then clears VRAM, so the map must be reloaded. Opcode 89 is `WalkByOffset`. Opcode 140, `sub_8009F3C`, is `LockEntityPose(charIdx, value)`: holds an entity in a non-resetting pose, used when Cell absorbs an android in Z12 A4; the byte it sets at entity+8 is not traced. Opcode 142, `sub_800A1B4`, was resolved 2026-09 as `NPCFireBigBangAtEntity`: the same attack as 96 with the big projectile, vtable `0x8024BDC`, non-blocking.)
 
 If you're chasing one of these down in-game, the fastest path is to trigger the specific cutscene/
 dialog known to call it (cross-reference the opcode index back through `sequence[]`/script data)
@@ -190,8 +176,7 @@ mode-0 "run an event" dialog step).
 in sync): opcode 19/20 `StackTestQuestFlag`/`Not` → `StackTestStoryFlag`/`Not`, opcode 27/28
 `StackSetPartyFlag`/`StackClearPartyFlag` → `SetStoryFlag`/`ClearStoryFlag`, opcode 128
 `SetQuestFlag` → `SetPartyMemberFlag` (arity corrected 1→2, confirmed via disasm it pops two
-values), opcode 31 `sub_800977A` → `ShowChoicePrompt` (already confidently named in
-`Dialog_Format.md` from 2026-09-14 but never actually applied in IDA/the table until now). Full
+values), opcode 31 `sub_800977A` → `ShowChoicePrompt` (later corrected to `PanCameraToPosition` after an in-game test showed it is a camera pan). Full
 rationale in `DBZKit/Quest-System.md` — short version: two completely unrelated flag storages in
 this ROM used to share "Quest"/"PartyFlag" names, which is exactly backwards (the story-flag
 system, 19/20/27/28, is what the Quest Log reads; the party-member-flag system, 23/128, isn't).
@@ -271,6 +256,20 @@ frame/angle scaling constant appears in THREE different opcodes (96, 99, 142) --
 move/rotate-toward-entity family; opcodes 93/94 and 117/118 and 101/102 are each a 0-arg/N-arg or
 set/clear PAIR sharing one vtable, matching the SetStoryFlag/ClearStoryFlag pattern seen elsewhere
 in this table.
+
+## Unresolved opcodes that no script calls (2026-09-20)
+
+`OpcodeUsage` (Legacy's "Find opcode usage") over every dialog, trigger, NPC and enemy script in the shipped ROM
+finds no call to these unresolved opcodes: **101, 102, 103, 118, 120, 130**. They still assemble and
+disassemble, but Zenkai leaves them out of autocomplete (`OpcodeTable.UnusedInGame`).
+
+In-game tests: 101 draws a 3x3-pixel sprite at screen pixel (x, y) (palette indices 0x65 and 2 -- the "rock texture"
+seen in a test); 103 (`x1, y1, x2, y2`) only put a teal square on screen. 102 is 101's twin (7x7 sparkle sprite,
+offset -3), untested. None of them has a known purpose.
+
+Also never called (but already named): StackGetCharHP/EP/MaxHP/MaxEP (105-108), PlayAudioVolume (111), SpawnMapEntity
+(127), SetPartyMemberFlag (128), PushLevelUpStat1-3 (131-133), EnterSleepMode (138), CenterCameraOnChar (32),
+WaitFramesSimple (68), and a few Push* helpers -- these stay in autocomplete.
 
 ## Wiki
 

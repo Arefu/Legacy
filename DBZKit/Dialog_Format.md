@@ -212,7 +212,7 @@ vtable is traced — everything in modes 0/1/3 above is solid enough to build on
    working "trigger my custom event from dialog" node, chaining into whatever text/entry comes
    next via its `Index` field — exactly like the Senzu Bean example above.
 4. If you need branching dialog (player choices), opcode #31 in `BytecodeVM_OpcodeTable`
-   (`ShowChoicePrompt`, `sub_800977A`) is the existing yes/no-style mechanism — pair it with
+   (`sub_800977A`) was once guessed to be a yes/no prompt (`ShowChoicePrompt`), but an in-game test shows it is a camera pan (`PanCameraToPosition`), so it is NOT a choice mechanism. If you find a real choice mechanism, pair it with
    `JumpIfFalse` (`0x13`, 1 signed byte, VM-internal jump — not the same thing as mode-5
    `DIALOG_JUMP`, which operates at the entry level) inside a mode-0 script entry to pick which
    `Index` gets set based on the player's answer, or just have that script push a different pending
