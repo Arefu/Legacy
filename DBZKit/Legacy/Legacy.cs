@@ -972,13 +972,16 @@ namespace Legacy
 
         private void Legacy_OpenROM_Click(object sender, EventArgs e)
         {
-            //TODO: Hmm, how to work out which game it is?
+            // The game is identified by the 4-character game code in the GBA header (offset 0xAC): ALFE = Legacy of Goku II (US), ALGP = Legacy of Goku I,
+            // BDBE = Buu's Fury. It is shown in the title bar; the decoders themselves are still the Legacy of Goku II ones.
             using (var openRomDialog = new OpenFileDialog() { Filter = "GBA ROMs|*.gba", Title = "Select a GBA ROM" })
             {
                 if (openRomDialog.ShowDialog() != DialogResult.OK)
                     return;
                 _rom = File.ReadAllBytes(openRomDialog.FileName);
             }
+            string gameCode = _rom.Length > 0xB0 ? System.Text.Encoding.ASCII.GetString(_rom, 0xAC, 4) : "?";
+            Text = $"Legacy - {gameCode}" + (gameCode == "ALFE" ? " (Legacy of Goku II, US)" : " (not the Legacy of Goku II US ROM the decoders were built for)");
 
             _saveTargetPath = null; // freshly opened ROM - next Save prompts for a destination again
             PopulateDialogTree();
