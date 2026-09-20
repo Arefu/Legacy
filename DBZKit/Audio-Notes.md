@@ -37,8 +37,8 @@ param), in that order. Bits 0x10/0x20/0x40/0x80 are behaviour flags tested by `A
 entries) and note 60 plays an instrument at its own sample rate. All 44 songs parse cleanly with this (channels 1-8, notes <= 111).
 
 **Effects** (`Audio_EffectTable` 0x87FCB1C, index = effect id; every handler except portamento starts with `Audio_NoteOn`; an event with flag 0x80
-but no effect bytes re-runs the channel's STORED effect id/param, and 0x10 / 0x40 re-trigger the stored note / volume): 1 and 2 = note-on
-bookkeeping (poly), 4 volume envelope (param nibbles: attack / decay per tick, or one-off), 5 pitch slide DOWN, 6 pitch slide UP (param
+but no effect bytes re-runs the channel's STORED effect id/param, and 0x10 / 0x40 re-trigger the stored note / volume): 1 = **set speed** (param = ticks per row, 3-7 in the ROM; the old IDA global g_LastNoteChannel is really MusicPlayer+3),
+2 = unknown (27 uses; touches MusicPlayer+1/+2/+0x10), 4 volume envelope (param nibbles: attack / decay per tick, or one-off), 5 pitch slide DOWN, 6 pitch slide UP (param
 0xEx/0xFx = one-off fine step, otherwise a per-tick step from the slide tables), 7 tone portamento, 8 vibrato (low nibble depth, high nibble
 speed, `g_VibratoSineTable`), 15 sample offset (param*256 samples, like XM 9xx), 17 **retrigger** every (param&0xF) ticks (like XM E9x, not an
 arpeggio), 20 set tempo (param = BPM value), 24 pan (signed byte -64..+64), 27 unknown (0x802054C), 0/3/9-14/16/21 = plain note-on.
