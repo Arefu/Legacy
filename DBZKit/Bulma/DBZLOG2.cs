@@ -21,6 +21,19 @@ namespace Bulma.LOG2
         {
             _mapEntries.Clear();
 
+            // The ROM's own code says where the map table is and how many maps there are (Map_GetCount +
+            // four literals), so a ROM whose table was relocated/extended (DrGero.Engine.MapTable) loads
+            // correctly no matter what games/ALFE.json says. Left alone for any ROM we can't recognise.
+            try
+            {
+                if (DrGero.Engine.RosterTables.IsSupportedRom(rom))
+                {
+                    Config.MapEntriesOffset = DrGero.Engine.MapTable.Address(rom);
+                    Config.MapEntryCount = DrGero.Engine.MapTable.Count(rom);
+                }
+            }
+            catch (InvalidOperationException) { /* unexpected Map_GetCount encoding -- keep the configured values */ }
+
             rom.Seek(Config.MapEntriesOffset);
             for (int i = 0; i < Config.MapEntryCount; i++)
             {
