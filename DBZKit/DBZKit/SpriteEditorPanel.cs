@@ -34,7 +34,7 @@ namespace DBZKit
             _content.Visible = ok;
             _noRom.Visible = !ok;
             if (_rom != null && !ok) _noRom.Text = "This doesn't look like the US ROM the sprite tables were mapped from, so the editor is disabled.";
-            if (ok) { FillSpriteCombo(72); RefreshSlots(); }
+            if (ok) { FillSpriteCombo(); RefreshSlots(); }
         }
 
         private void Fail(string msg) => MessageBox.Show(this, msg, "Can't apply", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -52,13 +52,77 @@ namespace DBZKit
         private readonly string?[] _fPng = new string?[4];
         private readonly Label _fInfo = new() { Dock = DockStyle.Top, Height = 74, Padding = new Padding(4) };
         private readonly HashSet<int> _relocated = [];
+        // Each slot (Down / Up / Left / Right) holds an ARRAY of animation frames (a stand-still with a blink, a walk cycle, ...): this picks which one is
+        // shown and written. "All frames" writes the same picture into every frame of the slot (fine for static poses such as ki blasts).
+        private readonly NumericUpDown _fFrame = new() { Minimum = 0, Maximum = 0, Width = 56 };
+        private readonly CheckBox _fAllFrames = new() { Text = "Write to ALL frames of the slot", AutoSize = true, Margin = new Padding(8, 6, 0, 0) };
+        private readonly Label _fFrameInfo = new() { AutoSize = true, Margin = new Padding(4, 8, 0, 0), ForeColor = Color.DimGray };
+        private readonly Label _importStatus = new() { AutoSize = true, Margin = new Padding(12, 9, 0, 0), ForeColor = Color.DimGray };
+
+        // Every animation frame of the sprite picked above, as indexed PNG + BIN in a sprite_NNN folder (the same format the Sprite Viewer
+        // dumps and the imports below read), taken from THIS tab's ROM copy so edits you have written show up in it.
+        private void ExportThisSprite()
+        {
+            if (_rom == null) return;
+            using var dlg = new FolderBrowserDialog { Description = $"Choose a folder: sprite_{SelectedSprite:D3} (PNG + BIN + manifest) is created inside it", UseDescriptionForTitle = true };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                int frames = SpriteDump.DumpSprite(_rom, SelectedSprite, dlg.SelectedPath);
+                SpriteDump.ExportPalette(_rom, dlg.SelectedPath);
+                _importStatus.ForeColor = Color.DimGray;
+                _importStatus.Text = frames > 0 ? $"Exported {frames} frame(s) of sprite {SelectedSprite} to {Path.Combine(dlg.SelectedPath, SpriteDump.FolderName(SelectedSprite))}, plus obj_palette.gpl/.pal/.png (the colours to paint with)." : "That sprite has no frames to export.";
+            }
+            catch (Exception ex) { Fail(ex.Message); }
+        }
+
+        // Puts a sprite dump (Sprite Viewer > Dump...) back. One folder replaces the animations of the sprite chosen above -- it can be a
+        // different sprite's dump, which copies its animations over; a whole dump root writes every sprite_NNN folder over sprite NNN.
+        private void ImportFolder(bool all)
+        {
+            if (_rom == null) return;
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = all ? "Choose the dump folder that contains the sprite_NNN folders" : "Choose a sprite_NNN folder (or a dump folder to pick from)",
+                UseDescriptionForTitle = true,
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                var dumps = SpriteDump.FindDumps(dlg.SelectedPath);
+                if (dumps.Count == 0) { Fail("No sprite_NNN folder with a manifest.json was found there."); return; }
+                string report;
+                if (all)
+                {
+                    int done = 0;
+                    foreach (var (id, folder) in dumps)
+                    {
+                        if (!FrameImport.HasRecord(_rom, id)) continue;
+                        SpriteDump.ImportSprite(_rom, folder, id, _relocated);
+                        done++;
+                    }
+                    report = $"Imported {done} sprite folder(s) over their own sprites.";
+                }
+                else
+                {
+                    var pick = dumps.FirstOrDefault(d => d.Id == SelectedSprite);
+                    if (pick.Folder == null) pick = dumps[0];
+                    report = SpriteDump.ImportSprite(_rom, pick.Folder, SelectedSprite, _relocated);
+                }
+                _session.NotifyChanged(this);
+                RefreshSlots();
+                _importStatus.ForeColor = Color.DimGray;
+                _importStatus.Text = report + " Apply to DBZKit / Save ROM As to keep it.";
+            }
+            catch (Exception ex) { Fail(ex.Message); }
+        }
 
         private static string GroupName(int n)
         {
             int off = FrameImport.FirstGroup + n * FrameImport.GroupSize;
             string what = off switch
             {
-                0x4C => "walk / stand", 0x9C => "Ki Blast, Big Bang, Burning, Masenko, Scatter Shot", 0x16C => "Kamehameha, Special Beam, Sword Blast", 0x17C => "Spirit Bomb", _ => "other pose",
+                0x4C => "walk / stand (first group)", 0x9C => "Ki Blast, Big Bang, Burning, Masenko, Scatter Shot", 0x16C => "Kamehameha, Special Beam, Sword Blast", 0x17C => "Spirit Bomb", 0x18C => "extra frames (idle / blink?)", _ => "other pose",
             };
             return $"Group {n}  (+{off}, 0x{off:X}) - {what}";
         }
@@ -71,12 +135,26 @@ namespace DBZKit
             _fInfo.Text = "Pick a sprite and a 4-frame group. Each direction shows what is in the ROM now (top) and your PNG (bottom). Give PNGs only for the directions you want to change. " +
                           "Use the SAME size as the stock frame (shown under each picture) -- the game reserves sprite memory for stock sizes. Your transparent pink is fine (palette index 0). " +
                           "Frames are stored as the game's normal compressed format.";
-            for (int n = 0; n < FrameImport.GroupCount; n++) _fGroup.Items.Add(GroupName(n));
-            _fGroup.SelectedIndex = 5;
+            // the group list is rebuilt from the picked sprite's own record (FillGroupCombo); it starts on the first group
+            _fGroup.Items.Add(GroupName(0));
+            _fGroup.SelectedIndex = 0;
 
-            var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(4), WrapContents = false, AutoScroll = true };
-            top.Controls.AddRange([new Label { Text = "Sprite id:", AutoSize = true, Margin = new Padding(0, 8, 0, 0) }, _fSprite, _fGroup, _fMirror, _fPad, _fAuto,
-                new Label { Text = "x:", AutoSize = true, Margin = new Padding(6, 8, 0, 0) }, _fX, new Label { Text = "y:", AutoSize = true, Margin = new Padding(6, 8, 0, 0) }, _fY]);
+            // Two rows: sprite over group on the left, the options stacked two tall to their right (no scrollbar).
+            var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 74, ColumnCount = 3, RowCount = 2, Padding = new Padding(4) };
+            top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            top.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            top.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            Label Cap(string t) => new() { Text = t, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) };
+            _fSprite.Anchor = _fGroup.Anchor = AnchorStyles.Left;
+            top.Controls.Add(Cap("Sprite id:"), 0, 0); top.Controls.Add(_fSprite, 1, 0);
+            top.Controls.Add(Cap("Group:"), 0, 1); top.Controls.Add(_fGroup, 1, 1);
+            FlowLayoutPanel Line(params Control[] c) { var f = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(16, 0, 0, 0) }; f.Controls.AddRange(c); return f; }
+            foreach (var c in new Control[] { _fMirror, _fPad, _fAuto, _fAllFrames }) c.Margin = new Padding(0, 4, 12, 0);
+            Label Small(string t) => new() { Text = t, AutoSize = true, Margin = new Padding(0, 6, 4, 0) };
+            top.Controls.Add(Line(_fMirror, _fPad, _fAuto), 2, 0);
+            top.Controls.Add(Line(Small("Frame:"), _fFrame, _fFrameInfo, _fAllFrames, Small("x:"), _fX, Small("y:"), _fY), 2, 1);
 
             var grid = new TableLayoutPanel { Dock = DockStyle.Top, Height = 420, ColumnCount = 4, RowCount = 1 };
             for (int i = 0; i < 4; i++)
@@ -96,17 +174,25 @@ namespace DBZKit
                                 card.Controls.AddRange([_fCur[i], _fNew[i], row, _fLbl[i]]);
                 grid.Controls.Add(card, i, 0);
             }
+            _fFrame.ValueChanged += (_, _) => { if (!_fFilling) { Array.Clear(_fPng); RefreshSlots(); } };
+            _fAllFrames.CheckedChanged += (_, _) => RefreshSlots();
             _fMirror.CheckedChanged += (_, _) => RefreshSlots();
             _fPad.CheckedChanged += (_, _) => RefreshSlots();
-            _fSprite.SelectedIndexChanged += (_, _) => { if (_fFilling) return; Array.Clear(_fPng); RefreshSlots(); };
-            _fGroup.SelectedIndexChanged += (_, _) => { Array.Clear(_fPng); RefreshSlots(); };
+            _fSprite.SelectedIndexChanged += (_, _) => { if (_fFilling) return; Array.Clear(_fPng); _fFrame.Value = 0; FillGroupCombo(); RefreshSlots(); };
+            _fGroup.SelectedIndexChanged += (_, _) => { if (_fFilling) return; Array.Clear(_fPng); _fFrame.Value = 0; RefreshSlots(); };
 
             var write = new Button { Text = "Write into ROM copy", AutoSize = true };
             write.Click += (_, _) => WriteFrames();
             var export = new Button { Text = "Export .bin files", AutoSize = true };
             export.Click += (_, _) => ConvertToBin();
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 38, Padding = new Padding(4) };
-            bar.Controls.AddRange([write, export]);
+            var importOne = new Button { Text = "Import sprite folder into this sprite...", AutoSize = true };
+            importOne.Click += (_, _) => ImportFolder(all: false);
+            var importAll = new Button { Text = "Import whole dump...", AutoSize = true };
+            importAll.Click += (_, _) => ImportFolder(all: true);
+            var exportSprite = new Button { Text = "Export this sprite's PNGs...", AutoSize = true };
+            exportSprite.Click += (_, _) => ExportThisSprite();
+            bar.Controls.AddRange([write, export, exportSprite, importOne, importAll, _importStatus]);
 
             page.Controls.Add(bar); page.Controls.Add(grid); page.Controls.Add(top); page.Controls.Add(_fInfo);
             page.Scroll += (_, _) => { };
@@ -140,11 +226,28 @@ namespace DBZKit
             _fSprite.Items.Clear();
             foreach (var c in choices) _fSprite.Items.Add(c);
             int idx = choices.FindIndex(c => c.Id == want);
-            _fSprite.SelectedIndex = idx >= 0 ? idx : Math.Max(0, choices.FindIndex(c => c.Id == 72));
+            _fSprite.SelectedIndex = idx >= 0 ? idx : 0;   // no earlier pick: the first sprite in the list
             _fFilling = false;
+            FillGroupCombo();
+        }
+
+        // The groups this sprite's record can hold frames in: exactly the groups "Dump all sprites" walks for it, so what you can export is what you can edit.
+        private void FillGroupCombo()
+        {
+            if (_rom == null || _fSprite.SelectedItem == null) return;
+            int keep = Math.Max(0, _fGroup.SelectedIndex);
+            int groups = Math.Max(1, FrameImport.GroupsIn(_rom, SelectedSprite));
+            bool was = _fFilling;
+            _fFilling = true;
+            _fGroup.Items.Clear();
+            for (int n = 0; n < groups; n++) _fGroup.Items.Add(GroupName(n));
+            _fGroup.SelectedIndex = Math.Min(keep, groups - 1);
+            _fFilling = was;
         }
 
         private bool _fFilling;
+
+        private int CurrentFrame => (int)_fFrame.Value;
 
         private int GroupOffset => FrameImport.FirstGroup + Math.Max(0, _fGroup.SelectedIndex) * FrameImport.GroupSize;
 
@@ -162,9 +265,20 @@ namespace DBZKit
         {
             if (_rom == null) return;
             int sprite = SelectedSprite;
+            int frames = 0;
+            for (int i = 0; i < 4; i++) frames = Math.Max(frames, FrameImport.SlotFrameCount(_rom, sprite, GroupOffset + i * 4));
+            if (_fFrame.Maximum != Math.Max(0, frames - 1))
+            {
+                bool was = _fFilling;
+                _fFilling = true;
+                _fFrame.Maximum = Math.Max(0, frames - 1);
+                if (_fFrame.Value > _fFrame.Maximum) _fFrame.Value = _fFrame.Maximum;
+                _fFilling = was;
+            }
+            _fFrameInfo.Text = frames == 0 ? "(no frames)" : $"of {frames}";
             for (int i = 0; i < 4; i++)
             {
-                var cur = FrameImport.RenderSlot(_rom, sprite, GroupOffset + i * 4);
+                var cur = FrameImport.RenderSlot(_rom, sprite, GroupOffset + i * 4, CurrentFrame);
                 _fCur[i].Image = cur;
                 string curSize = cur == null ? "empty in ROM" : $"stock {cur.Width}x{cur.Height}";
                 bool mirrored = i == 3 && _fMirror.Checked;
@@ -195,7 +309,7 @@ namespace DBZKit
                     // Pad to the frame that is in the ROM now (Left's frame for a mirrored Right), so the sprite-memory size stays as the game expects.
                     if (_fPad.Checked)
                     {
-                        using var stock = FrameImport.RenderSlot(_rom!, SelectedSprite, GroupOffset + i * 4);
+                        using var stock = FrameImport.RenderSlot(_rom!, SelectedSprite, GroupOffset + i * 4, CurrentFrame);
                         if (stock != null && (stock.Width != c.Width || stock.Height != c.Height)) c = FrameImport.PadTo(c, stock.Width, stock.Height);
                     }
                     list.Add((i, c));
@@ -228,7 +342,7 @@ namespace DBZKit
                 foreach (var (slot, c) in all)
                 {
                     sbyte x = _fAuto.Checked ? (sbyte)(-(c.Width - 16) / 2) : (sbyte)_fX.Value, y = _fAuto.Checked ? (sbyte)(8 - c.Height) : (sbyte)_fY.Value;
-                    FrameImport.WriteFrame(_rom, sprite, start + slot * 4, c, x, y, slot == 2 && _fMirror.Checked ? start + 12 : -1);
+                    FrameImport.WriteFrame(_rom, sprite, start + slot * 4, c, x, y, slot == 2 && _fMirror.Checked ? start + 12 : -1, _fAllFrames.Checked ? -1 : CurrentFrame);
                 }
             }
             catch (Exception ex) { Fail(ex.Message); return; }

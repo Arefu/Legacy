@@ -170,8 +170,9 @@
             // 
             // TabPage_SpriteViewer
             // 
-            TabPage_SpriteViewer.Controls.Add(treeView2);
+            // The Fill control goes in first (lowest z-order) so the docked tree takes its 256px first; the list then fills the rest.
             TabPage_SpriteViewer.Controls.Add(ListView_SpriteViewer);
+            TabPage_SpriteViewer.Controls.Add(treeView2);
             TabPage_SpriteViewer.Location = new Point(4, 24);
             TabPage_SpriteViewer.Name = "TabPage_SpriteViewer";
             TabPage_SpriteViewer.Size = new Size(1256, 629);
@@ -190,8 +191,8 @@
             // 
             // ListView_SpriteViewer
             // 
-            ListView_SpriteViewer.Dock = DockStyle.Right;
-            ListView_SpriteViewer.Location = new Point(262, 0);
+            ListView_SpriteViewer.Dock = DockStyle.Fill;
+            ListView_SpriteViewer.Location = new Point(256, 0);
             ListView_SpriteViewer.Name = "ListView_SpriteViewer";
             ListView_SpriteViewer.Size = new Size(994, 629);
             ListView_SpriteViewer.TabIndex = 0;

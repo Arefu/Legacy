@@ -1,3 +1,4 @@
+using DrGero.Engine;
 using DBZKit.Assets;
 using DrGero.Boot;
 using DrGero.IO;
@@ -40,6 +41,7 @@ namespace DBZKit
             AddEditorTab("Engine tools", new EngineToolsPanel(_session));
             AddEditorTab("Sprite editor", new SpriteEditorPanel(_session));
             AddEditorTab("Sound", new AudioPanel(_session));
+            BuildSpriteViewerToolbar();
 
             _PortraitImageList = new ImageList
             {
@@ -91,67 +93,156 @@ namespace DBZKit
             AssetContextMenu.Items.Add("Replace...", null, OnReplace);
         }
 
-        private void OnExportPng(object? sender, EventArgs e)
+        private void OnExportPng(object? sender, EventArgs e) => ExportSelected(sender, png: true);
+        private void OnExportBin(object? sender, EventArgs e) => ExportSelected(sender, png: false);
+
+        // One entry to export: a file-name stem plus whatever the list can provide (a bitmap for PNG, raw decompressed bytes for BIN).
+        private sealed record Exportable(string Name, Func<Bitmap?> Png, Func<byte[]?> Bin);
+
+        private List<Exportable> ExportablesFor(ListView list)
         {
-            ListView? SelectedListView = (ListView)((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
-            if (SelectedListView == null || SelectedListView.SelectedItems.Count == 0)
-                return;
-
-            string key = SelectedListView.SelectedItems[0].ImageKey;
-
-            SaveFileDialog save = new() { Filter = "PNG Image|*.png", FileName = key };
-            if (save.ShowDialog() != DialogResult.OK)
-                return;
-
-            switch (SelectedListView.Name)
+            var result = new List<Exportable>();
+            foreach (ListViewItem item in list.SelectedItems)
             {
-                case "ListView_PortraitViewer":
-                    Bitmap? bitmap = (Bitmap)_PortraitImageList.Images[key];
-                    Portraits.ExportPng(bitmap, save.FileName);
-                    break;
-                case "ListView_ItemViewer":
-                    _ = MessageBox.Show("1");
-                    break;
-                default:
-                    break;
+                int index = list.Items.IndexOf(item);
+                string key = item.ImageKey;
+                switch (list.Name)
+                {
+                    case "ListView_PortraitViewer":
+                        {
+                            int id = int.Parse(key.Split('_')[1]);
+                            result.Add(new Exportable(key, () => _PortraitImageList.Images[key] as Bitmap, () => _PortraitData.GetValueOrDefault(id)));
+                            break;
+                        }
+                    case "ListView_ItemViewer":
+                        result.Add(new Exportable(key, () => _ItemImageList.Images[key] as Bitmap, () => _ItemData.GetValueOrDefault(index)));
+                        break;
+                    case "ListView_MiscSprites":
+                        result.Add(new Exportable(key, () => _AbilityImageList.Images[key] as Bitmap, () => _SpriteData.GetValueOrDefault(index)));
+                        break;
+                    case "ListView_SpriteViewer" when treeView2.SelectedNode?.Tag is int spriteId:
+                        {
+                            // Full-resolution frame, not the 64x64 thumbnail; the raw tiles come from "Dump selected sprite" instead.
+                            string label = item.Text.Split(' ')[0];
+                            result.Add(new Exportable($"sprite_{spriteId:D3}_{label}",
+                                () => SpriteDump.RenderFrames(Rom, spriteId).FirstOrDefault(f => f.Label == label).Image,
+                                () => null));
+                            break;
+                        }
+                }
             }
+            return result;
         }
 
-        private void OnExportBin(object? sender, EventArgs e)
+        // Right-click > Export PNG / BIN. One selected item asks for a file name; several ask for a folder only and name the files themselves.
+        private void ExportSelected(object? sender, bool png)
         {
-            if (ListView_PortraitViewer.SelectedItems.Count == 0)
+            var list = (ListView?)((sender as ToolStripMenuItem)?.Owner as ContextMenuStrip)?.SourceControl;
+            if (list == null || list.SelectedItems.Count == 0) return;
+            var items = ExportablesFor(list);
+            string ext = png ? ".png" : ".bin";
+            if (items.Count == 0) return;
+
+            int written = 0, skipped = 0;
+            void Write(Exportable e, string path)
             {
-                return;
+                if (png)
+                {
+                    var bmp = e.Png();
+                    if (bmp == null) { skipped++; return; }
+                    bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                else
+                {
+                    var bytes = e.Bin();
+                    if (bytes == null) { skipped++; return; }
+                    File.WriteAllBytes(path, bytes);
+                }
+                written++;
             }
 
-            string key = ListView_PortraitViewer.SelectedItems[0].ImageKey;
-            int index = int.Parse(key.Split('_')[1]);
-
-            SaveFileDialog save = new() { Filter = "Binary|*.bin", FileName = key };
-            if (save.ShowDialog() != DialogResult.OK)
+            string where;
+            if (items.Count == 1)
             {
-                return;
+                using var save = new SaveFileDialog { Filter = png ? "PNG Image|*.png" : "Binary|*.bin", FileName = items[0].Name };
+                if (save.ShowDialog() != DialogResult.OK) return;
+                Write(items[0], save.FileName);
+                where = save.FileName;
             }
-
-            Portraits.ExportBin(_PortraitData[index], save.FileName);
+            else
+            {
+                using var folder = new FolderBrowserDialog { Description = $"Choose a folder for the {items.Count} selected files ({ext})" };
+                if (folder.ShowDialog() != DialogResult.OK) return;
+                foreach (var e in items) Write(e, Path.Combine(folder.SelectedPath, e.Name + ext));
+                where = folder.SelectedPath;
+            }
+            Flash($"Exported {written} file(s) to {where}" + (skipped > 0 ? $" ({skipped} had no {(png ? "image" : "raw data")}; use Dump selected sprite for sprite tiles)" : ""));
         }
 
+        // A short note in the title bar instead of a dialog.
+        private readonly System.Windows.Forms.Timer _flashTimer = new() { Interval = 6000 };
+        private string? _baseTitle;
+
+        private void Flash(string message)
+        {
+            _baseTitle ??= Text;
+            Text = $"{_baseTitle} -- {message}";
+            _flashTimer.Stop();
+            _flashTimer.Tick -= FlashDone;
+            _flashTimer.Tick += FlashDone;
+            _flashTimer.Start();
+        }
+
+        private void FlashDone(object? sender, EventArgs e)
+        {
+            _flashTimer.Stop();
+            if (_baseTitle != null) Text = _baseTitle;
+        }
+
+        // Right-click > Replace...: portraits only. Takes a 64x64 PNG (matched to the shared OBJ palette, or an indexed PNG used as-is) or a 4096-byte BIN,
+        // stores it uncompressed at the end of the ROM (Resource_LoadOrDecompress mode 0 = raw memcpy, HIGH) and repoints that portrait's table entry.
+        // The other viewers (items, ability icons, sprites) have no replace path here; use the Sprite editor tab for character sprites.
         private void OnReplace(object? sender, EventArgs e)
         {
-            if (ListView_PortraitViewer.SelectedItems.Count == 0)
+            var list = (ListView?)((sender as ToolStripMenuItem)?.Owner as ContextMenuStrip)?.SourceControl;
+            if (list == null || list.SelectedItems.Count == 0) return;
+            if (list.Name != "ListView_PortraitViewer") { Flash("Replace is only available for portraits. Character sprites: use the Sprite editor tab."); return; }
+            if (_GBARom == null) return;
+
+            int index = int.Parse(list.SelectedItems[0].ImageKey.Split('_')[1]);
+            using OpenFileDialog open = new() { Filter = "PNG Image|*.png|Binary|*.bin" };
+            if (open.ShowDialog() != DialogResult.OK) return;
+
+            byte[] raw;
+            try
             {
-                return;
+                if (open.FileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)) raw = File.ReadAllBytes(open.FileName);
+                else
+                {
+                    var converted = FrameImport.FromPng(open.FileName, Rom, requireShape: false);
+                    if (converted.Width != 64 || converted.Height != 64) { Flash($"A portrait must be 64x64 (that PNG is {converted.Width}x{converted.Height})."); return; }
+                    raw = converted.Indices;
+                }
+                if (raw.Length != 64 * 64) { Flash($"A portrait must be {64 * 64} bytes (that file is {raw.Length})."); return; }
             }
+            catch (Exception ex) { Flash(ex.Message); return; }
 
-            _ = ListView_PortraitViewer.SelectedItems[0].ImageKey;
+            // Build the raw resource {mode 0, size, data} at the end of the ROM (4-byte aligned) and point Portrait_Table[index] at it.
+            int at = (_GBARom.Length + 3) & ~3;
+            var grown = new byte[at + 8 + raw.Length];
+            Buffer.BlockCopy(_GBARom, 0, grown, 0, _GBARom.Length);
+            BitConverter.GetBytes(0).CopyTo(grown, at);
+            BitConverter.GetBytes(raw.Length).CopyTo(grown, at + 4);
+            raw.CopyTo(grown, at + 8);
+            BitConverter.GetBytes(0x08000000u | (uint)at).CopyTo(grown, 0x3EC9D4 + index * 4);
+            _GBARom = grown;
+            _session.Load(_GBARom, _session.Path);
 
-            OpenFileDialog open = new() { Filter = "PNG Image|*.png|Binary|*.bin" };
-            if (open.ShowDialog() != DialogResult.OK)
-            {
-                return;
-            }
-
-            _ = MessageBox.Show("Replace not yet implemented.", "Coming Soon", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            ListView_PortraitViewer.Items.Clear();
+            _PortraitImageList.Images.Clear();
+            _PortraitData.Clear();
+            Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
+            Flash($"Portrait {index} replaced in DBZKit's loaded ROM. Use the Save ROM As button on an editor tab to write it to disk.");
         }
 
         private void OpenRomToolStripMenuItem_Click(object sender, EventArgs e)
@@ -830,7 +921,32 @@ namespace DBZKit
                 Cursor = Cursors.Default;
             }
 
+            // The viewers' own lists: portraits, item sprites and ability icons, as PNG + raw BIN named after their list keys.
+            int listed = 0;
+            void DumpList(ListView list, ImageList images, Func<ListViewItem, int, byte[]?> raw, string folder)
+            {
+                string dir = Path.Combine(dialog.SelectedPath, "ROM", folder);
+                Directory.CreateDirectory(dir);
+                foreach (ListViewItem item in list.Items)
+                {
+                    string key = item.ImageKey;
+                    if (images.Images[key] is Bitmap bmp) bmp.Save(Path.Combine(dir, key + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                    var bytes = raw(item, list.Items.IndexOf(item));
+                    if (bytes != null) File.WriteAllBytes(Path.Combine(dir, key + ".bin"), bytes);
+                    listed++;
+                }
+            }
+            DumpList(ListView_PortraitViewer, _PortraitImageList, (item, _) => _PortraitData.GetValueOrDefault(int.Parse(item.ImageKey.Split('_')[1])), "Portraits");
+            DumpList(ListView_ItemViewer, _ItemImageList, (_, i) => _ItemData.GetValueOrDefault(i), "Items");
+            DumpList(ListView_MiscSprites, _AbilityImageList, (_, i) => _SpriteData.GetValueOrDefault(i), "AbilityIcons");
+
+            string spritesDir = Path.Combine(dialog.SelectedPath, "ROM", "Sprites");
+            int spriteFrames = 0, spriteCount = 0;
+            foreach (int id in SpriteDump.SpriteIds(rom)) { int n = SpriteDump.DumpSprite(rom, id, spritesDir); if (n > 0) { spriteCount++; spriteFrames += n; } }
+
             MessageBox.Show(
+                $"Dumped {listed} portrait / item / ability-icon image(s) (PNG + BIN) to ROM\\Portraits, ROM\\Items and ROM\\AbilityIcons.\n\n" +
+                $"Dumped {spriteFrames} sprite frame(s) of {spriteCount} sprite(s) (PNG + BIN, re-importable in the Sprite editor tab) to:\n{spritesDir}\n\n" +
                 $"Dumped {dumped} asset(s) to:\n{rawDir}\n{assetsDir}\n\n" +
                 $"Dumped {mapResult.Maps} map(s) and {mapResult.Banks} tile atlas bank(s) (PNG + BIN) to:\n{mapsDir}" +
                 (mapResult.Errors > 0 ? $"\n\n{mapResult.Errors} problem(s) were logged to errors.txt in that folder." : ""),
@@ -942,7 +1058,8 @@ namespace DBZKit
 
             var rom = Rom;
             var nodes = new List<TreeNode>();
-            foreach (int spriteId in CharacterIconReader.EnumerateValidSpriteIds(rom, NpcGame))
+            // Every sprite that has a record (the same set "Dump all sprites" writes), not the old heuristic scan that gave up after a few misses.
+            foreach (int spriteId in SpriteDump.SpriteIds(rom))
                 nodes.Add(new TreeNode($"Sprite {spriteId}") { Tag = spriteId });
 
             treeView2.BeginUpdate();
@@ -963,10 +1080,9 @@ namespace DBZKit
             var images = new List<Image>();
             var items = new List<ListViewItem>();
 
-            foreach (var slotFrame in CharacterIconReader.GetAllSlotFrames(Rom, NpcGame, spriteId))
+            // Every frame of every animation (group / direction / frame), the same ones the dump writes.
+            foreach (var (label, iconWidth, iconHeight, icon) in SpriteDump.RenderFrames(Rom, spriteId))
             {
-                var icon = slotFrame.Bitmap;
-                int iconWidth = icon.Width, iconHeight = icon.Height;
                 float scale = Math.Min((float)box / iconWidth, (float)box / iconHeight);
                 int drawWidth = Math.Max(1, (int)Math.Round(iconWidth * scale));
                 int drawHeight = Math.Max(1, (int)Math.Round(iconHeight * scale));
@@ -981,7 +1097,7 @@ namespace DBZKit
                 icon.Dispose();
 
                 images.Add(thumbnail);
-                items.Add(new ListViewItem($"Slot {slotFrame.SlotIndex} ({iconWidth}x{iconHeight})", images.Count - 1));
+                items.Add(new ListViewItem($"{label} ({iconWidth}x{iconHeight})", images.Count - 1));
             }
 
             _SpriteImageList.Images.AddRange(images.ToArray());
@@ -996,6 +1112,54 @@ namespace DBZKit
             var tab = new TabPage(title) { Padding = new Padding(0) };
             tab.Controls.Add(panel);
             DBZKit_TabControl.TabPages.Add(tab);
+        }
+
+        // Sprite Viewer toolbar: dump sprites to folders that the Sprite editor tab can import again (see DrGero/SpriteDump.cs).
+        private readonly Label _spriteDumpStatus = new() { AutoSize = true, Margin = new Padding(12, 9, 0, 0), ForeColor = Color.DimGray };
+
+        private void BuildSpriteViewerToolbar()
+        {
+            var dumpAll = new Button { Text = "Dump all sprites...", AutoSize = true };
+            var dumpOne = new Button { Text = "Dump ticked / selected sprites...", AutoSize = true };
+            var tickAll = new Button { Text = "Tick all", AutoSize = true };
+            var tickNone = new Button { Text = "Tick none", AutoSize = true };
+            treeView2.CheckBoxes = true;
+            tickAll.Click += (_, _) => { foreach (TreeNode n in treeView2.Nodes) n.Checked = true; };
+            tickNone.Click += (_, _) => { foreach (TreeNode n in treeView2.Nodes) n.Checked = false; };
+            dumpAll.Click += async (_, _) => await DumpSprites(all: true);
+            dumpOne.Click += async (_, _) => await DumpSprites(all: false);
+            var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(4) };
+            bar.Controls.AddRange([dumpAll, dumpOne, tickAll, tickNone, _spriteDumpStatus]);
+            TabPage_SpriteViewer.Controls.Add(bar);   // last = topmost z-order, so it docks across the whole top first
+        }
+
+        private async Task DumpSprites(bool all)
+        {
+            if (_GBARom == null) { _spriteDumpStatus.Text = "Open a ROM first."; return; }
+            var rom = Rom;
+            List<int> ids;
+            if (all) ids = SpriteDump.SpriteIds(rom);
+            else
+            {
+                ids = treeView2.Nodes.Cast<TreeNode>().Where(n => n.Checked && n.Tag is int).Select(n => (int)n.Tag!).ToList();
+                if (ids.Count == 0 && treeView2.SelectedNode?.Tag is int one) ids = [one];
+                if (ids.Count == 0) { _spriteDumpStatus.Text = "Tick or select at least one sprite first."; return; }
+            }
+
+            using var dialog = new FolderBrowserDialog { Description = "Choose a folder: one sprite_NNN folder (PNG + BIN + manifest) is created per sprite" };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+            string root = dialog.SelectedPath;
+            int frames = 0, done = 0;
+            await Task.Run(() =>
+            {
+                foreach (int id in ids)
+                {
+                    frames += SpriteDump.DumpSprite(rom, id, root);
+                    done++;
+                    if (done % 8 == 0 || done == ids.Count) BeginInvoke(() => _spriteDumpStatus.Text = $"Dumping... {done}/{ids.Count} sprites");
+                }
+            });
+            _spriteDumpStatus.Text = $"Dumped {frames} frame(s) from {ids.Count} sprite(s) to {root}. Import them back in the Sprite editor tab.";
         }
     }
 }

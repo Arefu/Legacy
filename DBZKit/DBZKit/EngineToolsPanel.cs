@@ -218,7 +218,9 @@ namespace DBZKit
             var add = new Button { Text = "Add row (copy of selected)", AutoSize = true };
             add.Click += (_, _) => AddRow();
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 38, Padding = new Padding(4) };
-            buttons.Controls.AddRange([apply, add]);
+            var transform = new Button { Text = "Add transformation ability...", AutoSize = true };
+            transform.Click += (_, _) => AddTransformationAbility();
+            buttons.Controls.AddRange([apply, add, transform]);
 
             page.Controls.Add(_rows); page.Controls.Add(_preview); page.Controls.Add(_rowsInfo); page.Controls.Add(buttons);
             return page;
@@ -360,6 +362,61 @@ namespace DBZKit
             }
             for (int i = 0; i < parsed.Count; i++) RosterTables.WriteAbility(_rom, i, parsed[i]);
             return true;
+        }
+
+        // A brand-new ability that switches the active character to a chosen display row (base -> SSJ God etc.); see DrGero/TransformationAbility.cs.
+        private void AddTransformationAbility()
+        {
+            if (_rom == null) return;
+            if (!ApplyAbilities()) return;
+            var rows = RosterTables.ReadDisplayRows(_rom);
+            var abilities = RosterTables.ReadAbilities(_rom);
+            string RowLabel(int i) => $"Row {i}  -  sprite {rows[i].SpriteId}, portrait {rows[i].PortraitIndex}{((rows[i].Flags & 1) != 0 ? ", transformed form" : "")}";
+
+            using var dlg = new Form
+            {
+                Text = "Add transformation ability", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(560, 300), AutoScaleMode = AutoScaleMode.Font,
+            };
+            var target = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 170, Top = 14, Width = 370 };
+            var revert = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 170, Top = 50, Width = 370 };
+            var icons = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Left = 170, Top = 122, Width = 370 };
+            var ep = new NumericUpDown { Left = 170, Top = 86, Width = 90, Minimum = 0, Maximum = 999, Value = 30 };
+            var revertible = new CheckBox { Text = "Make the target row revertible with the stock Transformation ability", Left = 170, Top = 156, Width = 380, Checked = true };
+            var newForm = new CheckBox { Text = "Create it as a NEW form: copy the \"Becomes\" row with a NEW sprite id (edit its frames in the Sprite editor)", Left = 170, Top = 184, Width = 380, Height = 40, Checked = true };
+            newForm.CheckedChanged += (_, _) => revertible.Enabled = !newForm.Checked;
+            for (int i = 0; i < rows.Count; i++) { target.Items.Add(RowLabel(i)); revert.Items.Add(RowLabel(i)); }
+            for (int i = 0; i < abilities.Count; i++) icons.Items.Add($"{i} - {AbilityName(i)}");
+            target.SelectedIndex = Math.Min(20, rows.Count - 1);
+            revert.SelectedIndex = Math.Min(19, rows.Count - 1);
+            icons.SelectedIndex = Math.Min(11, abilities.Count - 1);
+            target.SelectedIndexChanged += (_, _) => { if (target.SelectedIndex >= 0) revert.SelectedIndex = Math.Min(rows[target.SelectedIndex].DetransformedIndex, rows.Count - 1); };
+            var ok = new Button { Text = "Add", DialogResult = DialogResult.OK, Left = 370, Top = 255, Width = 80 };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 460, Top = 255, Width = 80 };
+            dlg.AcceptButton = ok; dlg.CancelButton = cancel;
+            dlg.Controls.AddRange([
+                new Label { Text = "Becomes (display row) / copy of:", Left = 12, Top = 18, Width = 155, Height = 32 }, target,
+                new Label { Text = "Reverts to (display row):", Left = 12, Top = 54, Width = 155 }, revert,
+                new Label { Text = "EP cost:", Left = 12, Top = 90, Width = 155 }, ep,
+                new Label { Text = "Share HUD icons of:", Left = 12, Top = 126, Width = 155 }, icons,
+                revertible, newForm, ok, cancel]);
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                string form = "";
+                TransformationAbility.Result result;
+                if (newForm.Checked)
+                {
+                    var made = TransformationAbility.AddWithNewForm(_rom, target.SelectedIndex, (int)ep.Value, icons.SelectedIndex, revert.SelectedIndex);
+                    result = made.Ability;
+                    form = $"New form: display row {made.NewRow} with NEW sprite id {made.NewSprite} (a copy of sprite {RosterTables.ReadDisplayRows(_rom)[target.SelectedIndex].SpriteId}; recolour it in the Sprite editor). ";
+                }
+                else result = TransformationAbility.Add(_rom, target.SelectedIndex, (int)ep.Value, icons.SelectedIndex, revertible.Checked, revert.SelectedIndex);
+                FillAbilities(); FillParty(); FillRows();   // the party grid's ability drop-downs gain the new entry; the row list gains the new form
+                _abilInfo.Text = form + result.Notes + " Assign it in the Default party tab (it only affects a NEW GAME) or via a script that rewrites the slot's ability list.";
+                _session.NotifyChanged(this);
+            }
+            catch (Exception ex) { Fail(ex.Message); }
         }
 
         private void AddAbility()

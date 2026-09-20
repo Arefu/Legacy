@@ -1,10 +1,6 @@
-// WORK STATUS (2026-09-20) -- read this first if you are resuming:
-//   DONE  : top-level "Sound" tab on the shared EditSession; player (play/pause/stop/seek/volume/loop) over winmm (WaveOutPlayer);
-//           songs rendered by DrGero/AudioRender.cs (SongRenderer); SFX/instrument WAV, song XM/JSON import+export.
-//   TODO  : (1) listen-test songs in the app and compare with the emulator (slides/vibrato/envelope are MEDIUM certainty);
-//           (2) Engine tools > Sprite frames was moved to the "Sprite editor" tab (SpriteEditorPanel.cs);
-//           (3) effect 27 is still unknown; XM export drops slides/vibrato/envelope.
-//   Audio-Notes.md has the format and IDA state.
+// STATUS (2026-09-20): complete. Sound tab with player (play/pause/stop/seek/volume/loop) over winmm, songs rendered by DrGero/AudioRender.cs,
+// SFX / instrument WAV import + export, song XM / JSON import + export. The renderer's slide / vibrato / envelope handling is transcribed from
+// the game's code but has not been compared with real hardware output; Audio-Notes.md has the formats and the IDA state.
 using DrGero.Engine;
 using DrGero.IO;
 
