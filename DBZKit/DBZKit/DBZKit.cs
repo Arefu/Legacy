@@ -1,5 +1,4 @@
 using DrGero.Engine;
-using DBZKit.Assets;
 using DrGero.Boot;
 using DrGero.IO;
 using DrGero.Rendering;
@@ -8,175 +7,45 @@ namespace DBZKit
 {
     public partial class DBZKit : Form
     {
-        private readonly Dictionary<int, byte[]> _PortraitData = [];
-        private readonly Dictionary<int, byte[]> _ItemData = [];
-        private readonly Dictionary<int, byte[]> _SpriteData = [];
-        private readonly Dictionary<int, byte[]> _AbilityData = [];
-
-        private readonly ImageList _PortraitImageList;
-        private readonly ImageList _AbilityImageList;
-        private readonly ImageList _SpriteImageList;
-        private readonly ImageList _ItemImageList;
-
         private byte[]? _GBARom;
 
-        // The editor tabs (Engine tools, Sprite editor, Sound) all work on this one private copy of the ROM;
-        // "Apply to DBZKit" replaces _GBARom with the edited bytes and "Save ROM As..." writes them to disk.
+        // Every editor works on this one copy of the ROM. Each edit is copied into _GBARom straight away (the boot-screen pages read it);
+        // File > Save / Save As writes it to disk, and the title bar marks unsaved changes.
         private readonly EditSession _session;
 
-        // Confirmed offsets from Dragon Radar's games/ALFE.json (this ROM) -- only the
-        // two fields CharacterIconReader actually needs, so a plain Game POCO built here
-        // avoids pulling in Bulma's GameFactory/GameLibrary just for this.
-        private static readonly DrGero.Config.Game NpcGame = new()
-        {
-            OBJPaletteOffset = 0x1DA6C8,
-            CharacterSpriteIndexOffset = 0x3B4E74,
-        };
+        // Every asset kind as a top-level tab (Characters, Portraits, Items, Maps, ...), from the game profile. See RomBrowser.
+        private readonly RomBrowser _browser;
+        private readonly ToolStripStatusLabel _statusText = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+        private readonly ToolStripProgressBar _statusProgress = new() { Width = 220, Visible = false };
+
+        // The Intro / Attract Mode / Title Screen / Credits tabs still read US (ALFE) addresses inside DrGero.Boot; they only load when the
+        // ROM's game profile says it has that layout ("ALFE-boot"), so another game or region never crashes them.
+        private bool HasBootLayout => _browser.Game?.HasLayout("ALFE-boot") == true;
+        private string NoBootLayout => $"{RomBrowser.GameCode(_GBARom ?? [])}: this screen isn't mapped for this version of the game yet, so it can't be shown. " +
+            "That doesn't mean the game lacks it (the EU and Japanese Legacy of Goku II have it); only the US ROM's addresses are known so far.";
 
         public DBZKit()
         {
             InitializeComponent();
 
             _session = new EditSession(edited => _GBARom = edited);
-            AddEditorTab("Engine tools", new EngineToolsPanel(_session));
-            AddEditorTab("Sprite editor", new SpriteEditorPanel(_session));
+            var status = new StatusStrip();
+            status.Items.AddRange([_statusText, _statusProgress]);
+            Controls.Add(status);
+            _browser = new RomBrowser(_session, DBZKit_TabControl, _statusText, _statusProgress, OpenEditor);
+
             AddEditorTab("Sound", new AudioPanel(_session));
-            BuildSpriteViewerToolbar();
-
-            _PortraitImageList = new ImageList
+            AddEditorTab("Sprite editor", _spriteEditor = new SpriteEditorPanel(_session));
+            AddEditorTab("Engine tools", new EngineToolsPanel(_session));
+            BuildAttractEditing();
+            BuildShell();
+            FormClosed += (_, _) => _browser.Dispose();
+            Shown += (_, _) =>
             {
-                ImageSize = new Size(128, 128),
-                ColorDepth = ColorDepth.Depth32Bit
+                // DBZKit.exe "<rom.gba>" opens that ROM straight away.
+                string[] args = Environment.GetCommandLineArgs();
+                if (args.Length > 1 && File.Exists(args[1])) LoadRom(args[1]);
             };
-
-            _ItemImageList = new ImageList
-            {
-                ImageSize = new Size(64, 64),
-                ColorDepth = ColorDepth.Depth32Bit
-            };
-
-            // 64x64 fixed box -- CharacterIconReader's frames are NOT all the same size
-            // (CONFIRMED: 8x8 up to 64x64, plus at least one 32x16 case), so each frame is
-            // scaled to FIT inside this box (preserving aspect ratio, see
-            // PopulateSpriteFrameList) rather than force-stretched to one shape.
-            _SpriteImageList = new ImageList
-            {
-                ImageSize = new Size(64, 64),
-                ColorDepth = ColorDepth.Depth32Bit
-            };
-
-            _AbilityImageList = new ImageList
-            {
-                ImageSize = new Size(32, 16),
-                ColorDepth = ColorDepth.Depth32Bit
-            };
-
-            ListView_MiscSprites.View = View.LargeIcon;
-            ListView_MiscSprites.LargeImageList = _AbilityImageList;
-            ListView_MiscSprites.ContextMenuStrip = AssetContextMenu;
-
-            ListView_ItemViewer.View = View.LargeIcon;
-            ListView_ItemViewer.LargeImageList = _ItemImageList;
-            ListView_ItemViewer.ContextMenuStrip = AssetContextMenu;
-
-            ListView_PortraitViewer.View = View.LargeIcon;
-            ListView_PortraitViewer.LargeImageList = _PortraitImageList;
-            ListView_PortraitViewer.ContextMenuStrip = AssetContextMenu;
-
-            ListView_SpriteViewer.View = View.LargeIcon;
-            ListView_SpriteViewer.LargeImageList = _SpriteImageList;
-            ListView_SpriteViewer.ContextMenuStrip = AssetContextMenu;
-
-            AssetContextMenu.Items.Add("Export PNG", null, OnExportPng);
-            AssetContextMenu.Items.Add("Export BIN", null, OnExportBin);
-            AssetContextMenu.Items.Add(new ToolStripSeparator());
-            AssetContextMenu.Items.Add("Replace...", null, OnReplace);
-        }
-
-        private void OnExportPng(object? sender, EventArgs e) => ExportSelected(sender, png: true);
-        private void OnExportBin(object? sender, EventArgs e) => ExportSelected(sender, png: false);
-
-        // One entry to export: a file-name stem plus whatever the list can provide (a bitmap for PNG, raw decompressed bytes for BIN).
-        private sealed record Exportable(string Name, Func<Bitmap?> Png, Func<byte[]?> Bin);
-
-        private List<Exportable> ExportablesFor(ListView list)
-        {
-            var result = new List<Exportable>();
-            foreach (ListViewItem item in list.SelectedItems)
-            {
-                int index = list.Items.IndexOf(item);
-                string key = item.ImageKey;
-                switch (list.Name)
-                {
-                    case "ListView_PortraitViewer":
-                        {
-                            int id = int.Parse(key.Split('_')[1]);
-                            result.Add(new Exportable(key, () => _PortraitImageList.Images[key] as Bitmap, () => _PortraitData.GetValueOrDefault(id)));
-                            break;
-                        }
-                    case "ListView_ItemViewer":
-                        result.Add(new Exportable(key, () => _ItemImageList.Images[key] as Bitmap, () => _ItemData.GetValueOrDefault(index)));
-                        break;
-                    case "ListView_MiscSprites":
-                        result.Add(new Exportable(key, () => _AbilityImageList.Images[key] as Bitmap, () => _SpriteData.GetValueOrDefault(index)));
-                        break;
-                    case "ListView_SpriteViewer" when treeView2.SelectedNode?.Tag is int spriteId:
-                        {
-                            // Full-resolution frame, not the 64x64 thumbnail; the raw tiles come from "Dump selected sprite" instead.
-                            string label = item.Text.Split(' ')[0];
-                            result.Add(new Exportable($"sprite_{spriteId:D3}_{label}",
-                                () => SpriteDump.RenderFrames(Rom, spriteId).FirstOrDefault(f => f.Label == label).Image,
-                                () => null));
-                            break;
-                        }
-                }
-            }
-            return result;
-        }
-
-        // Right-click > Export PNG / BIN. One selected item asks for a file name; several ask for a folder only and name the files themselves.
-        private void ExportSelected(object? sender, bool png)
-        {
-            var list = (ListView?)((sender as ToolStripMenuItem)?.Owner as ContextMenuStrip)?.SourceControl;
-            if (list == null || list.SelectedItems.Count == 0) return;
-            var items = ExportablesFor(list);
-            string ext = png ? ".png" : ".bin";
-            if (items.Count == 0) return;
-
-            int written = 0, skipped = 0;
-            void Write(Exportable e, string path)
-            {
-                if (png)
-                {
-                    var bmp = e.Png();
-                    if (bmp == null) { skipped++; return; }
-                    bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-                }
-                else
-                {
-                    var bytes = e.Bin();
-                    if (bytes == null) { skipped++; return; }
-                    File.WriteAllBytes(path, bytes);
-                }
-                written++;
-            }
-
-            string where;
-            if (items.Count == 1)
-            {
-                using var save = new SaveFileDialog { Filter = png ? "PNG Image|*.png" : "Binary|*.bin", FileName = items[0].Name };
-                if (save.ShowDialog() != DialogResult.OK) return;
-                Write(items[0], save.FileName);
-                where = save.FileName;
-            }
-            else
-            {
-                using var folder = new FolderBrowserDialog { Description = $"Choose a folder for the {items.Count} selected files ({ext})" };
-                if (folder.ShowDialog() != DialogResult.OK) return;
-                foreach (var e in items) Write(e, Path.Combine(folder.SelectedPath, e.Name + ext));
-                where = folder.SelectedPath;
-            }
-            Flash($"Exported {written} file(s) to {where}" + (skipped > 0 ? $" ({skipped} had no {(png ? "image" : "raw data")}; use Dump selected sprite for sprite tiles)" : ""));
         }
 
         // A short note in the title bar instead of a dialog.
@@ -199,70 +68,23 @@ namespace DBZKit
             if (_baseTitle != null) Text = _baseTitle;
         }
 
-        // Right-click > Replace...: portraits only. Takes a 64x64 PNG (matched to the shared OBJ palette, or an indexed PNG used as-is) or a 4096-byte BIN,
-        // stores it uncompressed at the end of the ROM (Resource_LoadOrDecompress mode 0 = raw memcpy, HIGH) and repoints that portrait's table entry.
-        // The other viewers (items, ability icons, sprites) have no replace path here; use the Sprite editor tab for character sprites.
-        private void OnReplace(object? sender, EventArgs e)
-        {
-            var list = (ListView?)((sender as ToolStripMenuItem)?.Owner as ContextMenuStrip)?.SourceControl;
-            if (list == null || list.SelectedItems.Count == 0) return;
-            if (list.Name != "ListView_PortraitViewer") { Flash("Replace is only available for portraits. Character sprites: use the Sprite editor tab."); return; }
-            if (_GBARom == null) return;
-
-            int index = int.Parse(list.SelectedItems[0].ImageKey.Split('_')[1]);
-            using OpenFileDialog open = new() { Filter = "PNG Image|*.png|Binary|*.bin" };
-            if (open.ShowDialog() != DialogResult.OK) return;
-
-            byte[] raw;
-            try
-            {
-                if (open.FileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)) raw = File.ReadAllBytes(open.FileName);
-                else
-                {
-                    var converted = FrameImport.FromPng(open.FileName, Rom, requireShape: false);
-                    if (converted.Width != 64 || converted.Height != 64) { Flash($"A portrait must be 64x64 (that PNG is {converted.Width}x{converted.Height})."); return; }
-                    raw = converted.Indices;
-                }
-                if (raw.Length != 64 * 64) { Flash($"A portrait must be {64 * 64} bytes (that file is {raw.Length})."); return; }
-            }
-            catch (Exception ex) { Flash(ex.Message); return; }
-
-            // Build the raw resource {mode 0, size, data} at the end of the ROM (4-byte aligned) and point Portrait_Table[index] at it.
-            int at = (_GBARom.Length + 3) & ~3;
-            var grown = new byte[at + 8 + raw.Length];
-            Buffer.BlockCopy(_GBARom, 0, grown, 0, _GBARom.Length);
-            BitConverter.GetBytes(0).CopyTo(grown, at);
-            BitConverter.GetBytes(raw.Length).CopyTo(grown, at + 4);
-            raw.CopyTo(grown, at + 8);
-            BitConverter.GetBytes(0x08000000u | (uint)at).CopyTo(grown, 0x3EC9D4 + index * 4);
-            _GBARom = grown;
-            _session.Load(_GBARom, _session.Path);
-
-            ListView_PortraitViewer.Items.Clear();
-            _PortraitImageList.Images.Clear();
-            _PortraitData.Clear();
-            Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Flash($"Portrait {index} replaced in DBZKit's loaded ROM. Use the Save ROM As button on an editor tab to write it to disk.");
-        }
-
         private void OpenRomToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            OpenFileDialog OpenFile = new();
-            if (OpenFile.ShowDialog() != DialogResult.OK)
-            {
-                MessageBox.Show("Please select a GBA ROM file to continue.", "No ROM Selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+            using var open = new OpenFileDialog { Filter = "GBA ROM (*.gba)|*.gba|All files|*.*" };
+            if (open.ShowDialog(this) != DialogResult.OK) return;
+            LoadRom(open.FileName);
+        }
 
-            _GBARom = File.ReadAllBytes(OpenFile.FileName);
-            _session.Load(_GBARom, OpenFile.FileName);
-            PopulateSpriteTree();
-            Portraits.Load(_GBARom, _PortraitImageList, ListView_PortraitViewer, _PortraitData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Items.Load(_GBARom, _ItemImageList, ListView_ItemViewer, _ItemData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            //    Sprites.Load(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            //  Sprites.Load2(_GBARom, _SpriteImageList, ListView_SpriteViewer, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-            Unknowns.Load(_GBARom, _AbilityImageList, ListView_MiscSprites, _SpriteData, GBA.ReadPalette(_GBARom, 0x081DA6C8));
-
+        /// <summary>Opens a ROM: the asset tabs come from its game profile; the boot-screen tabs only load for a profile with the ALFE layout.</summary>
+        private void LoadRom(string path)
+        {
+            if (!ConfirmDiscard()) return;
+            _GBARom = File.ReadAllBytes(path);
+            _session.Load(_GBARom, path); // the asset tabs (RomBrowser) and editor tabs reload from this
+            UpdateTitle();
+            AppSettings.Current.LastRom = path;
+            AppSettings.Current.Save();
+            UpdateRecent();
             LoadIntroTab();
             LoadAttractModeTab();
             LoadTitleScreenTab();
@@ -310,6 +132,7 @@ namespace DBZKit
             _timingEditors.Clear();
 
             if (_GBARom == null) return;
+            if (!HasBootLayout) { Label_IntroFrameInfo.Text = NoBootLayout; return; }
 
             var rom = Rom;
 
@@ -565,8 +388,10 @@ namespace DBZKit
             _attractFrameIndex = 0;
             PictureBox_AttractFrame.Image = null;
             Label_AttractFrameInfo.Text = "No ROM loaded.";
+            UpdateAttractEditing();
 
             if (_GBARom == null) return;
+            if (!HasBootLayout) { Label_AttractFrameInfo.Text = NoBootLayout; return; }
 
             var rom = Rom;
             _attractFrameMeta = GameIntroVideo.DecodeAllFramesRaw(rom); // expensive (181x JCALG1) -- done once; palette changes only re-render bitmaps, not re-decode
@@ -737,6 +562,7 @@ namespace DBZKit
             Label_TitleFrameInfo.Text = "No ROM loaded.";
 
             if (_GBARom == null) return;
+            if (!HasBootLayout) { Label_TitleFrameInfo.Text = NoBootLayout; return; }
 
             var rom = Rom;
             _titleFrames.AddRange(TitleScreenBall.GetFrames(rom, TitleScreenBall.GetPalette(rom)));
@@ -769,8 +595,8 @@ namespace DBZKit
 
             Label_TitleFrameInfo.Text =
                 $"Frame {_titleFrameIndex + 1} / {_titleFrames.Count}\r\n\r\n" +
-                $"Native size: {frame.Width}x{frame.Height}\r\n\r\n" +
-                "Palette: OBJ palette 0x081DA6C8 (confirmed via traced DMA -- see DrGero.Boot.TitleScreenBall class doc)";
+                $"Size: {frame.Width} x {frame.Height}\r\n\r\n" +
+                "Palette: menu";
 
             _titleFrameIndex = (_titleFrameIndex + 1) % _titleFrames.Count;
         }
@@ -847,7 +673,9 @@ namespace DBZKit
             Directory.CreateDirectory(assetsDir);
 
             var rom = Rom;
+            var game = _browser.Game;
             int dumped = 0;
+            bool boot = HasBootLayout;
 
             void DumpOne(int address, byte[] raw, Bitmap? png)
             {
@@ -862,8 +690,8 @@ namespace DBZKit
             }
 
             // DeveloperIntro: pre-boot splash + 3 slideshow frames, flat 240x160.
-            var devPalette = DeveloperIntro.GetPalette(rom);
-            foreach (var slide in DeveloperIntro.Slides)
+            var devPalette = boot ? DeveloperIntro.GetPalette(rom) : null;
+            foreach (var slide in boot ? DeveloperIntro.Slides : [])
             {
                 byte[] raw = DeveloperIntro.GetRawIndexedBytes(rom, slide);
                 Bitmap? png = raw.Length >= DeveloperIntro.FrameWidth * DeveloperIntro.FrameHeight
@@ -874,8 +702,8 @@ namespace DBZKit
 
             // GameIntroVideo: all 181 frame resources, each dumped independently by its
             // own address -- deltas included as raw (unblended) data, tiled 240x160.
-            var videoPalette = GameIntroVideo.GetPalette(rom, (GameIntroVideo.PaletteSource)ComboBox_AttractPalette.SelectedIndex);
-            foreach (int addr in GameIntroVideo.GetFrameResourceAddresses(rom))
+            var videoPalette = boot ? GameIntroVideo.GetPalette(rom, (GameIntroVideo.PaletteSource)ComboBox_AttractPalette.SelectedIndex) : null;
+            foreach (int addr in boot ? GameIntroVideo.GetFrameResourceAddresses(rom) : [])
             {
                 if (addr == 0) continue;
                 try
@@ -888,14 +716,14 @@ namespace DBZKit
             }
 
             // TitleScreenBall: 8 frames, tiled 32x32.
-            var ballPalette = TitleScreenBall.GetPalette(rom);
-            foreach (int addr in TitleScreenBall.GetFrameResourceAddresses(rom))
+            var ballPalette = boot ? TitleScreenBall.GetPalette(rom) : null;
+            foreach (int addr in boot ? TitleScreenBall.GetFrameResourceAddresses(rom) : [])
             {
                 if (addr == 0) continue;
                 try
                 {
                     byte[] raw = TitleScreenBall.GetRawFrameBytes(rom, addr);
-                    var png = DeveloperIntro.RenderIndexedTiled(raw, TitleScreenBall.FrameWidth / 8, TitleScreenBall.FrameHeight / 8, ballPalette);
+                    var png = TitleScreenBall.RenderFrame(raw, ballPalette!);
                     DumpOne(addr, raw, png);
                 }
                 catch { }
@@ -906,14 +734,15 @@ namespace DBZKit
             string mapsDir = Path.Combine(dialog.SelectedPath, "ROM", "Maps");
             string originalTitle = Text;
             Cursor = Cursors.WaitCursor;
-            (int Maps, int Banks, int Errors) mapResult;
+            (int Maps, int Banks, int Errors) mapResult = (0, 0, 0);
             try
             {
-                mapResult = MapDumper.DumpAll(rom, mapsDir, status =>
-                {
-                    Text = $"{originalTitle} -- {status}";
-                    Application.DoEvents(); // keep the window alive during the long dump
-                });
+                if (game != null && game.MapEntriesOffset != 0)
+                    mapResult = MapDumper.DumpAll(rom, game, mapsDir, status =>
+                    {
+                        Text = $"{originalTitle} -- {status}";
+                        Application.DoEvents(); // keep the window alive during the long dump
+                    });
             }
             finally
             {
@@ -921,29 +750,36 @@ namespace DBZKit
                 Cursor = Cursors.Default;
             }
 
-            // The viewers' own lists: portraits, item sprites and ability icons, as PNG + raw BIN named after their list keys.
+            // Portraits, item sprites and ability icons, as PNG + raw BIN, straight from the asset catalog (so from the game profile).
             int listed = 0;
-            void DumpList(ListView list, ImageList images, Func<ListViewItem, int, byte[]?> raw, string folder)
-            {
-                string pngDir = Path.Combine(dialog.SelectedPath, "ROM", folder, "PNG"), binDir = Path.Combine(dialog.SelectedPath, "ROM", folder, "BIN");
-                Directory.CreateDirectory(pngDir);
-                Directory.CreateDirectory(binDir);
-                foreach (ListViewItem item in list.Items)
+            if (_browser.Catalog != null && game != null)
+                foreach (string category in new[] { "Portraits", "Items", "Ability icons" })
                 {
-                    string key = item.ImageKey;
-                    if (images.Images[key] is Bitmap bmp) bmp.Save(Path.Combine(pngDir, key + ".png"), System.Drawing.Imaging.ImageFormat.Png);
-                    var bytes = raw(item, list.Items.IndexOf(item));
-                    if (bytes != null) File.WriteAllBytes(Path.Combine(binDir, key + ".bin"), bytes);
-                    listed++;
+                    string folder = Path.Combine(dialog.SelectedPath, "ROM", category.Replace(" ", ""));
+                    var nodes = _browser.Catalog.Categories.First(c => c.Name == category).Nodes;
+                    if (nodes.Count == 0) continue;
+                    Directory.CreateDirectory(Path.Combine(folder, "PNG"));
+                    Directory.CreateDirectory(Path.Combine(folder, "BIN"));
+                    var view = game.Clone();
+                    foreach (var node in nodes.Where(n => n.Preview != null))
+                    {
+                        string key = string.Concat(node.Name.Split(Path.GetInvalidFileNameChars())).Replace(' ', '_');
+                        try
+                        {
+                            using var p = node.Preview!(rom, view);
+                            for (int i = 0; i < p.Images.Count; i++)
+                                p.Images[i].Image.Save(Path.Combine(folder, "PNG", key + (p.Images.Count > 1 ? $"_{i}" : "") + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                            if (p.Raw != null) File.WriteAllBytes(Path.Combine(folder, "BIN", key + ".bin"), p.Raw);
+                            listed++;
+                        }
+                        catch { /* one bad asset doesn't stop the dump */ }
+                    }
                 }
-            }
-            DumpList(ListView_PortraitViewer, _PortraitImageList, (item, _) => _PortraitData.GetValueOrDefault(int.Parse(item.ImageKey.Split('_')[1])), "Portraits");
-            DumpList(ListView_ItemViewer, _ItemImageList, (_, i) => _ItemData.GetValueOrDefault(i), "Items");
-            DumpList(ListView_MiscSprites, _AbilityImageList, (_, i) => _SpriteData.GetValueOrDefault(i), "AbilityIcons");
 
             string spritesDir = Path.Combine(dialog.SelectedPath, "ROM", "Sprites");
             int spriteFrames = 0, spriteCount = 0;
-            foreach (int id in SpriteDump.SpriteIds(rom)) { int n = SpriteDump.DumpSprite(rom, id, spritesDir); if (n > 0) { spriteCount++; spriteFrames += n; } }
+            if (game?.HasLayout("ALFE-sprites") == true)
+                foreach (int id in SpriteDump.SpriteIds(rom)) { int n = SpriteDump.DumpSprite(rom, id, spritesDir); if (n > 0) { spriteCount++; spriteFrames += n; } }
 
             MessageBox.Show(
                 $"Dumped {listed} portrait / item / ability-icon image(s) (PNG + BIN) to ROM\\Portraits, ROM\\Items and ROM\\AbilityIcons.\n\n" +
@@ -1043,71 +879,6 @@ namespace DBZKit
                 ListBox_CreditsViewer.Lines = File.ReadAllLines(dialog.FileName);
             }
         }
-
-        // Sprite Viewer tab -- treeView2 lists every real sprite id (NPCs and enemies
-        // share this same catalog, no distinction found in the data), ListView_SpriteViewer
-        // shows that sprite's frames across its active slots when a tree node is picked.
-        // Replaces the old Sprites.Load3 call, which only ever loaded 4 hardcoded sample
-        // NPC ids (10/11/12) rather than the real catalog.
-        private void PopulateSpriteTree()
-        {
-            treeView2.Nodes.Clear();
-            ListView_SpriteViewer.Items.Clear();
-            _SpriteImageList.Images.Clear();
-
-            if (_GBARom == null) return;
-
-            var rom = Rom;
-            var nodes = new List<TreeNode>();
-            // Every sprite that has a record (the same set "Dump all sprites" writes), not the old heuristic scan that gave up after a few misses.
-            foreach (int spriteId in SpriteDump.SpriteIds(rom))
-                nodes.Add(new TreeNode($"Sprite {spriteId}") { Tag = spriteId });
-
-            treeView2.BeginUpdate();
-            treeView2.Nodes.AddRange(nodes.ToArray());
-            treeView2.EndUpdate();
-        }
-
-        private void treeView2_AfterSelect(object? sender, TreeViewEventArgs e)
-        {
-            ListView_SpriteViewer.Items.Clear();
-            _SpriteImageList.Images.Clear();
-            ListView_SpriteViewer.LargeImageList = _SpriteImageList;
-            ListView_SpriteViewer.View = View.LargeIcon;
-
-            if (_GBARom == null || e.Node?.Tag is not int spriteId) return;
-
-            const int box = 64;
-            var images = new List<Image>();
-            var items = new List<ListViewItem>();
-
-            // Every frame of every animation (group / direction / frame), the same ones the dump writes.
-            foreach (var (label, iconWidth, iconHeight, icon) in SpriteDump.RenderFrames(Rom, spriteId))
-            {
-                float scale = Math.Min((float)box / iconWidth, (float)box / iconHeight);
-                int drawWidth = Math.Max(1, (int)Math.Round(iconWidth * scale));
-                int drawHeight = Math.Max(1, (int)Math.Round(iconHeight * scale));
-
-                var thumbnail = new Bitmap(box, box);
-                using (var g = Graphics.FromImage(thumbnail))
-                {
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
-                    g.DrawImage(icon, (box - drawWidth) / 2, (box - drawHeight) / 2, drawWidth, drawHeight);
-                }
-                icon.Dispose();
-
-                images.Add(thumbnail);
-                items.Add(new ListViewItem($"{label} ({iconWidth}x{iconHeight})", images.Count - 1));
-            }
-
-            _SpriteImageList.Images.AddRange(images.ToArray());
-
-            ListView_SpriteViewer.BeginUpdate();
-            ListView_SpriteViewer.Items.AddRange(items.ToArray());
-            ListView_SpriteViewer.EndUpdate();
-        }
-
         private void AddEditorTab(string title, Control panel)
         {
             var tab = new TabPage(title) { Padding = new Padding(0) };
@@ -1115,52 +886,181 @@ namespace DBZKit
             DBZKit_TabControl.TabPages.Add(tab);
         }
 
-        // Sprite Viewer toolbar: dump sprites to folders that the Sprite editor tab can import again (see DrGero/SpriteDump.cs).
-        private readonly Label _spriteDumpStatus = new() { AutoSize = true, Margin = new Padding(12, 9, 0, 0), ForeColor = Color.DimGray };
+        // ---- Attract Mode editing (DrGero.Boot.AttractVideoWriter) -----------------------------------------------------------------
+        // Export all -> edit the PNGs -> Import video puts them back. A single frame can be swapped too. Frames are 240x160; colours are
+        // matched to the video's palette, or a new palette is built from the PNGs. Edits go into the loaded ROM (File > Save ROM As...).
 
-        private void BuildSpriteViewerToolbar()
+        private readonly Button _attractReplaceFrame = new() { Text = "Replace this frame...", Location = new Point(737, 500), Size = new Size(145, 28) };
+        private readonly Button _attractImportVideo = new() { Text = "Import video...", Location = new Point(892, 500), Size = new Size(145, 28) };
+        private readonly CheckBox _attractNewPalette = new() { Text = "Import builds a new palette from the PNGs", Location = new Point(737, 536), AutoSize = true };
+        private readonly Label _attractEditStatus = new() { Location = new Point(737, 562), Size = new Size(320, 60), ForeColor = Color.DimGray };
+
+        private void BuildAttractEditing()
         {
-            var dumpAll = new Button { Text = "Dump all sprites...", AutoSize = true };
-            var dumpOne = new Button { Text = "Dump ticked / selected sprites...", AutoSize = true };
-            var tickAll = new Button { Text = "Tick all", AutoSize = true };
-            var tickNone = new Button { Text = "Tick none", AutoSize = true };
-            treeView2.CheckBoxes = true;
-            tickAll.Click += (_, _) => { foreach (TreeNode n in treeView2.Nodes) n.Checked = true; };
-            tickNone.Click += (_, _) => { foreach (TreeNode n in treeView2.Nodes) n.Checked = false; };
-            dumpAll.Click += async (_, _) => await DumpSprites(all: true);
-            dumpOne.Click += async (_, _) => await DumpSprites(all: false);
-            var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(4) };
-            bar.Controls.AddRange([dumpAll, dumpOne, tickAll, tickNone, _spriteDumpStatus]);
-            TabPage_SpriteViewer.Controls.Add(bar);   // last = topmost z-order, so it docks across the whole top first
+            TabPage_AttractMode.Controls.AddRange([_attractReplaceFrame, _attractImportVideo, _attractNewPalette, _attractEditStatus]);
+            _attractReplaceFrame.Click += async (_, _) => await ReplaceAttractFrame();
+            _attractImportVideo.Click += async (_, _) => await ImportAttractVideo();
+            UpdateAttractEditing();
         }
 
-        private async Task DumpSprites(bool all)
+        private void UpdateAttractEditing()
         {
-            if (_GBARom == null) { _spriteDumpStatus.Text = "Open a ROM first."; return; }
-            var rom = Rom;
-            List<int> ids;
-            if (all) ids = SpriteDump.SpriteIds(rom);
-            else
+            bool ok = _GBARom != null && HasBootLayout;
+            _attractReplaceFrame.Enabled = _attractImportVideo.Enabled = _attractNewPalette.Enabled = ok;
+            if (!ok) _attractEditStatus.Text = "";
+        }
+
+        /// <summary>Loads a 240x160 PNG as tile-order indices into <paramref name="palette"/> (transparent pixels = index 0).</summary>
+        private static byte[] AttractFrameFromPng(Bitmap bmp, Color[] palette, string name)
+        {
+            if (bmp.Width != GameIntroVideo.FrameWidth || bmp.Height != GameIntroVideo.FrameHeight)
+                throw new InvalidOperationException($"{name} is {bmp.Width}x{bmp.Height}; attract-mode frames are {GameIntroVideo.FrameWidth}x{GameIntroVideo.FrameHeight}.");
+            return ImageImport.ToTiles(ImageImport.ToIndices(bmp, palette, transparentZero: true), GameIntroVideo.FrameWidth, GameIntroVideo.FrameHeight);
+        }
+
+        private async Task AfterAttractEdit(string message, int showFrame)
+        {
+            _session.Apply();                 // DBZKit's own copy (the boot tabs read it) now has the edit too
+            _session.NotifyChanged(null);     // the asset tabs re-index
+            LoadAttractModeTab();
+            if (_attractFrames.Count > 0)
             {
-                ids = treeView2.Nodes.Cast<TreeNode>().Where(n => n.Checked && n.Tag is int).Select(n => (int)n.Tag!).ToList();
-                if (ids.Count == 0 && treeView2.SelectedNode?.Tag is int one) ids = [one];
-                if (ids.Count == 0) { _spriteDumpStatus.Text = "Tick or select at least one sprite first."; return; }
+                AttractAnimationTimer.Stop();
+                _attractPlaying = false;
+                Button_AttractPlayPause.Text = "Play";
+                _attractFrameIndex = Math.Clamp(showFrame, 0, _attractFrames.Count - 1);
+                UpdateAttractFrame();
             }
-
-            using var dialog = new FolderBrowserDialog { Description = "Choose a folder: one sprite_NNN folder (PNG + BIN + manifest) is created per sprite" };
-            if (dialog.ShowDialog() != DialogResult.OK) return;
-            string root = dialog.SelectedPath;
-            int frames = 0, done = 0;
-            await Task.Run(() =>
-            {
-                foreach (int id in ids)
-                {
-                    frames += SpriteDump.DumpSprite(rom, id, root);
-                    done++;
-                    if (done % 8 == 0 || done == ids.Count) BeginInvoke(() => _spriteDumpStatus.Text = $"Dumping... {done}/{ids.Count} sprites");
-                }
-            });
-            _spriteDumpStatus.Text = $"Dumped {frames} frame(s) from {ids.Count} sprite(s) to {root}. Import them back in the Sprite editor tab.";
+            _attractEditStatus.Text = message + " File > Save As (Ctrl+S) to keep it.";
+            await Task.CompletedTask;
         }
+
+        private async Task ReplaceAttractFrame()
+        {
+            var rom = _session.Rom;
+            if (rom == null || _attractFrames.Count == 0) return;
+            int index = TrackBar_AttractSeek.Value;
+            using var open = new OpenFileDialog { Title = $"Replace attract-mode frame {index + 1}", Filter = "240x160 PNG|*.png" };
+            if (open.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                using var bmp = new Bitmap(open.FileName);
+                var frame = AttractFrameFromPng(bmp, AttractVideoWriter.ReadPalette(rom), Path.GetFileName(open.FileName));
+                _attractEditStatus.Text = "Writing...";
+                string result = await Task.Run(() => AttractVideoWriter.ReplaceFrame(rom, index, frame));
+                await AfterAttractEdit(result, index);
+            }
+            catch (Exception ex) { _attractEditStatus.Text = ex.Message; }
+        }
+
+        private async Task ImportAttractVideo()
+        {
+            var rom = _session.Rom;
+            if (rom == null) return;
+            using var dialog = new FolderBrowserDialog { Description = "Folder of 240x160 PNG frames, played in file-name order (e.g. what Export all writes)" };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            var files = Directory.GetFiles(dialog.SelectedPath, "*.png").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+            if (files.Count == 0) { _attractEditStatus.Text = "That folder has no PNG files."; return; }
+
+            var images = new List<Bitmap>();
+            try
+            {
+                foreach (var f in files) images.Add(new Bitmap(f));
+                bool newPalette = _attractNewPalette.Checked;
+                var progress = new Progress<int>(n => _attractEditStatus.Text = $"Compressing frame {n} / {files.Count}...");
+                _attractEditStatus.Text = newPalette ? "Building a palette..." : "Matching colours...";
+                string result = await Task.Run(() =>
+                {
+                    // Index 0 stays the transparent/backdrop entry; a new palette gets the other 255.
+                    Color[] palette = newPalette ? [Color.Black, .. ImageImport.BuildPalette(images, 255)] : AttractVideoWriter.ReadPalette(rom);
+                    var frames = images.Select((b, i) => AttractFrameFromPng(b, palette, Path.GetFileName(files[i]))).ToList();
+                    return AttractVideoWriter.WriteVideo(rom, frames, newPalette ? palette : null, progress);
+                });
+                await AfterAttractEdit(result, 0);
+            }
+            catch (Exception ex) { _attractEditStatus.Text = ex.Message; }
+            finally { foreach (var b in images) b.Dispose(); }
+        }
+
+        /// <summary>Switches to the main tab with this title (the ROM Browser's "Open ... tab" buttons).</summary>
+        private void SelectTab(string title)
+        {
+            foreach (TabPage page in DBZKit_TabControl.TabPages)
+                if (page.Text == title) { DBZKit_TabControl.SelectedTab = page; return; }
+        }
+
+        // ---- window shell: navigation, toolbar, menus, saving ----------------------------------------------------------------------
+
+        private SpriteEditorPanel _spriteEditor = null!;
+        private readonly ToolStripMenuItem _recent = new("Open &Recent");
+
+        /// <summary>An asset page's Edit button: the editor's page, opened on that asset where it can be.</summary>
+        private void OpenEditor(string tab, DrGero.Catalog.AssetNode? node)
+        {
+            SelectTab(tab);
+            if (tab == "Sprite editor" && node is { Id: >= 0 }) _spriteEditor.SelectSprite(node.Id);
+        }
+
+        private void BuildShell()
+        {
+            // File menu: Open, Open Recent, Save, Save As, then exports.
+            var file = fileToolStripMenuItem.DropDownItems;
+            openRomToolStripMenuItem.Text = "&Open ROM...";
+            openRomToolStripMenuItem.ShortcutKeys = Keys.Control | Keys.O;
+            // Only Save As: the ROM that was opened is never written over.
+            var saveAs = new ToolStripMenuItem("Save &As...", null, (_, _) => _session.SaveAs(this)) { ShortcutKeys = Keys.Control | Keys.S };
+            file.Clear();
+            // Export all assets uses the asset catalog (every kind, with a manifest); the old boot-screen-only dump it replaces is gone.
+            file.AddRange([openRomToolStripMenuItem, _recent, new ToolStripSeparator(), saveAs, new ToolStripSeparator(),
+                new ToolStripMenuItem("Export all &assets...", null, (_, _) => _browser.ExportAllAssets(this)),
+                new ToolStripMenuItem("Export ROM &map (CSV)...", null, (_, _) => _browser.ExportRomMap(this)),
+                new ToolStripSeparator(), new ToolStripMenuItem("E&xit", null, (_, _) => Close())]);
+
+            // View menu: settings that change what the lists show.
+            var addresses = new ToolStripMenuItem("Show ROM &addresses") { CheckOnClick = true, Checked = AppSettings.Current.ShowAddresses };
+            addresses.CheckedChanged += (_, _) => { AppSettings.Current.ShowAddresses = addresses.Checked; AppSettings.Current.Save(); };
+            menuStrip1.Items.Add(new ToolStripMenuItem("&View", null, [addresses]));
+
+            // Navigation down the left in place of the tab bar; the pages fill the rest. Docking runs from the back of the z-order, so
+            // the menu (already there) takes the top, the navigation the left, and the pages fill what is left.
+            var nav = new NavigationBar(DBZKit_TabControl);
+            var pages = NavigationBar.HostWithoutStrip(DBZKit_TabControl);
+            Controls.Add(pages);
+            Controls.Add(nav);
+            pages.BringToFront();
+            menuStrip1.SendToBack();
+
+            _session.DirtyChanged += UpdateTitle;
+            FormClosing += (_, e) => { if (!ConfirmDiscard()) e.Cancel = true; };
+            UpdateRecent();
+            UpdateTitle();
+        }
+
+        private void UpdateTitle()
+        {
+            string rom = _session.Path != null ? $" - {Path.GetFileName(_session.SavePath ?? _session.Path)} ({RomBrowser.GameCode(_GBARom ?? [])})" : "";
+            Text = (_session.Dirty ? "• " : "") + "DBZ Kit" + rom;
+            _baseTitle = Text;
+        }
+
+        private void UpdateRecent()
+        {
+            string? last = AppSettings.Current.LastRom;
+            _recent.DropDownItems.Clear();
+            _recent.Enabled = last != null && File.Exists(last);
+            if (_recent.Enabled) _recent.DropDownItems.Add(Path.GetFileName(last), null, (_, _) => LoadRom(last!));
+        }
+
+        /// <summary>Asks before unsaved edits are thrown away. True = go ahead.</summary>
+        private bool ConfirmDiscard()
+        {
+            if (!_session.Dirty) return true;
+            var answer = MessageBox.Show(this, "The ROM has changes that aren't saved. Save them first?", "Unsaved changes",
+                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+            if (answer == DialogResult.Cancel) return false;
+            if (answer == DialogResult.Yes) { _session.SaveAs(this); return !_session.Dirty; }
+            return true;
+        }
+
     }
 }

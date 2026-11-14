@@ -125,7 +125,7 @@ namespace DrGero.Quests
                         int readLen = Math.Min(256, rom.Length - scriptStart);
                         byte[] window = rom.ReadBytesAt(scriptStart, readLen);
                         var instructions = InstructionDecoder.Decode(window);
-                        var endInstr = instructions.FirstOrDefault(instr => instr.Opcode == 0x11);
+                        var endInstr = instructions.LastOrDefault(instr => instr.Opcode == 0x11); // last: an earlier END can be an early return
                         if (endInstr == null)
                         {
                             rom.PopPosition();
@@ -263,11 +263,91 @@ namespace DrGero.Quests
                 throw new ArgumentException("A dialog sequence needs at least one line.", nameof(lines));
 
             var entryAddresses = new int[lines.Count];
-
             for (int i = 0; i < lines.Count; i++)
+                entryAddresses[i] = WriteEntry(rom, lines[i], (ushort)(i + 1)); // last real entry points at the sentinel slot (index Count)
+
+            byte[] sequenceBytes = new byte[(lines.Count + 1) * 4];
+            for (int i = 0; i < lines.Count; i++)
+                BitConverter.GetBytes(entryAddresses[i]).CopyTo(sequenceBytes, i * 4);
+            // Last 4 bytes stay zero -- the sentinel (entry>>>16==0) Dialog_ProcessNext checks for.
+
+            int seqFileOffset = rom.AllocateFreeSpace(sequenceBytes.Length);
+            rom.WriteBytesAt(seqFileOffset, sequenceBytes);
+            return 0x08000000 | seqFileOffset;
+        }
+
+        /// <summary>
+        /// Writes a whole table: every slot in order, end markers included, so a table with several conversations
+        /// (see DialogBranches) keeps all of them. A slot whose entry is unchanged and already continues to the right
+        /// slot is pointed at where it is (compressed text stays compressed, nothing is duplicated); anything else is
+        /// written new. Returns the table's 0x08-prefixed address and each slot's entry file offset (0 for end markers).
+        /// </summary>
+        public static (int TableAddress, int[] EntryOffsets) WriteTable(ROM rom, IReadOnlyList<DialogSlot> slots)
+        {
+            if (slots.Count == 0 || slots[0].IsEnd)
+                throw new ArgumentException("A dialog table has to start with a message or script step.", nameof(slots));
+
+            // The table always closes with an end marker, whether or not the caller listed one.
+            int count = slots[^1].IsEnd ? slots.Count : slots.Count + 1;
+            var offsets = new int[slots.Count];
+            byte[] table = new byte[count * 4];
+
+            for (int i = 0; i < slots.Count; i++)
             {
-                var line = lines[i];
-                ushort nextIndex = (ushort)(i + 1); // last real entry points at the sentinel slot (index Count)
+                var slot = slots[i];
+                if (slot.IsEnd)
+                {
+                    // The marker's value = the step the next talk starts at (0 = from the top). Keep it, or an NPC that
+                    // cycles through lines would say only its first one.
+                    BitConverter.GetBytes(slot.EndValue).CopyTo(table, i * 4);
+                    continue;
+                }
+
+                ushort next = (ushort)(slot.NextSlot >= 0 ? slot.NextSlot : i + 1);
+                int offset;
+                if (slot.ReuseEntryOffset > 0 && slot.ReuseEntryOffset + 2 <= rom.Length
+                    && BitConverter.ToUInt16(rom.ReadBytesAt(slot.ReuseEntryOffset, 2), 0) == next)
+                {
+                    offset = slot.ReuseEntryOffset;
+                }
+                else if (slot.RawEntry != null)
+                {
+                    byte[] copy = (byte[])slot.RawEntry.Clone();
+                    copy[0] = (byte)(next & 0xFF);
+                    copy[1] = (byte)(next >> 8);
+                    offset = rom.AllocateFreeSpace(copy.Length);
+                    rom.WriteBytesAt(offset, copy);
+                }
+                else if (slot.Line != null)
+                {
+                    // A line break in editor text is the game's page break, byte 0x0B (0x0A is not used: 89 against 1 in the US ROM's plain lines).
+                    var line = slot.Line.Kind == DialogLineKind.Script ? slot.Line : new DialogLine
+                    {
+                        Kind = slot.Line.Kind,
+                        CharacterId = slot.Line.CharacterId,
+                        Text = slot.Line.Text.Replace("\r\n", "\n").Replace('\n', '\x0B'),
+                        ScriptBytes = slot.Line.ScriptBytes,
+                    };
+                    offset = WriteEntry(rom, line, next) & 0x00FFFFFF;
+                }
+                else
+                {
+                    throw new ArgumentException($"Slot {i} has nothing to write.", nameof(slots));
+                }
+
+                offsets[i] = offset;
+                BitConverter.GetBytes(0x08000000 | offset).CopyTo(table, i * 4);
+            }
+
+            int tableOffset = rom.AllocateFreeSpace(table.Length);
+            rom.WriteBytesAt(tableOffset, table);
+            return (0x08000000 | tableOffset, offsets);
+        }
+
+        /// <summary>Writes one entry to free space with the given Index (the slot it continues to) and returns its 0x08-prefixed address.</summary>
+        public static int WriteEntry(ROM rom, DialogLine line, ushort nextIndex)
+        {
+            {
                 int entryAddress;
 
                 switch (line.Kind)
@@ -331,17 +411,154 @@ namespace DrGero.Quests
                         }
                 }
 
-                entryAddresses[i] = entryAddress;
+                return entryAddress;
             }
+        }
+    }
 
-            byte[] sequenceBytes = new byte[(lines.Count + 1) * 4];
-            for (int i = 0; i < lines.Count; i++)
-                BitConverter.GetBytes(entryAddresses[i]).CopyTo(sequenceBytes, i * 4);
-            // Last 4 bytes stay zero -- the sentinel (entry>>>16==0) Dialog_ProcessNext checks for.
+    /// <summary>One slot of a dialog table as an editor holds it: an end marker, or an entry to write (see DialogWriter.WriteTable).</summary>
+    public sealed class DialogSlot
+    {
+        /// <summary>An end marker (a slot that is not a pointer): the conversation running into it stops.</summary>
+        public bool IsEnd { get; init; }
+        /// <summary>End markers: the step the next conversation with this character starts at (0 = from the top).</summary>
+        public uint EndValue { get; init; }
+        /// <summary>The entry's content, for when it has to be written new.</summary>
+        public DialogLine? Line { get; init; }
+        /// <summary>An entry kept byte for byte apart from its Index (a mode-5 jump to another table).</summary>
+        public byte[]? RawEntry { get; init; }
+        /// <summary>File offset of the entry as it already is in the ROM, when its content is unchanged. 0 = write it new.</summary>
+        public int ReuseEntryOffset { get; init; }
+        /// <summary>The slot this entry continues to. -1 = the one after it (true of all but 2 of the 2940 entries in the US ROM).</summary>
+        public int NextSlot { get; init; } = -1;
+    }
 
-            int seqFileOffset = rom.AllocateFreeSpace(sequenceBytes.Length);
-            rom.WriteBytesAt(seqFileOffset, sequenceBytes);
-            return 0x08000000 | seqFileOffset;
+    /// <summary>One slot of a dialog table as read from the ROM.</summary>
+    public sealed class DialogTableSlot
+    {
+        public bool IsEnd { get; init; }
+        /// <summary>End markers: the raw value, = the step the next talk starts at (see DialogBranches.NextTalkSlot).</summary>
+        public uint EndValue { get; init; }
+        public int EntryOffset { get; init; }
+        public byte Mode { get; init; }
+        /// <summary>The slot this entry continues to (its Index field).</summary>
+        public int Index { get; init; }
+        /// <summary>Modes 0-4. Text keeps its leading position/centre characters; a page break (0x0B) is '\n'.</summary>
+        public DialogLine? Line { get; init; }
+        /// <summary>Mode 5 (jump to another table): the 8 entry bytes.</summary>
+        public byte[]? RawEntry { get; init; }
+        public int JumpTarget { get; init; }
+    }
+
+    public static class DialogTableReader
+    {
+        /// <summary>
+        /// Every slot of the table at <paramref name="sequenceAddr"/>, end markers included, up to the last slot any of
+        /// its conversations reaches. Null when it is not a dialog table or an entry can't be read (the caller should
+        /// then not offer to rewrite it).
+        /// </summary>
+        public static List<DialogTableSlot>? Read(ROM rom, int sequenceAddr, out string? problem)
+        {
+            problem = null;
+            int count = DialogBranches.ReachableSlotCount(rom, sequenceAddr);
+            if (count == 0) { problem = "This is not a dialog table."; return null; }
+
+            byte[] d = rom.RawBytes;
+            var slots = new List<DialogTableSlot>();
+            for (int i = 0; i < count; i++)
+            {
+                uint value = BitConverter.ToUInt32(d, sequenceAddr + i * 4);
+                int entry = (int)(value & 0x00FFFFFF);
+                if (value >> 24 != 0x08 || entry + 4 > d.Length || d[entry + 2] > 5)
+                {
+                    slots.Add(new DialogTableSlot { IsEnd = true, EndValue = value });
+                    continue;
+                }
+
+                int index = BitConverter.ToUInt16(d, entry);
+                byte mode = d[entry + 2];
+                byte who = d[entry + 3];
+                DialogLine? line = null;
+                byte[]? rawEntry = null;
+                int jump = 0;
+
+                switch (mode)
+                {
+                    case 0:
+                        {
+                            byte[]? script = ScriptAt(d, entry + 3);
+                            if (script == null) { problem = $"Step {i}'s script has no END."; return null; }
+                            line = DialogLine.Script(script);
+                            break;
+                        }
+                    case 1:
+                        line = DialogLine.TextLine(who, CString(d, entry + 4));
+                        break;
+                    case 2:
+                        {
+                            string? text = Compressed(rom, entry + 4);
+                            if (text == null) { problem = $"Step {i}'s compressed text did not decompress."; return null; }
+                            line = DialogLine.TextLine(who, text);
+                            break;
+                        }
+                    case 3: // format string pointer at +4, argument script inline at +8
+                    case 4: // argument script pointer at +4, compressed format string inline at +8
+                        {
+                            if (entry + 8 > d.Length) { problem = $"Step {i} runs past the end of the ROM."; return null; }
+                            int pointer = (int)(BitConverter.ToUInt32(d, entry + 4) & 0x00FFFFFF);
+                            byte[]? script = ScriptAt(d, mode == 3 ? entry + 8 : pointer);
+                            string? format = mode == 3 ? CString(d, pointer) : Compressed(rom, entry + 8);
+                            if (script == null || format == null) { problem = $"Step {i} (a line with filled-in values) could not be read."; return null; }
+                            line = DialogLine.Interpolated(who, format, script);
+                            break;
+                        }
+                    default: // 5: jump to another table
+                        if (entry + 8 > d.Length) { problem = $"Step {i} runs past the end of the ROM."; return null; }
+                        rawEntry = d.AsSpan(entry, 8).ToArray();
+                        jump = (int)(BitConverter.ToUInt32(d, entry + 4) & 0x00FFFFFF);
+                        break;
+                }
+
+                slots.Add(new DialogTableSlot { EntryOffset = entry, Mode = mode, Index = index, Line = line, RawEntry = rawEntry, JumpTarget = jump });
+            }
+            return slots;
+        }
+
+        private static byte[]? ScriptAt(byte[] d, int addr)
+        {
+            if (addr <= 0 || addr >= d.Length) return null;
+            byte[] window = d.AsSpan(addr, Math.Min(1024, d.Length - addr)).ToArray();
+            // The script's END is the last instruction decoded (an earlier END can be an early return inside an if).
+            var code = InstructionDecoder.Decode(window);
+            return code.Count == 0 || code[^1].Opcode != 0x11 ? null : window[..(code[^1].Offset + 1)];
+        }
+
+        private static string CString(byte[] d, int addr)
+        {
+            if (addr < 0 || addr >= d.Length) return "";
+            int end = addr;
+            while (end < d.Length && d[end] != 0 && end - addr < 2048) end++;
+            return System.Text.Encoding.ASCII.GetString(d, addr, end - addr).Replace('\x0B', '\n');
+        }
+
+        private static string? Compressed(ROM rom, int addr)
+        {
+            if (addr < 0 || addr >= rom.Length) return null;
+            rom.PushPosition(addr);
+            try
+            {
+                var data = JCALG1.DecompressSequential(rom, expectedOutputSize: 4096).Data;
+                int nul = Array.IndexOf(data, (byte)0);
+                return System.Text.Encoding.ASCII.GetString(data, 0, nul >= 0 ? nul : data.Length).Replace('\x0B', '\n');
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                rom.PopPosition();
+            }
         }
     }
 }

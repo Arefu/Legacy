@@ -1,0 +1,40 @@
+{
+    "GAME_CODE": "ALFJ",
+    "MapEntriesOffset": "0x44BA28",
+    "MapEntryCount": 327,
+    "MapNameTableOffset": "0x1240F0",
+    "BGPaletteOffset": "0x21D864",
+    "OBJPaletteOffset": "0x21DA64",
+    "CharacterSpriteIndexOffset": "0x3F872C",
+    "TileAtlasOffset": "0x521CF8",
+    "DefaultCharStats": "21C7D8",
+    "DefaultExpThresholds": "21CAC4",
+    "QuestTableOffset": "0x719104",
+    "QuestCount": 43,
+    "PortraitTableOffset": "0x42EF40",
+    "PortraitCount": 115,
+    "ItemTableOffset": "0x6F031C",
+    "ItemCount": 50,
+    "TiledLayerHandler": "0x005881",
+    "CharacterSpawnHandler": "0x00E3DF",
+    "NpcSpawnHandler": "0x00C189",
+    "AbilityIcons": [
+        { "Name": "BigBang", "Ready": "0x71BE80", "Cooling": "0x71C080" },
+        { "Name": "BurningAttack", "Ready": "0x71C280", "Cooling": "0x71C480" },
+        { "Name": "KiBlast", "Ready": "0x71A958", "Cooling": "0x71AB58" },
+        { "Name": "Kamehameha", "Ready": "0x71C680", "Cooling": "0x71C880" },
+        { "Name": "Masenko", "Ready": "0x71CA80", "Cooling": "0x71CC80" },
+        { "Name": "Disabled", "Ready": "0x71CE80", "Cooling": "0x71CE80" },
+        { "Name": "Hercule", "Ready": "0x7494CC", "Cooling": "0x7496CC" },
+        { "Name": "EnergyPunch", "Ready": "0x71D080", "Cooling": "0x71D280" },
+        { "Name": "ScatterShot", "Ready": "0x71D480", "Cooling": "0x71D680" },
+        { "Name": "SpecialBeamCannon", "Ready": "0x71D880", "Cooling": "0x71DA80" },
+        { "Name": "SpiritBomb", "Ready": "0x71DC80", "Cooling": "0x71DE80" },
+        { "Name": "Transformation", "Ready": "0x71E080", "Cooling": "0x71E280" },
+        { "Name": "SwordBlast", "Ready": "0x71BA80", "Cooling": "0x71BC80" }
+    ],
+    "Languages": [
+        { "Code": "ja", "Name": "Japanese", "MapNameTableOffset": "0x1240F0", "Encoding": "u16" }
+    ],
+    "Layouts": []
+}

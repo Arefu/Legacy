@@ -757,7 +757,7 @@ namespace Dragon_Radar
             int layerAddress = _rom.ReadPointer();
             _rom.PopPosition();
 
-            var opened = TileLayerEditor.Open(_rom, layerAddress);
+            var opened = TileLayerEditor.Open(_rom, layerAddress, _game?.Config);
             if (opened != null) _tileEditors[layer] = opened;
             return opened;
         }
@@ -874,7 +874,7 @@ namespace Dragon_Radar
             _currentTilesets = tilesets;
             _hasUnsupportedLayer = hasUnsupportedLayer;
             _collisionGrid = collisionGrid;
-            _tileUsageIndex = MapRenderer.BuildTileUsageIndex(_rom, _currentMapOffset);
+            _tileUsageIndex = MapRenderer.BuildTileUsageIndex(_rom, _currentMapOffset, _game?.Config);
             mapPictureBox.Invalidate();
             UpdateSelectedTileInfo(); // the use count for the selected tile may have changed
         }
@@ -895,7 +895,7 @@ namespace Dragon_Radar
                 int address = _rom.ReadPointer();
                 _rom.PopPosition();
 
-                editable[i] = TileLayerEditor.Open(_rom, address) != null;
+                editable[i] = TileLayerEditor.Open(_rom, address, _game?.Config) != null;
                 labels[i] = editable[i] ? $"BG{i}" : (address == 0 ? $"BG{i} (empty)" : $"BG{i} (unsupported)");
                 if (editable[i] && firstEditable < 0) firstEditable = i;
             }
@@ -1163,9 +1163,9 @@ namespace Dragon_Radar
         private (int StatIndex, int SpriteId)? _placingEnemy;
         private int _placingNpcVariant; // Entity.Variant for the next placed NPC: 0 standing, 1 wandering, 2 script actor
 
-        private static bool IsTalkableNpc(Entity entity) =>
+        private bool IsTalkableNpc(Entity entity) =>
             entity.Kind == EntityKind.Character &&
-            (entity.Handler == EntityReader.SpriteSpawnHandlerOffset || (entity.SourceAddress == 0 && entity.Variant != 2));
+            (entity.Handler == (_game?.Config.NpcSpawnHandler ?? EntityReader.SpriteSpawnHandlerOffset) || (entity.SourceAddress == 0 && entity.Variant != 2));
         private List<EnemyRecords.Template>? _enemyTemplates;
 
         // Scans g_ItemsInGame once per ROM load and fills the Items tab with an
@@ -1450,7 +1450,7 @@ namespace Dragon_Radar
             SyncTileSourceBox();
             _hasUnsupportedLayer = hasUnsupportedLayer;
             _collisionGrid = collisionGrid;
-            _tileUsageIndex = MapRenderer.BuildTileUsageIndex(_rom, mapOffset);
+            _tileUsageIndex = MapRenderer.BuildTileUsageIndex(_rom, mapOffset, _game?.Config);
 
             // mapPictureBox draws the bitmap manually (see mapPictureBox_Paint), not via
             // the Image property, so it doesn't auto-size to the map's real dimensions --
@@ -1463,7 +1463,7 @@ namespace Dragon_Radar
             _currentEntities.AddRange(EntityReader.ReadMapTriggers(_rom, entry));
             _currentEntities.AddRange(EntityReader.ReadVariationTriggers(_rom, mapOffset));
             _currentEntities.AddRange(EntityReader.ReadObjectArray(_rom, entry));
-            _currentEntities.AddRange(EntityReader.ReadMapScripts(_rom, entry));
+            _currentEntities.AddRange(EntityReader.ReadMapScripts(_rom, entry, _game?.Config));
             _currentEntities.AddRange(EntityReader.ReadMapItems(_rom, entry, mapOffset));
             _currentEntities.AddRange(EntityReader.ReadGraphicObjects(_rom, mapOffset));
 
@@ -1903,7 +1903,23 @@ namespace Dragon_Radar
 
             var menu = new ContextMenuStrip();
 
-            var editable = hits.Where(i => _currentEntities[i].Kind is EntityKind.Trigger or EntityKind.Object or EntityKind.Character or EntityKind.Enemy).ToList();
+            // NPCs and enemies: two choices, Quest Dialogue and Idle Dialogue (EntityDialogue.cs). Each opens that half of
+            // what the sprite says, with an Edit button for the whole table. Greyed out when it has none of that kind.
+            int viewItems = 0;
+            foreach (int idx in hits)
+            {
+                int captured = idx;
+                if (_currentEntities[captured].Kind is not (EntityKind.Character or EntityKind.Enemy)) continue;
+                var (quest, idle) = CountDialogue(captured);
+                string who = multi ? $"{Name(captured)}: " : "";
+                menu.Items.Add(new ToolStripMenuItem($"{who}Quest Dialogue ({quest})...", null, (_, _) => OpenDialogueEditor(captured, quest: true)) { Enabled = quest > 0 });
+                menu.Items.Add(new ToolStripMenuItem($"{who}Idle Dialogue ({idle})...", null, (_, _) => OpenDialogueEditor(captured, quest: false)) { Enabled = idle > 0 });
+                viewItems++;
+            }
+            if (viewItems > 0) menu.Items.Add(new ToolStripSeparator());
+
+            var editable = hits.Where(i => _currentEntities[i].Kind is EntityKind.Trigger or EntityKind.Object or EntityKind.Character or EntityKind.Enemy
+                || (_currentEntities[i].Kind == EntityKind.Item && _currentEntities[i].SourceAddress != 0)).ToList();
             foreach (int idx in editable)
             {
                 int captured = idx;
@@ -1915,8 +1931,7 @@ namespace Dragon_Radar
                     bool talkable = IsTalkableNpc(ent);
                     if (ent.Kind == EntityKind.Enemy)
                         menu.Items.Add($"Edit {Name(captured)} action (dialogue / script)...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(dialogue: true); });
-                    else if (talkable)
-                        menu.Items.Add($"Edit {Name(captured)} dialogue...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(dialogue: true); });
+                    // A talkable NPC's dialogue is edited from the Quest / Idle Dialogue windows above.
 
                     if (ent.Kind == EntityKind.Character)
                         menu.Items.Add($"Edit {Name(captured)} script (spawn condition)...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(); });
@@ -3091,7 +3106,8 @@ namespace Dragon_Radar
 
         private void editDialogueButton_Click(object? sender, EventArgs e) => EditSelectedPayload(dialogue: true);
 
-        private async void EditSelectedPayload(bool dialogue = false)
+        /// <param name="focus">"quest" or "idle": the editor opens on that kind of conversation and greys out the rest.</param>
+        private async void EditSelectedPayload(bool dialogue = false, string? focus = null)
         {
             if (_rom == null || _selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
             var entity = _currentEntities[_selectedIndex];
@@ -3140,6 +3156,15 @@ namespace Dragon_Radar
                         break;
                     }
 
+                case EntityKind.Item:
+                    // MapItem.dialogSeq (+0xC): a dialog table for most items (the tutorial rocks), plain bytecode for a
+                    // few. "trigger" makes the micro editor look at what is there and open it as whichever it is.
+                    if (entity.SourceAddress == 0) return;
+                    kind = "trigger";
+                    field = entity.SourceAddress + 0xC;
+                    title += " dialogue";
+                    break;
+
                 case EntityKind.Trigger:
                 case EntityKind.Object:
                     {
@@ -3159,7 +3184,8 @@ namespace Dragon_Radar
                     return;
             }
 
-            await LaunchLegacyForSelectedEntity($"--kind={kind} --field=0x{field:X} --title=\"{title.Replace('"', '\'')}\"");
+            if (focus != null) title += focus == "quest" ? " -- Quest Dialogue" : " -- Idle Dialogue";
+            await LaunchLegacyForSelectedEntity($"--kind={kind} --field=0x{field:X} --title=\"{title.Replace('"', '\'')}\"" + (focus != null ? $" --focus={focus}" : ""));
         }
 
         // Generalized 2026-09-19 (was LaunchLegacyForSelectedTrigger, Trigger-only) to also

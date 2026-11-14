@@ -33,20 +33,29 @@ namespace DrGero.Engine
         public static string FolderName(int spriteId) => $"sprite_{spriteId:D3}";
         private static string FileStem(int group, int slot, int frame) => $"g{group:D2}_{FrameImport.SlotNames[slot].ToLowerInvariant()}_f{frame}";
 
-        public static List<int> SpriteIds(ROM rom) => Enumerable.Range(0, FrameImport.IndexCapacity).Where(id => FrameImport.HasRecord(rom, id)).ToList();
+        /// <summary>Sprite ids that have a record. Pass the game for a ROM other than the US one (its profile gives the index address).</summary>
+        public static List<int> SpriteIds(ROM rom, Config.Game? game = null)
+        {
+            int index = FrameImport.IndexAddress(rom, game);
+            // Without the US code literal there's nothing saying how long the table is: stop at the first word that isn't a pointer or null.
+            int capacity = game == null || game.HasLayout("ALFE-sprites") ? FrameImport.IndexCapacity
+                : Enumerable.Range(0, FrameImport.IndexCapacity).TakeWhile(id => index + id * 4 + 4 <= rom.Length
+                    && BitConverter.ToUInt32(rom.ReadBytesAt(index + id * 4, 4)) is var w && (w == 0 || FrameImport.IsRomPtr(w, rom))).Count();
+            return Enumerable.Range(0, capacity).Where(id => FrameImport.HasRecord(rom, id, game)).ToList();
+        }
 
         /// <summary>
         /// Every frame of a sprite as a bitmap, labelled like the dump's file names (g05_down_f0). What the Sprite Viewer shows, so the viewer and
         /// the dump always agree. Bitmaps are in the orientation the game shows them (flipped frames are flipped) with index 0 transparent.
         /// </summary>
-        public static List<(string Label, int Width, int Height, Bitmap Image)> RenderFrames(ROM rom, int spriteId)
+        public static List<(string Label, int Width, int Height, Bitmap Image)> RenderFrames(ROM rom, int spriteId, Config.Game? game = null)
         {
             var result = new List<(string, int, int, Bitmap)>();
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(FrameImport.IndexAddress(rom) + spriteId * 4, 4));
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(FrameImport.IndexAddress(rom, game) + spriteId * 4, 4));
             if (!FrameImport.IsRomPtr(ptr, rom)) return result;
             int rec = (int)(ptr & 0x00FFFFFF);
-            var palette = ReadPalette(rom);
-            for (int g = 0; g < FrameImport.GroupsIn(rom, spriteId); g++)
+            var palette = ReadPalette(rom, game);
+            for (int g = 0; g < FrameImport.GroupsIn(rom, spriteId, game); g++)
                 for (int slot = 0; slot < 4; slot++)
                 {
                     uint sp = BitConverter.ToUInt32(rom.ReadBytesAt(rec + FrameImport.FirstGroup + g * FrameImport.GroupSize + slot * 4, 4));
@@ -61,14 +70,7 @@ namespace DrGero.Engine
                         if (tiles.Length < w * h) continue;
                         var idx = TilesToIndices(tiles, w, h);
                         if ((d[7] & 0x10) != 0) FlipX(idx, w, h);
-                        var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-                        for (int y = 0; y < h; y++)
-                            for (int x = 0; x < w; x++)
-                            {
-                                byte i = idx[y * w + x];
-                                if (i != 0 && i < palette.Length) bmp.SetPixel(x, y, palette[i]);
-                            }
-                        result.Add((FileStem(g, slot, f), w, h, bmp));
+                        result.Add((FileStem(g, slot, f), w, h, Rendering.IndexedImage.FromIndices(idx, w, h, palette)));
                     }
                 }
             return result;
@@ -196,8 +198,9 @@ namespace DrGero.Engine
         }
 
         // ---- pixels ---------------------------------------------------------------------------------------------
-        private static Color[] ReadPalette(ROM rom) =>
-            Rendering.ItemIconReader.ReadOBJPalette(rom, new Config.Game { OBJPaletteOffset = ObjPalette, CharacterSpriteIndexOffset = FrameImport.CharacterSpriteIndex });
+        private static Color[] ReadPalette(ROM rom, Config.Game? game = null) =>
+            Rendering.ItemIconReader.ReadOBJPalette(rom, game != null && game.OBJPaletteOffset != 0 ? game
+                : new Config.Game { OBJPaletteOffset = ObjPalette, CharacterSpriteIndexOffset = FrameImport.CharacterSpriteIndex });
 
         private static byte[] TilesToIndices(byte[] tiles, int w, int h)
         {

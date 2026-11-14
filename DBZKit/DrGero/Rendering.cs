@@ -253,9 +253,12 @@ namespace DrGero.Rendering
         // it is also registered in the collision lists, so it is solid. See Engine-Notes.md.
         public const int SpriteSpawnHandlerOffset = 0x00B711; // MapScript_CreateNpcSprite: talkable, solid town NPCs
 
-        public static List<Entity> ReadMapScripts(ROM rom, MapEntry entry)
+        /// <summary>Spawn scripts of a map. Pass the game for any ROM but US LoG2: the handler addresses come from its profile.</summary>
+        public static List<Entity> ReadMapScripts(ROM rom, MapEntry entry, Game? game = null)
         {
             var result = new List<Entity>();
+            int characterHandler = game?.CharacterSpawnHandler ?? CharacterSpawnHandlerOffset;
+            int npcHandler = game?.NpcSpawnHandler ?? SpriteSpawnHandlerOffset;
 
             if (entry.MapScripts == 0 || entry.ScriptCount == 0)
                 return result;
@@ -273,7 +276,7 @@ namespace DrGero.Rendering
                 rom.PushPosition(recordAddress);
                 int handler = rom.ReadPointer();
 
-                if (handler == CharacterSpawnHandlerOffset)
+                if (handler == characterHandler)
                 {
                     rom.Skip(4); // flags/condition
                     int coordAddress = recordAddress + 8;
@@ -281,9 +284,9 @@ namespace DrGero.Rendering
                     int y = rom.ReadShort();
                     int spriteId = rom.ReadInt();
 
-                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress, Handler: CharacterSpawnHandlerOffset));
+                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress, Handler: characterHandler));
                 }
-                else if (handler == SpriteSpawnHandlerOffset)
+                else if (handler == npcHandler)
                 {
                     rom.Skip(4); // flags/condition
                     int coordAddress = recordAddress + 8;
@@ -292,7 +295,7 @@ namespace DrGero.Rendering
                     rom.Skip(4); // record+0xC -- passed through to the entity raw, not a display id (see comment above)
                     int spriteId = rom.ReadInt(); // record+0x10 (actionData) -- feeds Character_GetSpriteId
 
-                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress, Handler: SpriteSpawnHandlerOffset));
+                    result.Add(new Entity(EntityKind.Character, x, y, spriteId, recordAddress, PositionAddress: coordAddress, Handler: npcHandler));
                 }
                 else if (handler == (EnemyRecords.SpawnHandler & 0x00FFFFFF)) // ReadPointer strips the 0x08 top byte
                 {
@@ -1355,10 +1358,17 @@ namespace DrGero.Rendering
         private static readonly Dictionary<Game, Dictionary<int, Bitmap>> tilesetCaches = [];
         private static readonly Dictionary<Game, Dictionary<int, (Bitmap bitmap, int priority, HashSet<Range> usedTilesets, bool unsupported)>> layerCaches = [];
 
+        // Guards the two per-game dictionaries above. Each Game's inner cache is only used by one thread at a time (the ROM Browser
+        // indexes on a background thread with its own Game instance), but adding/removing games touches the shared outer dictionaries.
+        private static readonly object cacheLock = new();
+
         public static void ResetCache(Game game)
         {
-            tilesetCaches.Remove(game);
-            layerCaches.Remove(game);
+            lock (cacheLock)
+            {
+                tilesetCaches.Remove(game);
+                layerCaches.Remove(game);
+            }
         }
 
         // Map_VariationEntry.useAffineBg, offset 0x3C -- CONFIRMED via IDA 2026-09-19
@@ -1380,6 +1390,9 @@ namespace DrGero.Rendering
             rom.PushPosition(mapOffset + UseAffineBgOffset);
             bool useAffineBg = rom.ReadInt() != 0;
             rom.PopPosition();
+
+            if (useAffineBg && TryRenderWorldMap(rom, game, mapOffset) is { } world)
+                return (world.bitmap, world.tilesets, new HashSet<Range>(world.tilesets.Keys), false, ReadCollisionMap(rom, mapOffset));
 
             if (useAffineBg)
             {
@@ -1429,6 +1442,24 @@ namespace DrGero.Rendering
                 width = Math.Max(width, l.bitmap.Width);
                 height = Math.Max(height, l.bitmap.Height);
             }
+
+            // A scroll layer is one 256x256 tilemap the hardware repeats forever, so it covers the whole map.
+            // Its in-game position drifts over time; it is drawn here at rest.
+            var repeated = new List<Bitmap>();
+            Bitmap Repeat(Bitmap chunk, int index)
+            {
+                if (!IsScrollLayer(rom, game, mapOffset, index) || (chunk.Width >= width && chunk.Height >= height)) return chunk;
+                var filled = new Bitmap(width, height);
+                using var fg = Graphics.FromImage(filled);
+                using var brush = new TextureBrush(chunk, WrapMode.Tile);
+                fg.FillRectangle(brush, 0, 0, width, height);
+                repeated.Add(filled);
+                return filled;
+            }
+            layer0.bitmap = Repeat(layer0.bitmap, 0);
+            layer1.bitmap = Repeat(layer1.bitmap, 1);
+            layer2.bitmap = Repeat(layer2.bitmap, 2);
+            layer3.bitmap = Repeat(layer3.bitmap, 3);
 
             var composite = new Bitmap(width, height);
             using var g = Graphics.FromImage(composite);
@@ -1541,6 +1572,8 @@ namespace DrGero.Rendering
             // real, but they make hand-editing harder to read at a glance, so tint them
             // distinctly here (editor-only cosmetic overlay, doesn't touch what's
             // actually rendered) rather than leave them looking like broken output.
+            foreach (var filled in repeated) filled.Dispose();
+
             TintVoidFillerTiles(composite);
 
             // A map using the unrecognized 0x4FCD layer format (see DrawLayer) would
@@ -1636,12 +1669,79 @@ namespace DrGero.Rendering
         // this point: Collision_CheckRect treats a 0 bit run across the tested rect as ALLOWED and returns BLOCKED as soon as it finds a set bit
         // in range). Returns a full 256x256 grid regardless of the map's real (usually smaller)
         // pixel size -- callers should only look at [0..width/8, 0..height/8].
-        public static bool[,] ReadCollisionMap(ROM rom, int mapOffset)
+        public static bool[,] ReadCollisionMap(ROM rom, int mapOffset) => ReadMask(rom, mapOffset, 0x34);
+
+        /// <summary>
+        /// The map's second mask (Map_VariationEntry +0x38), same format as the collision map: where projectiles may travel.
+        /// Map_InitRenderer loads it next to the collision map and the shot tick functions destroy a shot that leaves it.
+        /// It is the walkable area plus the gaps a shot can cross.
+        /// </summary>
+        public static bool[,] ReadProjectileMask(ROM rom, int mapOffset) => ReadMask(rom, mapOffset, 0x38);
+
+        private static bool IsScrollLayer(ROM rom, Game game, int mapOffset, int layer)
+        {
+            if (game.ScrollLayerHandler == 0) return false;
+            rom.PushPosition(mapOffset + 0x14 + layer * 4);
+            int record = rom.ReadPointer();
+            rom.PopPosition();
+            if (record <= 0 || record + 4 > rom.Length) return false;
+            rom.PushPosition(record);
+            int handler = rom.ReadPointer();
+            rom.PopPosition();
+            return handler == game.ScrollLayerHandler;
+        }
+
+        /// <summary>
+        /// The overworld (IDA: WorldMapLayer_Init): a layer record {handler, u8 columns, u8 rows, pad, ResourceHeader* chunks[columns*rows]}
+        /// where each chunk is 32x32 8-bit tile numbers for an affine BG. The game shows it in perspective and wraps at the edges;
+        /// this draws the whole grid flat. Null chunks are empty. Returns null when the map has no such layer.
+        /// </summary>
+        private static (Bitmap bitmap, Dictionary<Range, Bitmap> tilesets)? TryRenderWorldMap(ROM rom, Game game, int mapOffset)
+        {
+            if (game.WorldMapLayerHandler == 0) return null;
+            for (int layer = 0; layer < 4; layer++)
+            {
+                rom.PushPosition(mapOffset + 0x14 + layer * 4);
+                int record = rom.ReadPointer();
+                rom.PopPosition();
+                if (record <= 0 || record + 8 > rom.Length) continue;
+                rom.PushPosition(record);
+                int handler = rom.ReadPointer();
+                int columns = rom.ReadByte(), rows = rom.ReadByte();
+                rom.PopPosition();
+                if (handler != game.WorldMapLayerHandler || columns == 0 || rows == 0) continue;
+
+                Dictionary<Range, Bitmap> tilesets;
+                try { tilesets = DrawTileset(rom, game, mapOffset); }
+                catch (Exception e) when (e is InvalidOperationException or ArgumentException or IndexOutOfRangeException) { return null; }
+
+                var image = new Bitmap(columns * chunk_size_pixels, rows * chunk_size_pixels);
+                using var g = Graphics.FromImage(image);
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.Clear(Color.Black);
+                for (int i = 0; i < columns * rows; i++)
+                {
+                    rom.PushPosition(record + 8 + i * 4);
+                    int chunk = rom.ReadPointer();
+                    rom.PopPosition();
+                    if (chunk == 0) continue;
+                    byte[] map = JCALG1.Decompress(rom, chunk);
+                    int ox = (i % columns) * chunk_size_pixels, oy = (i / columns) * chunk_size_pixels;
+                    for (int t = 0; t < Math.Min(map.Length, chunk_size_tiles * chunk_size_tiles); t++)
+                        DrawTileInto(g, tilesets, map[t], false, false, ox + (t % chunk_size_tiles) * tile_size, oy + (t / chunk_size_tiles) * tile_size);
+                }
+                return (image, tilesets);
+            }
+            return null;
+        }
+
+        private static bool[,] ReadMask(ROM rom, int mapOffset, int field)
         {
             const int tilesPerSide = 256;
             var grid = new bool[tilesPerSide, tilesPerSide];
 
-            rom.PushPosition(mapOffset + 0x34);
+            rom.PushPosition(mapOffset + field);
             int collisionPtr = rom.ReadPointer();
             rom.PopPosition();
 
@@ -2183,7 +2283,30 @@ namespace DrGero.Rendering
             rom.PushPosition(address);
 
             int layerType = rom.ReadPointer();
-            if (layerType != TiledLayerType)
+            if (layerType == game.ScrollLayerHandler && layerType != 0)
+            {
+                // ScrollLayer (IDA: ScrollLayer_Create): {handler, parallaxX, parallaxY, baseX, baseY, velX, velY, ResourceHeader* tilemap}.
+                // One 32x32 text tilemap that the BG hardware wraps; the game only moves its scroll registers.
+                rom.Skip(0x18);
+                var used = new HashSet<Range>();
+                var tile = DrawChunk(rom, rom.ReadPointer(), tilesets, used);
+                rom.PopPosition();
+                foreach (var range in used) usedTilesets.Add(range);
+                cache.Add(address, (tile, 0, used, false));
+                return (tile, 0, false);
+            }
+            if (layerType == game.TwoFrameLayerHandler && layerType != 0)
+            {
+                // TwoFrameLayer (IDA: TwoFrameLayer_Init): {handler, ResourceHeader* frame0, ResourceHeader* frame1}: one 32x32 screen,
+                // two tilemaps the game alternates. The first is drawn.
+                var used = new HashSet<Range>();
+                var screen = DrawChunk(rom, rom.ReadPointer(), tilesets, used);
+                rom.PopPosition();
+                foreach (var range in used) usedTilesets.Add(range);
+                cache.Add(address, (screen, 0, used, false));
+                return (screen, 0, false);
+            }
+            if (layerType != game.TiledLayerHandler)
             {
                 rom.PopPosition();
                 return (new Bitmap(1, 1), 0, true);
@@ -2403,7 +2526,7 @@ namespace DrGero.Rendering
         /// cached, pixel-decoding path, since that path has already been a source of
         /// subtle bugs and this is cheap enough to just re-walk on its own.
         /// </summary>
-        public static Dictionary<int, List<Point>> BuildTileUsageIndex(ROM rom, int mapOffset)
+        public static Dictionary<int, List<Point>> BuildTileUsageIndex(ROM rom, int mapOffset, Game? game = null)
         {
             var index = new Dictionary<int, List<Point>>();
 
@@ -2411,21 +2534,21 @@ namespace DrGero.Rendering
             for (int i = 0; i < 4; i++)
             {
                 int address = rom.ReadPointer();
-                IndexLayerTiles(rom, address, index);
+                IndexLayerTiles(rom, address, index, game?.TiledLayerHandler ?? TiledLayerType);
             }
             rom.PopPosition();
 
             return index;
         }
 
-        private static void IndexLayerTiles(ROM rom, int address, Dictionary<int, List<Point>> index)
+        private static void IndexLayerTiles(ROM rom, int address, Dictionary<int, List<Point>> index, int tiledLayerType)
         {
             if (address == 0x0) return;
 
             rom.PushPosition(address);
 
             int layerType = rom.ReadPointer();
-            if (layerType != TiledLayerType)
+            if (layerType != tiledLayerType)
             {
                 rom.PopPosition();
                 return;
@@ -2502,22 +2625,28 @@ namespace DrGero.Rendering
 
         private static Dictionary<int, Bitmap> GetTilesetCache(Game game)
         {
-            if (!tilesetCaches.TryGetValue(game, out var cache))
+            lock (cacheLock)
             {
-                cache = [];
-                tilesetCaches[game] = cache;
+                if (!tilesetCaches.TryGetValue(game, out var cache))
+                {
+                    cache = [];
+                    tilesetCaches[game] = cache;
+                }
+                return cache;
             }
-            return cache;
         }
 
         private static Dictionary<int, (Bitmap bitmap, int priority, HashSet<Range> usedTilesets, bool unsupported)> GetLayerCache(Game game)
         {
-            if (!layerCaches.TryGetValue(game, out var cache))
+            lock (cacheLock)
             {
-                cache = [];
-                layerCaches[game] = cache;
+                if (!layerCaches.TryGetValue(game, out var cache))
+                {
+                    cache = [];
+                    layerCaches[game] = cache;
+                }
+                return cache;
             }
-            return cache;
         }
 
 

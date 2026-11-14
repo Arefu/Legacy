@@ -12,6 +12,17 @@ namespace DrGero.IO
         public int Length => mem.Length;
         public int Remaining => Length - _position;
 
+        /// <summary>
+        /// Raised with the file offset of every compressed/stored resource a reader decodes (JCALG1.Decompress and friends).
+        /// The asset catalog listens to it to learn which ROM blocks each asset uses, without duplicating every reader's layout.
+        /// </summary>
+        public event Action<int>? ResourceAccessed;
+
+        internal void NoteResource(int address) => ResourceAccessed?.Invoke(address);
+
+        /// <summary>The live ROM bytes, for readers inside DrGero that scan a lot of small fields. Not a copy: do not keep it across a write that grows the ROM.</summary>
+        internal byte[] RawBytes => mem;
+
         private ROM(byte[] _mem)
         {
             mem = _mem;

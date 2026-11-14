@@ -19,49 +19,69 @@ namespace DBZKit
         /// <summary>Raised after any panel edits <see cref="Rom"/>, so other panels can refresh what they show.</summary>
         public event Action<object?>? Changed;
 
+        /// <summary>The file the last Save As wrote (suggested next time). The ROM that was opened is never written.</summary>
+        public string? SavePath { get; private set; }
+
+        /// <summary>True when the ROM has edits that aren't in a saved file yet.</summary>
+        public bool Dirty { get; private set; }
+
+        public event Action? DirtyChanged;
+
         public void Load(byte[]? bytes, string? path)
         {
             Rom = bytes == null ? null : ROM.FromBytes((byte[])bytes.Clone());
             Path = path;
+            SavePath = null;
+            SetDirty(false);
             Loaded?.Invoke();
         }
 
-        public void NotifyChanged(object? source = null) => Changed?.Invoke(source);
+        /// <summary>
+        /// An editor changed <see cref="Rom"/>: the main window's copy follows straight away (the boot-screen pages read it), the ROM
+        /// counts as unsaved, and every other page refreshes.
+        /// </summary>
+        public void NotifyChanged(object? source = null)
+        {
+            Apply();
+            SetDirty(true);
+            Changed?.Invoke(source);
+        }
 
         public void Apply()
         {
             if (Rom != null) _commit(Rom.ToArray());
         }
 
+        private void SetDirty(bool dirty)
+        {
+            if (Dirty == dirty) return;
+            Dirty = dirty;
+            DirtyChanged?.Invoke();
+        }
+
+        /// <summary>Writes the edited ROM to a file the user picks. Picking the ROM that was opened is refused, so it stays untouched.</summary>
         public void SaveAs(IWin32Window? owner)
         {
             if (Rom == null) return;
+            string? suggest = SavePath ?? Path;
             using var dlg = new SaveFileDialog
             {
-                Title = "Save edited ROM As",
+                Title = "Save ROM As",
                 Filter = "GBA ROM (*.gba)|*.gba",
-                InitialDirectory = Path != null ? System.IO.Path.GetDirectoryName(Path) : null,
-                FileName = Path != null ? System.IO.Path.GetFileName(Path) : "",
+                InitialDirectory = suggest != null ? System.IO.Path.GetDirectoryName(suggest) : null,
+                FileName = suggest != null ? System.IO.Path.GetFileNameWithoutExtension(suggest) + (SavePath == null ? " (edited)" : "") : "",
             };
             if (dlg.ShowDialog(owner) != DialogResult.OK) return;
+            if (Path != null && string.Equals(System.IO.Path.GetFullPath(dlg.FileName), System.IO.Path.GetFullPath(Path), StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(owner, "That's the ROM you opened. Pick another name so the original stays untouched.", "Save As",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                SaveAs(owner);
+                return;
+            }
             File.WriteAllBytes(dlg.FileName, Rom.ToArray());
-        }
-    }
-
-    /// <summary>The "Apply to DBZKit" / "Save ROM As..." pair, shared by every editor tab.</summary>
-    internal sealed class ApplyBar : FlowLayoutPanel
-    {
-        public ApplyBar(EditSession session)
-        {
-            Dock = DockStyle.Bottom;
-            Height = 42;
-            FlowDirection = FlowDirection.RightToLeft;
-            Padding = new Padding(6);
-            var use = new Button { Text = "Apply to DBZKit", AutoSize = true };
-            use.Click += (_, _) => session.Apply();
-            var save = new Button { Text = "Save ROM As...", AutoSize = true };
-            save.Click += (_, _) => session.SaveAs(FindForm());
-            Controls.AddRange([use, save]);
+            SavePath = dlg.FileName;
+            SetDirty(false);
         }
     }
 }

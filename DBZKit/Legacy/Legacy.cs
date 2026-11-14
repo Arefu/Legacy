@@ -394,7 +394,8 @@ namespace Legacy
             // independently of the text/script body edit above.
             public uint EntryAddr;
             public int TerminatorSlotIndex; // shared by every entry from the same table
-            public bool EndsDialogHere;     // current desired state (starts = whether Index already equals the terminator)
+            public bool EndsDialogHere;     // current desired state (starts = whether Index already points at an end marker)
+            public bool EndsDialogLoaded;   // EndsDialogHere as read from the ROM
             public bool EndsDialogDirty;    // true once the user has toggled EndsDialogHere away from its loaded state
 
             // The dialog table's own base address (the same "dialogArrayPtr" every entry
@@ -514,18 +515,36 @@ namespace Legacy
             // the first non-pointer slot is the end: anything after it is other data (Zone 4 Area 41's sprite 82
             // table used to run on into sprite 83's table and list its lines a second time). The loop still runs
             // on to the literal 0 slot so TerminatorSlotIndex below is unchanged.
+            //
+            // A table can hold several conversations: a script entry can send the conversation to a later slot, past
+            // the first conversation's 0 end marker (see DrGero.Quests.DialogBranches -- GitHub issue 3, Gohan's lines
+            // in Zone 1 Area 1 were hidden this way). `reach` is one past the highest slot any of them gets to, so the
+            // walk carries on through 0 slots until then; the first 0 slot is still the terminator used for "end here".
             int extent = 0;
             bool pastEnd = false;
+            var romView = DrGero.IO.ROM.FromBytes(_rom);
+            var branchStarts = DrGero.Quests.DialogBranches.Analyze(romView, (int)(dialogArrayPtr - RomBase)).Branches
+                .Where(b => b.SequenceAddress == (int)(dialogArrayPtr - RomBase) && b.Conditions.Count > 0)
+                .GroupBy(b => b.StartSlot).ToDictionary(g => g.Key, g => g.First().ConditionText);
+            int reach = DrGero.Quests.DialogBranches.ReachableSlotCount(_rom, (int)(dialogArrayPtr - RomBase));
+            uint firstZeroSlot = 0;
             while (true)
             {
                 uint dialogPtr = ReadU32(tableCursor);
-                if (dialogPtr == 0) break;
+                if (dialogPtr == 0)
+                {
+                    if (firstZeroSlot == 0) firstZeroSlot = tableCursor;
+                    if (seq + 1 >= reach) break;
+                    seq++;
+                    tableCursor += DialogSequenceTableEntrySize;
+                    continue;
+                }
 
                 seq++;
 
                 if (!IsValidPtr(dialogPtr))
                 {
-                    if (seq - 1 > extent) pastEnd = true;
+                    if (seq - 1 > extent && seq - 1 >= reach) pastEnd = true;
                     tableCursor += DialogSequenceTableEntrySize;
                     continue;
                 }
@@ -621,7 +640,9 @@ namespace Legacy
                     SequenceBaseAddr = dialogArrayPtr
                 };
 
-                target.Add(($"{labelPrefix} - Dialog #{seq}{(interpolated ? " (interpolated)" : "")}", info));
+                // The first entry of each conversation after the opening one says when that conversation plays.
+                string branchNote = branchStarts.TryGetValue(seq - 1, out var when) && seq > 1 ? $" [when {when}]" : "";
+                target.Add(($"{labelPrefix} - Dialog #{seq}{(interpolated ? " (interpolated)" : "")}{branchNote}", info));
                 createdInfos.Add(info);
 
                 tableCursor += DialogSequenceTableEntrySize;
@@ -632,11 +653,14 @@ namespace Legacy
             // skipped as filler above rather than ending the loop -- only a literal 0 breaks
             // it here, matching WalkDialogArray's own termination check). Its slot index is
             // what every entry's Index field must equal to end the dialog right after it.
-            int terminatorSlotIndex = (int)((tableCursor - dialogArrayPtr) / DialogSequenceTableEntrySize);
+            int terminatorSlotIndex = (int)(((firstZeroSlot != 0 ? firstZeroSlot : tableCursor) - dialogArrayPtr) / DialogSequenceTableEntrySize);
             foreach (var info in createdInfos)
             {
                 info.TerminatorSlotIndex = terminatorSlotIndex;
-                info.EndsDialogHere = info.Index == terminatorSlotIndex;
+                // Each conversation in the table has its own end marker, so "ends here" is "the next slot is not an entry".
+                uint nextSlot = dialogArrayPtr + (uint)(info.Index * DialogSequenceTableEntrySize);
+                info.EndsDialogHere = info.Index == terminatorSlotIndex || nextSlot + 4 > RomEnd || !IsValidPtr(ReadU32(nextSlot));
+                info.EndsDialogLoaded = info.EndsDialogHere;
             }
 
             return seq;
@@ -1011,7 +1035,7 @@ namespace Legacy
             if (_currentNode?.Tag is not DialogNodeInfo info || !info.Editable) return;
 
             bool desired = Legacy_ChkEndDialog.Checked;
-            bool loadedState = info.Index == info.TerminatorSlotIndex;
+            bool loadedState = info.EndsDialogLoaded;
             info.EndsDialogHere = desired;
             info.EndsDialogDirty = desired != loadedState;
             UpdateFlowInfo();

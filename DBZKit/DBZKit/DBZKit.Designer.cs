@@ -30,16 +30,6 @@
         {
             components = new System.ComponentModel.Container();
             DBZKit_TabControl = new TabControl();
-            TabPage_PortraitViewer = new TabPage();
-            ListView_PortraitViewer = new ListView();
-            TabPage_ItemViewer = new TabPage();
-            ListView_ItemViewer = new ListView();
-            TabPage_SpriteViewer = new TabPage();
-            treeView2 = new TreeView();
-            ListView_SpriteViewer = new ListView();
-            TabPage_MiscAssetViewer = new TabPage();
-            ListView_MiscSprites = new ListView();
-            TreeView_MiscAssetList = new TreeView();
             TabPage_IntroViewer = new TabPage();
             PictureBox_IntroBall = new PictureBox();
             Label_IntroHint = new Label();
@@ -86,17 +76,7 @@
             fileToolStripMenuItem = new ToolStripMenuItem();
             openRomToolStripMenuItem = new ToolStripMenuItem();
             dumpAllAssetsToolStripMenuItem = new ToolStripMenuItem();
-            optionsToolStripMenuItem = new ToolStripMenuItem();
-            setGameToolStripMenuItem = new ToolStripMenuItem();
-            MenuEnableLOG1 = new ToolStripMenuItem();
-            MenuEnableLOG2 = new ToolStripMenuItem();
-            MenuEnableLOG3 = new ToolStripMenuItem();
-            AssetContextMenu = new ContextMenuStrip(components);
             DBZKit_TabControl.SuspendLayout();
-            TabPage_PortraitViewer.SuspendLayout();
-            TabPage_ItemViewer.SuspendLayout();
-            TabPage_SpriteViewer.SuspendLayout();
-            TabPage_MiscAssetViewer.SuspendLayout();
             TabPage_IntroViewer.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)PictureBox_IntroBall).BeginInit();
             ((System.ComponentModel.ISupportInitialize)TrackBar_IntroSeek).BeginInit();
@@ -114,10 +94,6 @@
             // 
             // DBZKit_TabControl
             // 
-            DBZKit_TabControl.Controls.Add(TabPage_PortraitViewer);
-            DBZKit_TabControl.Controls.Add(TabPage_ItemViewer);
-            DBZKit_TabControl.Controls.Add(TabPage_SpriteViewer);
-            DBZKit_TabControl.Controls.Add(TabPage_MiscAssetViewer);
             DBZKit_TabControl.Controls.Add(TabPage_IntroViewer);
             DBZKit_TabControl.Controls.Add(TabPage_AttractMode);
             DBZKit_TabControl.Controls.Add(TabPage_TitleScreen);
@@ -129,104 +105,6 @@
             DBZKit_TabControl.Size = new Size(1264, 657);
             DBZKit_TabControl.TabIndex = 0;
             // 
-            // TabPage_PortraitViewer
-            // 
-            TabPage_PortraitViewer.Controls.Add(ListView_PortraitViewer);
-            TabPage_PortraitViewer.Location = new Point(4, 24);
-            TabPage_PortraitViewer.Name = "TabPage_PortraitViewer";
-            TabPage_PortraitViewer.Padding = new Padding(3);
-            TabPage_PortraitViewer.Size = new Size(1256, 629);
-            TabPage_PortraitViewer.TabIndex = 1;
-            TabPage_PortraitViewer.Text = "Portrait Viewer";
-            TabPage_PortraitViewer.UseVisualStyleBackColor = true;
-            // 
-            // ListView_PortraitViewer
-            // 
-            ListView_PortraitViewer.Dock = DockStyle.Fill;
-            ListView_PortraitViewer.Location = new Point(3, 3);
-            ListView_PortraitViewer.Name = "ListView_PortraitViewer";
-            ListView_PortraitViewer.Size = new Size(1250, 623);
-            ListView_PortraitViewer.TabIndex = 0;
-            ListView_PortraitViewer.UseCompatibleStateImageBehavior = false;
-            // 
-            // TabPage_ItemViewer
-            // 
-            TabPage_ItemViewer.Controls.Add(ListView_ItemViewer);
-            TabPage_ItemViewer.Location = new Point(4, 24);
-            TabPage_ItemViewer.Name = "TabPage_ItemViewer";
-            TabPage_ItemViewer.Size = new Size(1256, 629);
-            TabPage_ItemViewer.TabIndex = 3;
-            TabPage_ItemViewer.Text = "Item Viewer";
-            TabPage_ItemViewer.UseVisualStyleBackColor = true;
-            // 
-            // ListView_ItemViewer
-            // 
-            ListView_ItemViewer.Dock = DockStyle.Fill;
-            ListView_ItemViewer.Location = new Point(0, 0);
-            ListView_ItemViewer.Name = "ListView_ItemViewer";
-            ListView_ItemViewer.Size = new Size(1256, 629);
-            ListView_ItemViewer.TabIndex = 1;
-            ListView_ItemViewer.UseCompatibleStateImageBehavior = false;
-            // 
-            // TabPage_SpriteViewer
-            // 
-            // The Fill control goes in first (lowest z-order) so the docked tree takes its 256px first; the list then fills the rest.
-            TabPage_SpriteViewer.Controls.Add(ListView_SpriteViewer);
-            TabPage_SpriteViewer.Controls.Add(treeView2);
-            TabPage_SpriteViewer.Location = new Point(4, 24);
-            TabPage_SpriteViewer.Name = "TabPage_SpriteViewer";
-            TabPage_SpriteViewer.Size = new Size(1256, 629);
-            TabPage_SpriteViewer.TabIndex = 4;
-            TabPage_SpriteViewer.Text = "Sprite Viewer";
-            TabPage_SpriteViewer.UseVisualStyleBackColor = true;
-            // 
-            // treeView2
-            // 
-            treeView2.Dock = DockStyle.Left;
-            treeView2.Location = new Point(0, 0);
-            treeView2.Name = "treeView2";
-            treeView2.Size = new Size(256, 629);
-            treeView2.TabIndex = 1;
-            treeView2.AfterSelect += treeView2_AfterSelect;
-            // 
-            // ListView_SpriteViewer
-            // 
-            ListView_SpriteViewer.Dock = DockStyle.Fill;
-            ListView_SpriteViewer.Location = new Point(256, 0);
-            ListView_SpriteViewer.Name = "ListView_SpriteViewer";
-            ListView_SpriteViewer.Size = new Size(994, 629);
-            ListView_SpriteViewer.TabIndex = 0;
-            ListView_SpriteViewer.UseCompatibleStateImageBehavior = false;
-            //
-            // TabPage_MiscAssetViewer
-            // 
-            TabPage_MiscAssetViewer.Controls.Add(ListView_MiscSprites);
-            TabPage_MiscAssetViewer.Controls.Add(TreeView_MiscAssetList);
-            TabPage_MiscAssetViewer.Location = new Point(4, 24);
-            TabPage_MiscAssetViewer.Name = "TabPage_MiscAssetViewer";
-            TabPage_MiscAssetViewer.Padding = new Padding(3);
-            TabPage_MiscAssetViewer.Size = new Size(1256, 629);
-            TabPage_MiscAssetViewer.TabIndex = 0;
-            TabPage_MiscAssetViewer.Text = "Misc Assets";
-            TabPage_MiscAssetViewer.UseVisualStyleBackColor = true;
-            // 
-            // ListView_MiscSprites
-            // 
-            ListView_MiscSprites.Dock = DockStyle.Fill;
-            ListView_MiscSprites.Location = new Point(215, 3);
-            ListView_MiscSprites.Name = "ListView_MiscSprites";
-            ListView_MiscSprites.Size = new Size(1038, 623);
-            ListView_MiscSprites.TabIndex = 3;
-            ListView_MiscSprites.UseCompatibleStateImageBehavior = false;
-            // 
-            // TreeView_MiscAssetList
-            // 
-            TreeView_MiscAssetList.Dock = DockStyle.Left;
-            TreeView_MiscAssetList.Location = new Point(3, 3);
-            TreeView_MiscAssetList.Name = "TreeView_MiscAssetList";
-            TreeView_MiscAssetList.Size = new Size(212, 623);
-            TreeView_MiscAssetList.TabIndex = 1;
-            //
             // TabPage_IntroViewer
             //
             // The real pre-title "intro video" -- a timed cross-fade slideshow of 4
@@ -275,7 +153,7 @@
             Label_IntroHint.Height = 40;
             Label_IntroHint.Name = "Label_IntroHint";
             Label_IntroHint.Padding = new Padding(4);
-            Label_IntroHint.Text = "The real pre-title intro video: a cross-fade slideshow of 4 full-screen bitmaps (looped here for preview). See the Credits tab for the boot-sequence text roll.";
+            Label_IntroHint.Text = "The four screens that fade in and out before the title, shown on a loop.";
             //
             // TrackBar_IntroSeek
             //
@@ -485,7 +363,7 @@
             Label_AttractHint.Height = 40;
             Label_AttractHint.Name = "Label_AttractHint";
             Label_AttractHint.Padding = new Padding(4);
-            Label_AttractHint.Text = "The real pre-title video -- 181 frames, genuinely delta-encoded (not independent images), ~18s at 10fps. Plays before the title screen and again after 30s idle there.";
+            Label_AttractHint.Text = "The video before the title screen (181 frames, about 18 s). It plays again after 30 s on the title screen.";
             //
             // TrackBar_AttractSeek
             //
@@ -624,7 +502,7 @@
             Label_TitleScreenHint.Height = 40;
             Label_TitleScreenHint.Name = "Label_TitleScreenHint";
             Label_TitleScreenHint.Padding = new Padding(4);
-            Label_TitleScreenHint.Text = "The title screen -- plays directly after Attract Mode's video finishes or is skipped (Credits is NOT part of this chain, confirmed via IDA).";
+            Label_TitleScreenHint.Text = "The spinning ball on the title screen, shown after the attract video ends or is skipped.";
             //
             // Button_TitlePlayPause
             //
@@ -690,7 +568,7 @@
             //
             // menuStrip1
             //
-            menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, optionsToolStripMenuItem });
+            menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem });
             menuStrip1.Location = new Point(0, 0);
             menuStrip1.Name = "menuStrip1";
             menuStrip1.Size = new Size(1264, 24);
@@ -721,48 +599,7 @@
             dumpAllAssetsToolStripMenuItem.Size = new Size(210, 22);
             dumpAllAssetsToolStripMenuItem.Text = "Dump All Known Assets...";
             dumpAllAssetsToolStripMenuItem.Click += DumpAllAssetsToolStripMenuItem_Click;
-            // 
-            // optionsToolStripMenuItem
-            // 
-            optionsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { setGameToolStripMenuItem });
-            optionsToolStripMenuItem.Name = "optionsToolStripMenuItem";
-            optionsToolStripMenuItem.Size = new Size(61, 20);
-            optionsToolStripMenuItem.Text = "Options";
-            // 
-            // setGameToolStripMenuItem
-            // 
-            setGameToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { MenuEnableLOG1, MenuEnableLOG2, MenuEnableLOG3 });
-            setGameToolStripMenuItem.Name = "setGameToolStripMenuItem";
-            setGameToolStripMenuItem.Size = new Size(124, 22);
-            setGameToolStripMenuItem.Text = "Set Game";
-            // 
-            // MenuEnableLOG1
-            // 
-            MenuEnableLOG1.Enabled = false;
-            MenuEnableLOG1.Name = "MenuEnableLOG1";
-            MenuEnableLOG1.Size = new Size(165, 22);
-            MenuEnableLOG1.Text = "Legacy of Goku";
-            // 
-            // MenuEnableLOG2
-            // 
-            MenuEnableLOG2.Checked = true;
-            MenuEnableLOG2.CheckState = CheckState.Checked;
-            MenuEnableLOG2.Name = "MenuEnableLOG2";
-            MenuEnableLOG2.Size = new Size(165, 22);
-            MenuEnableLOG2.Text = "Legacy of Goku II";
-            // 
-            // MenuEnableLOG3
-            // 
-            MenuEnableLOG3.Enabled = false;
-            MenuEnableLOG3.Name = "MenuEnableLOG3";
-            MenuEnableLOG3.Size = new Size(165, 22);
-            MenuEnableLOG3.Text = "Buu's Fury";
-            // 
-            // AssetContextMenu
-            // 
-            AssetContextMenu.Name = "PortraitContextMenu";
-            AssetContextMenu.Size = new Size(61, 4);
-            // 
+            //
             // DBZKit
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -776,10 +613,6 @@
             Name = "DBZKit";
             Text = "DBZ Kit";
             DBZKit_TabControl.ResumeLayout(false);
-            TabPage_PortraitViewer.ResumeLayout(false);
-            TabPage_ItemViewer.ResumeLayout(false);
-            TabPage_SpriteViewer.ResumeLayout(false);
-            TabPage_MiscAssetViewer.ResumeLayout(false);
             TabPage_IntroViewer.ResumeLayout(false);
             TabPage_IntroViewer.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)PictureBox_IntroBall).EndInit();
@@ -804,26 +637,10 @@
         #endregion
 
         private TabControl DBZKit_TabControl;
-        private TabPage TabPage_MiscAssetViewer;
-        private TabPage TabPage_PortraitViewer;
         private MenuStrip menuStrip1;
         private ToolStripMenuItem fileToolStripMenuItem;
         private ToolStripMenuItem openRomToolStripMenuItem;
         private ToolStripMenuItem dumpAllAssetsToolStripMenuItem;
-        private ToolStripMenuItem optionsToolStripMenuItem;
-        private ToolStripMenuItem setGameToolStripMenuItem;
-        private ToolStripMenuItem MenuEnableLOG1;
-        private ToolStripMenuItem MenuEnableLOG2;
-        private ToolStripMenuItem MenuEnableLOG3;
-        private TreeView TreeView_MiscAssetList;
-        private ListView ListView_PortraitViewer;
-        private ContextMenuStrip AssetContextMenu;
-        private TabPage TabPage_ItemViewer;
-        private ListView ListView_ItemViewer;
-        private TabPage TabPage_SpriteViewer;
-        private ListView ListView_MiscSprites;
-        private TreeView treeView2;
-        private ListView ListView_SpriteViewer;
         private TabPage TabPage_IntroViewer;
         private PictureBox PictureBox_IntroBall;
         private Label Label_IntroHint;

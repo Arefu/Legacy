@@ -117,6 +117,13 @@ namespace DrGero.Engine
             return IsRomPtr(lit, rom) ? (int)(lit & 0x00FFFFFF) - 7 * 4 : CharacterSpriteIndex;
         }
 
+        /// <summary>
+        /// The sprite index for a given game. The US layout follows the code literal (so a relocated table is found); any other game uses
+        /// its profile's CharacterSpriteIndexOffset. Read-only callers pass the game; the editing code (clone, relocate) is still US-only.
+        /// </summary>
+        public static int IndexAddress(ROM rom, Config.Game? game) =>
+            game == null || game.HasLayout("ALFE-sprites") ? IndexAddress(rom) : game.CharacterSpriteIndexOffset;
+
         public static bool IndexRelocated(ROM rom) => IndexAddress(rom) != CharacterSpriteIndex;
 
         private static bool IsDescriptorPointer(ROM rom, uint v)
@@ -149,10 +156,29 @@ namespace DrGero.Engine
         public static int RecordLimit(ROM rom, int recordAddress) => Math.Max(RecordCopySize, RecordExtent(rom, recordAddress));
 
         /// <summary>The groups of a sprite that can hold frames (the ones "Dump all sprites" walks and the Sprite editor offers). 0 when it has no record.</summary>
-        public static int GroupsIn(ROM rom, int spriteId)
+        public static int GroupsIn(ROM rom, int spriteId, Config.Game? game = null)
         {
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
-            return IsRomPtr(ptr, rom) ? (RecordLimit(rom, (int)(ptr & 0x00FFFFFF)) - FirstGroup) / GroupSize : 0;
+            int index = IndexAddress(rom, game);
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(index + spriteId * 4, 4));
+            if (!IsRomPtr(ptr, rom)) return 0;
+            int record = (int)(ptr & 0x00FFFFFF);
+            // The record's real extent, not RecordLimit: that pads short records to 0x1A0 for copying, and the bytes after a short
+            // record are other data (often compressed tiles) that can look like frame pointers by chance. Sprite 120 has 2 groups
+            // and showed Trunks and Gohan frames that way.
+            int groups = (RecordExtent(rom, record) - FirstGroup) / GroupSize;
+
+            // Some records are short (5 to 9 groups) and stored back to back, so anything past the next record's start belongs to
+            // another sprite. Without this a short record showed its neighbours' frames as its own.
+            int next = int.MaxValue;
+            for (int i = 0; i < IndexCapacity && index + i * 4 + 4 <= rom.Length; i++)
+            {
+                uint other = BitConverter.ToUInt32(rom.ReadBytesAt(index + i * 4, 4));
+                if (other != 0 && !IsRomPtr(other, rom)) break;
+                int at = (int)(other & 0x00FFFFFF);
+                if (other != 0 && at > record && at < next) next = at;
+            }
+            if (next != int.MaxValue) groups = Math.Min(groups, Math.Max(0, (next - record - FirstGroup) / GroupSize));
+            return groups;
         }
 
         /// <summary>
@@ -314,9 +340,9 @@ namespace DrGero.Engine
         }
 
         /// <summary>True when the sprite id has a record with at least one valid frame pointer in its frame run.</summary>
-        public static bool HasRecord(ROM rom, int spriteId)
+        public static bool HasRecord(ROM rom, int spriteId, Config.Game? game = null)
         {
-            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom) + spriteId * 4, 4));
+            uint ptr = BitConverter.ToUInt32(rom.ReadBytesAt(IndexAddress(rom, game) + spriteId * 4, 4));
             if (!IsRomPtr(ptr, rom)) return false;
             int rec = (int)(ptr & 0x00FFFFFF);
             for (int k = FirstGroup; k < FirstGroup + 12 * 4; k += 4)
@@ -498,15 +524,13 @@ namespace DrGero.Engine
                 var tiles = Rendering.JCALG1.Decompress(rom, (int)(BitConverter.ToUInt32(d, 8) & 0x00FFFFFF));
                 if (tiles.Length < w * h) return null;
                 var pal = Rendering.ItemIconReader.ReadOBJPalette(rom, new Config.Game { OBJPaletteOffset = ObjPalette, CharacterSpriteIndexOffset = CharacterSpriteIndex });
-                var bmp = new Bitmap(w, h);
+                // Tiles (8x8, left to right, top to bottom) to row-major indices, then one bitmap copy.
+                var idx = new byte[w * h];
                 int tw = w / 8;
                 for (int t = 0; t < tw * (h / 8); t++)
                     for (int py = 0; py < 8; py++)
-                        for (int px = 0; px < 8; px++)
-                        {
-                            byte i = tiles[t * 64 + py * 8 + px];
-                            if (i != 0) bmp.SetPixel(t % tw * 8 + px, t / tw * 8 + py, pal[i]);
-                        }
+                        Array.Copy(tiles, t * 64 + py * 8, idx, (t / tw * 8 + py) * w + t % tw * 8, 8);
+                var bmp = Rendering.IndexedImage.FromIndices(idx, w, h, pal);
                 if ((d[7] & 0x10) != 0) bmp.RotateFlip(RotateFlipType.RotateNoneFlipX);
                 return bmp;
             }

@@ -80,7 +80,6 @@ namespace DBZKit
 
             _content.Controls.Add(right);
             _content.Controls.Add(left);
-            _content.Controls.Add(new ApplyBar(session));
             Controls.Add(_content);
             Controls.Add(_noRom);
 
@@ -331,7 +330,7 @@ namespace DBZKit
             Fill();
             _list.SelectedIndex = keep;
             _session.NotifyChanged(this);
-            Say(message + " Apply to DBZKit / Save ROM As to keep it.");
+            Say(message + " File > Save As (Ctrl+S) to keep it.");
         }
 
         private void ExportWav()

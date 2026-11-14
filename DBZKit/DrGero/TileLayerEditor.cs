@@ -57,15 +57,18 @@ namespace DrGero.Rendering
         /// <summary>The ROM this editor writes to -- callers should drop the editor if their ROM object is replaced.</summary>
         public ROM Rom => _rom;
 
-        /// <summary>Opens a layer for editing, or null if it's empty or in the unrecognised 0x4FCD format.</summary>
-        public static TileLayerEditor? Open(ROM rom, int layerAddress)
+        /// <summary>
+        /// Opens a layer for editing, or null if it's empty or in the unrecognised 0x4FCD format. Pass the game for any ROM but US LoG2
+        /// (the tiled-layer tag is a function address, see Game.TiledLayerHandler).
+        /// </summary>
+        public static TileLayerEditor? Open(ROM rom, int layerAddress, Config.Game? game = null)
         {
             if (layerAddress <= 0) return null;
 
             rom.PushPosition(layerAddress);
             try
             {
-                if (rom.ReadPointer() != TiledLayerType) return null;
+                if (rom.ReadPointer() != (game?.TiledLayerHandler ?? TiledLayerType)) return null;
 
                 rom.Skip(0x9);
                 int offX = rom.ReadShort() / 4;

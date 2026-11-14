@@ -63,8 +63,6 @@ namespace DrGero.Quests
 
     public static class QuestReader
     {
-        private const int RecordSize = 16;
-
         /// <summary>
         /// Reads and decodes every entry in the quest table, in table order (this is also
         /// display order -- QuestLog_Build walks the table 0..QuestCount-1 and appends to
@@ -77,7 +75,7 @@ namespace DrGero.Quests
 
             for (int i = 0; i < game.QuestCount; i++)
             {
-                int recordAddr = game.QuestTableOffset + i * RecordSize;
+                int recordAddr = game.QuestTableOffset + i * Math.Max(16, game.QuestRecordSize);
 
                 rom.PushPosition(recordAddr);
                 int priority = rom.ReadInt();
@@ -86,7 +84,7 @@ namespace DrGero.Quests
                 int namePtr = rom.ReadPointer();
                 rom.PopPosition();
 
-                string name = ReadCString(rom, namePtr);
+                string name = ReadCString(rom, namePtr, game.Languages.FirstOrDefault()?.Encoding);
                 var (availText, availFlags) = ConditionDecoder.Decode(rom, availPtr);
                 var (completeText, completeFlags) = ConditionDecoder.Decode(rom, completePtr);
 
@@ -111,18 +109,20 @@ namespace DrGero.Quests
             return results;
         }
 
-        private static string ReadCString(ROM rom, int addr)
+        /// <summary>A null-terminated name. "u16" text (Japan) is 16-bit characters: ASCII as itself, font glyph numbers as {XXXX}.</summary>
+        private static string ReadCString(ROM rom, int addr, string? encoding = null)
         {
             if (addr == 0) return "";
             rom.PushPosition(addr & 0x00FFFFFF);
             var sb = new System.Text.StringBuilder();
+            bool wide = string.Equals(encoding, "u16", StringComparison.OrdinalIgnoreCase);
             try
             {
                 for (int i = 0; i < 256; i++)
                 {
-                    byte b = (byte)rom.ReadByte();
-                    if (b == 0) break;
-                    sb.Append((char)b);
+                    int c = wide ? rom.ReadByte() | rom.ReadByte() << 8 : rom.ReadByte();
+                    if (c == 0) break;
+                    sb.Append(!wide || c is >= 0x20 and < 0x7F ? ((char)c).ToString() : $"{{{c:X}}}");
                 }
             }
             finally
@@ -363,6 +363,7 @@ namespace DrGero.Quests
         {
             var result = new List<ScriptInstruction>();
             int offset = 0;
+            int furthestJump = 0; // an END that a forward jump goes past is an early return, not the end of the script
 
             while (offset < data.Length && result.Count < maxInstructions)
             {
@@ -396,10 +397,12 @@ namespace DrGero.Quests
                         break;
                     case 0x11: // END
                         result.Add(new ScriptInstruction { Offset = start, Opcode = op });
+                        if (furthestJump > start) break; // `if (...) { return N; }` as the assembler writes it: push, END, then the rest
                         return result;
                     case 0x12: case 0x13: case 0x1C: // Jump / JumpIfFalse / LoopOrJump -- 1 signed byte
                         if (offset >= data.Length) return result;
                         result.Add(new ScriptInstruction { Offset = start, Opcode = op, Args = new List<long> { unchecked((sbyte)data[offset++]) } });
+                        if (op != 0x1C) furthestJump = Math.Max(furthestJump, offset + (int)result[^1].Args[0]); // 0x1C only goes backwards
                         break;
                     case 0x15: case 0x16: case 0x17: case 0x18: case 0x19: case 0x1A: // StepTypePost_*
                         if (offset >= data.Length) return result;
@@ -554,6 +557,10 @@ namespace DrGero.Quests
         {
             var results = new List<(int FlagId, bool IsSet)>();
             WalkSequence(rom, sequenceAddr, maxEntries, results, new HashSet<int>(), 0);
+            // WalkSequence stops at the first end marker; a table can hold more conversations after it, reached by a
+            // script's "go to slot N" (see DialogBranches). Their flag writes count too.
+            foreach (var write in DialogBranches.FindFlagWrites(rom, sequenceAddr))
+                if (!results.Contains(write)) results.Add(write);
             return results;
         }
 

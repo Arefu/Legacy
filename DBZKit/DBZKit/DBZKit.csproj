@@ -13,6 +13,8 @@
     <None Update="JCALG1.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <!-- Game profiles (one per game code) used by the ROM Browser; Dragon Radar's games/ folder is the single source. -->
+    <None Include="..\Dragon Radar\games\*.json" Link="games\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -32,13 +32,16 @@ namespace Legacy.Zenkai
                 if (first == 0 || !Ok(first) || U8(first + 2) > 5) return;
                 // Same extent rule as Legacy.WalkDialogArray: the table runs at least to the highest Index seen, and
                 // the first non-pointer slot past that ends it (otherwise it runs on into the next table's entries).
+                // A script entry can also send the conversation to a slot past a 0 end marker (DialogBranches), so the
+                // walk goes on through 0 slots up to the highest slot that is reachable.
                 int extent = 0;
                 bool pastEnd = false;
+                int reach = DrGero.Quests.DialogBranches.ReachableSlotCount(rom, (int)(arr - RomBase));
                 for (int n = 1; Ok(arr + (uint)(n * 4) - 4); n++)
                 {
                     uint p = U32(arr + (uint)((n - 1) * 4));
-                    if (p == 0) break;
-                    if (!Ok(p)) { if (n - 1 > extent) pastEnd = true; continue; }
+                    if (p == 0) { if (n >= reach) break; continue; }
+                    if (!Ok(p)) { if (n - 1 > extent && n - 1 >= reach) pastEnd = true; continue; }
                     if (pastEnd) continue;
                     extent = Math.Max(extent, BitConverter.ToUInt16(rom, (int)(p - RomBase)));
                     if (U8(p + 2) == 0) scripts.Add(($"{label} - Dialog #{n}", p + 3));

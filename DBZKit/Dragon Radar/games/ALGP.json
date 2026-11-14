@@ -1,0 +1,11 @@
+{
+    "GAME_CODE": "ALGP",
+    "Languages": [
+        { "Code": "en", "Name": "English" },
+        { "Code": "fr", "Name": "French" },
+        { "Code": "de", "Name": "German" },
+        { "Code": "es", "Name": "Spanish" },
+        { "Code": "it", "Name": "Italian" }
+    ],
+    "Layouts": []
+}

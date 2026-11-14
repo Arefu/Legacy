@@ -44,7 +44,6 @@ namespace DBZKit
             tabs.TabPages.Add(BuildEngineTab());
 
             _content.Controls.Add(tabs);
-            _content.Controls.Add(new ApplyBar(session));
             Controls.Add(_content);
             Controls.Add(_noRom);
             session.Loaded += OnSessionLoaded;

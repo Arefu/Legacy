@@ -70,7 +70,9 @@ namespace Bulma.LOG2
             if (nameIndex == 0) return string.Empty;
             if (nameIndex > 0x0000FFFF) return string.Empty; // likely a pointer, not an index
 
-            rom.PushPosition(Config.MapNameTableOffset + (int)(nameIndex * 4));
+            // Multi-language releases interleave languages in one table (the first listed language is the one shown here).
+            var language = Config.Languages.FirstOrDefault(l => l.MapNameTableOffset != 0);
+            rom.PushPosition(language?.StringPointerAddress(nameIndex) ?? Config.MapNameTableOffset + (int)(nameIndex * 4));
             int ptr = rom.ReadPointer();
             if (ptr == 0)
             {

@@ -318,6 +318,17 @@ namespace DrGero.Boot
         public const int FrameTableAddress = 0x087FB8D0;
         private const int HeaderWordCount = 129; // frame count (1 word) + 128 palette/unmapped words, before the pointer array
 
+        // The code reaches the table through one literal (the only word in the US ROM pointing at it). AttractVideoWriter repoints it
+        // when a longer video moves the table, so every read goes through it, the way the game does.
+        public const int FrameTableLiteral = 0x1EDCC;
+
+        /// <summary>File offset of the frame table: wherever the code literal points (FrameTableAddress in an unedited ROM).</summary>
+        public static int TableOffset(ROM rom)
+        {
+            uint p = BitConverter.ToUInt32(rom.ReadBytesAt(FrameTableLiteral, 4));
+            return p is >= 0x08000000 and < 0x0A000000 && (int)(p & 0x01FFFFFF) + 4 <= rom.Length ? (int)(p & 0x01FFFFFF) : FrameTableAddress & 0x00FFFFFF;
+        }
+
         public enum PaletteSource { Embedded, BG, OBJ }
 
         public const int BGPaletteAddress = 0x081D4F50;
@@ -325,7 +336,7 @@ namespace DrGero.Boot
 
         public static int GetFrameCount(ROM rom)
         {
-            rom.PushPosition(FrameTableAddress & 0x00FFFFFF);
+            rom.PushPosition(TableOffset(rom));
             int count = rom.ReadInt();
             rom.PopPosition();
             return count;
@@ -336,7 +347,7 @@ namespace DrGero.Boot
         {
             int count = GetFrameCount(rom);
             var addresses = new List<int>(count);
-            rom.PushPosition((FrameTableAddress & 0x00FFFFFF) + (HeaderWordCount * 4));
+            rom.PushPosition(TableOffset(rom) + (HeaderWordCount * 4));
             for (int i = 0; i < count; i++)
                 addresses.Add(rom.ReadPointer());
             rom.PopPosition();
@@ -354,7 +365,7 @@ namespace DrGero.Boot
 
         public static Color[] GetPalette(ROM rom, PaletteSource source = PaletteSource.Embedded) => source switch
         {
-            PaletteSource.Embedded => ReadPalette(rom, (FrameTableAddress & 0x00FFFFFF) + 4),
+            PaletteSource.Embedded => ReadPalette(rom, TableOffset(rom) + 4),
             PaletteSource.BG => ReadPalette(rom, BGPaletteAddress & 0x00FFFFFF),
             PaletteSource.OBJ => ReadPalette(rom, OBJPaletteAddress & 0x00FFFFFF),
             _ => throw new ArgumentOutOfRangeException(nameof(source)),
@@ -401,7 +412,7 @@ namespace DrGero.Boot
 
             for (int i = 0; i < count; i++)
             {
-                int entryAddress = (FrameTableAddress & 0x00FFFFFF) + ((HeaderWordCount + i) * 4);
+                int entryAddress = TableOffset(rom) + ((HeaderWordCount + i) * 4);
                 rom.PushPosition(entryAddress);
                 int resourceAddress = rom.ReadPointer();
                 rom.PopPosition();
@@ -534,7 +545,11 @@ namespace DrGero.Boot
     public static class TitleScreenBall
     {
         public const int FrameTableAddress = 0x081D8E28;
-        public const int PaletteAddress = 0x081DA6C8;
+        // CORRECTED 2026-11-14 (IDA: TitleScreen_LoadGraphics / TitleScreen_UpdateBallAnimation): each frame is decompressed into a
+        // 32x32 canvas -- a FLAT 8bpp bitmap, not tiles -- that Sprite_BlitToVRAM converts to tiles 912.. of the title screen's BG
+        // (tilemap rect x 9-13, y 3-7). So it uses the BG palette the title screen loads, g_MenuPalette (0x081D4F50), not the OBJ
+        // palette, and it must be read linearly. Reading it as tiles with the OBJ palette is what drew noise.
+        public const int PaletteAddress = 0x081D4F50;
         public const int FrameWidth = 32;
         public const int FrameHeight = 32;
         private const int MaxFrames = 64; // sanity bound
@@ -587,6 +602,9 @@ namespace DrGero.Boot
             return colors;
         }
 
+        /// <summary>One frame's pixels (row-major, 32x32) as a bitmap; index 0 is transparent.</summary>
+        public static Bitmap RenderFrame(byte[] data, Color[] palette) => Rendering.IndexedImage.FromIndices(data, FrameWidth, FrameHeight, palette);
+
         public static List<Bitmap> GetFrames(ROM rom, Color[]? palette = null)
         {
             var frames = new List<Bitmap>();
@@ -597,7 +615,7 @@ namespace DrGero.Boot
                 try
                 {
                     byte[] data = GetRawFrameBytes(rom, ptr);
-                    frames.Add(DeveloperIntro.RenderIndexedTiled(data, FrameWidth / 8, FrameHeight / 8, palette));
+                    frames.Add(RenderFrame(data, palette ?? GetPalette(rom)));
                 }
                 catch
                 {

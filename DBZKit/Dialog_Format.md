@@ -71,6 +71,55 @@ So a "conversation" is:
   dialog are authored: you don't need contiguous entries, you just need to know your own next slot
   number when you write the entry.
 
+### One table, several conversations (found 2026-11-15, GitHub issue 3)
+
+A mode-0 (script) entry can override its own `Index`: if the script ends with a value left on the
+VM stack, the conversation continues at that slot instead. This is how one table holds a different
+conversation per story state. Each conversation is a run of entries closed by its own end marker
+(a non-pointer slot), so **the first end marker is not the end of the table**.
+
+Gohan in Zone 1 Area 1 (NPC record `0x3ED670`, table `0x3B725C`):
+
+| Slot | Entry |
+|---|---|
+| 0 | script `PushByte(0); TestStoryFlag; JumpIfFalse +2; PushByte(3); END` — flag 0 set: go to slot 3 |
+| 1 | "GOHAN: To use your melee attack, press the A Button." |
+| 2 | `0` — end |
+| 3 | script, same test on flag 1, to slot 6 |
+| 4 | "GOHAN: To activate your energy blast, use the B Button." |
+| 5 | `3` — end |
+| 6+ | the "I can't let you go against those two alone" scene |
+
+Checked against every map in the US ROM: 367 dialogue tables, 158 hold more than one
+conversation, and every "go to slot N" lands on a real entry. Reading only to the first end marker
+missed steps in 92 tables. `DrGero.Quests.DialogBranches` reads a table this way; Legacy's tree,
+"Find Opcode Usage" and Dragon Radar's right-click "View ... dialogue (quest / idle)" all use it.
+
+**An end marker's value is where the next talk starts** (GitHub issue 3, the idle lines that were
+missing). A non-zero marker names the slot the NEXT conversation with that character begins at; 0
+means from the top. That is how an NPC cycles through idle lines each time you talk to it — Chi-Chi
+(Zone 2 Area 20, table `0x3B8A80`): line, `2`, line, `4`, line, `0`. Gohan's `3` at slot 5 makes him
+re-run the flag-1 test on every later talk. Inferred from ROM data (every non-zero marker in a
+table names one of its entry slots); not traced in IDA yet. Some NPCs instead pick a line at
+random: `PushMultiVarint(1, 2, 3); StackRand; StackMul; StackAdd; END` returns slot 1, 3 or 5.
+With both rules, every plain line in the dialogue area (`0x3B0000`-`0x409000`) is reached from a map
+except 12 that the game's code shows itself (death, save, journal, golden capsule, sparring results).
+
+Editing a whole table (Dragon Radar > right-click > Edit ... dialogue) lists every slot, end markers
+included. In script text the jump is `return N;` (N = slot number, from 0); the editor renumbers
+those when steps are added, removed or moved. Notes for anyone changing that code:
+
+- A line break inside a message is byte `0x0B` (a new page), not `0x0A`: 89 uses against 1 in the
+  US ROM's plain lines. The editor shows it as a new line and writes `0x0B` back.
+- All but 2 of the ROM's 2940 entries have `Index` = their own slot + 1 (the two are in table
+  `0x3DEC58`, slots 9 and 10, both going to slot 12). The editor keeps such an entry's target as
+  "Then go to step".
+- `if (...) { return 3; }` assembles as `push 3; END` inside the block followed by the script's
+  own `END`, so an `END` is only the end of a script when no forward jump goes past it.
+- A script nobody edited is written back as its own bytes (only the `PushByte N` before an `END`
+  is patched when steps move). 143 of the 1238 script steps use something Zenkai has no syntax for
+  (sums of flag tests, type-handler ops); those are read-only in the editor for that reason.
+
 `Dialog_HandlerTable` (`0x83EC84C`, 6× 4-byte thumb funcptrs) maps `mode` 0–5 directly onto:
 
 | Mode | Enum | Handler |

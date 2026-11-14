@@ -14,7 +14,10 @@ namespace DBZKit
             string? dumpOut = args.FirstOrDefault(a => a.StartsWith("--out="))?["--out=".Length..].Trim('"');
             if (dumpRom != null && dumpOut != null)
             {
-                var (maps, banks, errors) = MapDumper.DumpAll(DrGero.IO.ROM.FromFile(dumpRom), dumpOut, null);
+                byte[] bytes = File.ReadAllBytes(dumpRom);
+                var (game, problem) = RomBrowser.LoadProfile(bytes);
+                if (problem != null) { Console.WriteLine(problem); return; }
+                var (maps, banks, errors) = MapDumper.DumpAll(DrGero.IO.ROM.FromBytes(bytes), game, dumpOut, null);
                 Console.WriteLine($"Dumped {maps} map(s), {banks} atlas bank(s), {errors} problem(s) to {dumpOut}");
                 return;
             }

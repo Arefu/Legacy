@@ -164,7 +164,15 @@ namespace Legacy.Zenkai
             foreach (var insn in insns)
             {
                 if (labelNames.TryGetValue(insn.Offset, out var label))
+                {
+                    // A value pushed just before the END that a jump also lands on belongs to the branch that pushed it:
+                    //   PushByte(0); TestStoryFlag; JumpIfFalse L0; PushByte(3); L0: END
+                    // is `if (flag 0) { return 3; }` -- a dialog script picking which conversation plays. Emitting the
+                    // return after the label made it unconditional (`if (...) { } return 3;`), which reassembled wrong.
+                    if (insn.Kind == "end" && stack.Count > 0)
+                        FlushRemainingStack("end");
                     lines.Add(new LabelLine(label));
+                }
 
                 switch (insn.Kind)
                 {
@@ -309,6 +317,9 @@ namespace Legacy.Zenkai
                         }
 
                     case "end":
+                        // An END before the last instruction is an early return; with nothing to return it is a bare `return;`.
+                        if (stack.Count == 0 && !ReferenceEquals(insn, insns[^1]))
+                            Emit("return;");
                         FlushRemainingStack("end");
                         break;
 
@@ -498,6 +509,9 @@ namespace Legacy.Zenkai
                         }
                     case 0x11: // END
                         result.Add(new RawInsn(start, offset, "end", new List<long>()));
+                        // An END that a forward jump goes past is an early `return` inside an if block (what the
+                        // assembler emits for `if (...) { return 3; }`), not the end of the script.
+                        if (result.Any(i => i.JumpTarget > start)) break;
                         return result;
 
                     case 0x12: // Jump

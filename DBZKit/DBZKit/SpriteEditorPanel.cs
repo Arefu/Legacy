@@ -20,11 +20,10 @@ namespace DBZKit
             _session = session;
             Dock = DockStyle.Fill;
             BuildUi();
-            _content.Controls.Add(new ApplyBar(session));
             Controls.Add(_content);
             Controls.Add(_noRom);
             session.Loaded += OnLoaded;
-            session.Changed += source => { if (!ReferenceEquals(source, this) && _content.Visible) { FillSpriteCombo(); RefreshSlots(); } };
+            session.Changed += source => { if (!ReferenceEquals(source, this) && _content.Visible) { _stripKey = (-1, -1); FillSpriteCombo(SelectedSprite); RefreshSlots(); } };
         }
 
         private void OnLoaded()
@@ -50,7 +49,6 @@ namespace DBZKit
         private readonly PictureBox[] _fCur = new PictureBox[4], _fNew = new PictureBox[4];
         private readonly Label[] _fLbl = new Label[4];
         private readonly string?[] _fPng = new string?[4];
-        private readonly Label _fInfo = new() { Dock = DockStyle.Top, Height = 74, Padding = new Padding(4) };
         private readonly HashSet<int> _relocated = [];
         // Each slot (Down / Up / Left / Right) holds an ARRAY of animation frames (a stand-still with a blink, a walk cycle, ...): this picks which one is
         // shown and written. "All frames" writes the same picture into every frame of the slot (fine for static poses such as ki blasts).
@@ -110,9 +108,10 @@ namespace DBZKit
                     report = SpriteDump.ImportSprite(_rom, pick.Folder, SelectedSprite, _relocated);
                 }
                 _session.NotifyChanged(this);
+            _stripKey = (-1, -1); // frames changed: redraw the strip
                 RefreshSlots();
                 _importStatus.ForeColor = Color.DimGray;
-                _importStatus.Text = report + " Apply to DBZKit / Save ROM As to keep it.";
+                _importStatus.Text = report + " File > Save As (Ctrl+S) to keep it.";
             }
             catch (Exception ex) { Fail(ex.Message); }
         }
@@ -120,69 +119,122 @@ namespace DBZKit
         private static string GroupName(int n)
         {
             int off = FrameImport.FirstGroup + n * FrameImport.GroupSize;
+            // The ROM has no names for these: a group is just a slot in the sprite record. What we know of each comes from which code reads
+            // it (walking reads group 0; the ability functions read the groups at +0x9C, +0x16C and +0x17C), so they are described by
+            // that, not by game names that would need translating.
             string what = off switch
             {
-                0x4C => "walk / stand (first group)", 0x9C => "Ki Blast, Big Bang, Burning, Masenko, Scatter Shot", 0x16C => "Kamehameha, Special Beam, Sword Blast", 0x17C => "Spirit Bomb", 0x18C => "extra frames (idle / blink?)", _ => "other pose",
+                0x4C => "Walk / stand", 0x9C => "Ability pose A", 0x16C => "Ability pose B", 0x17C => "Ability pose C", _ => "Pose",
             };
-            return $"Group {n}  (+{off}, 0x{off:X}) - {what}";
+            return $"Group {n}  -  {what}";
         }
 
-        private static PictureBox NewPic() => new() { Size = new Size(160, 160), SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(255, 0, 255), BorderStyle = BorderStyle.FixedSingle };
+        // Sprite frames are drawn on a checkerboard so their transparent pixels (palette index 0) are easy to tell apart.
+        private static readonly Bitmap Checker = MakeChecker();
+        private static Bitmap MakeChecker()
+        {
+            var b = new Bitmap(16, 16);
+            using var g = Graphics.FromImage(b);
+            g.Clear(Color.FromArgb(70, 70, 78));
+            using var dark = new SolidBrush(Color.FromArgb(56, 56, 62));
+            g.FillRectangle(dark, 0, 0, 8, 8);
+            g.FillRectangle(dark, 8, 8, 8, 8);
+            return b;
+        }
+
+        private static PictureBox NewPic(int side = 150) => new()
+        {
+            Size = new Size(side, side), SizeMode = PictureBoxSizeMode.Zoom, BackgroundImage = Checker, BackgroundImageLayout = ImageLayout.Tile, BorderStyle = BorderStyle.FixedSingle,
+        };
+
+        // Left: every sprite with a picture of it. Top right: group, the group's frames as a clickable strip, and Play.
+        private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.LargeIcon, MultiSelect = false, HideSelection = false, BorderStyle = BorderStyle.None };
+        private readonly ImageList _thumbs = new() { ImageSize = new Size(40, 40), ColorDepth = ColorDepth.Depth32Bit };
+        private readonly TextBox _search = new() { Dock = DockStyle.Top, PlaceholderText = "Find a sprite (id or party slot)" };
+        private readonly FlowLayoutPanel _strip = new() { Dock = DockStyle.Fill, AutoScroll = true, WrapContents = false, Padding = new Padding(0, 2, 0, 0) };
+        private readonly CheckBox _play = new() { Text = "Play", Appearance = Appearance.Button, AutoSize = false, Size = new Size(70, 28), TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(8, 0, 0, 0) };
+        private readonly System.Windows.Forms.Timer _playTimer = new() { Interval = 160 };
+        private readonly Label _title = new() { AutoSize = true, Font = new Font("Segoe UI", 12f, FontStyle.Bold), Margin = new Padding(0, 2, 16, 0) };
+        private int _playFrame;
+        private CancellationTokenSource? _thumbCancel;
 
         private void BuildUi()
         {
-            var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, AutoScrollMinSize = new Size(900, 800) };
-            _fInfo.Text = "Pick a sprite and a 4-frame group. Each direction shows what is in the ROM now (top) and your PNG (bottom). Give PNGs only for the directions you want to change. " +
-                          "Use the SAME size as the stock frame (shown under each picture) -- the game reserves sprite memory for stock sizes. Your transparent pink is fine (palette index 0). " +
-                          "Frames are stored as the game's normal compressed format.";
-            // the group list is rebuilt from the picked sprite's own record (FillGroupCombo); it starts on the first group
             _fGroup.Items.Add(GroupName(0));
             _fGroup.SelectedIndex = 0;
+            _fGroup.Width = 330;
 
-            // Two rows: sprite over group on the left, the options stacked two tall to their right (no scrollbar).
-            var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 74, ColumnCount = 3, RowCount = 2, Padding = new Padding(4) };
-            top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            top.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            top.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            Label Cap(string t) => new() { Text = t, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) };
-            _fSprite.Anchor = _fGroup.Anchor = AnchorStyles.Left;
-            top.Controls.Add(Cap("Sprite id:"), 0, 0); top.Controls.Add(_fSprite, 1, 0);
-            top.Controls.Add(Cap("Group:"), 0, 1); top.Controls.Add(_fGroup, 1, 1);
-            FlowLayoutPanel Line(params Control[] c) { var f = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(16, 0, 0, 0) }; f.Controls.AddRange(c); return f; }
-            foreach (var c in new Control[] { _fMirror, _fPad, _fAuto, _fAllFrames }) c.Margin = new Padding(0, 4, 12, 0);
+            // left: search + thumbnails
+            _list.LargeImageList = _thumbs;
+            var left = new Panel { Dock = DockStyle.Left, Width = 250, Padding = new Padding(4) };
+            left.Controls.Add(_list);
+            left.Controls.Add(_search);
+            _search.TextChanged += (_, _) => FillList();
+            _list.SelectedIndexChanged += (_, _) =>
+            {
+                if (_fFilling || _list.SelectedItems.Count == 0) return;
+                int id = (int)_list.SelectedItems[0].Tag!;
+                int idx = _choices.FindIndex(c => c.Id == id);
+                if (idx >= 0 && _fSprite.SelectedIndex != idx) _fSprite.SelectedIndex = idx;
+            };
+
+            // top: title, group, play; then the frame strip; then the options
             Label Small(string t) => new() { Text = t, AutoSize = true, Margin = new Padding(0, 6, 4, 0) };
-            top.Controls.Add(Line(_fMirror, _fPad, _fAuto), 2, 0);
-            top.Controls.Add(Line(Small("Frame:"), _fFrame, _fFrameInfo, _fAllFrames, Small("x:"), _fX, Small("y:"), _fY), 2, 1);
+            var head = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, WrapContents = false, Padding = new Padding(4, 4, 4, 0) };
+            head.Controls.AddRange([_title, Small("Group:"), _fGroup, _play]);
+            var stripRow = new Panel { Dock = DockStyle.Top, Height = 74, Padding = new Padding(4, 0, 4, 0) };
+            var stripCap = new Label { Text = "Frames:", Dock = DockStyle.Left, Width = 56, TextAlign = ContentAlignment.MiddleLeft };
+            stripRow.Controls.Add(_strip);
+            stripRow.Controls.Add(stripCap);
+            foreach (var c in new Control[] { _fMirror, _fPad, _fAuto, _fAllFrames }) c.Margin = new Padding(0, 4, 12, 0);
+            var options = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 30, WrapContents = false, Padding = new Padding(4, 0, 4, 0) };
+            options.Controls.AddRange([_fMirror, _fPad, _fAllFrames, _fAuto, Small("x:"), _fX, Small("y:"), _fY]);
+            _fAuto.CheckedChanged += (_, _) => _fX.Enabled = _fY.Enabled = !_fAuto.Checked;
+            _fX.Enabled = _fY.Enabled = false;
 
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, Height = 420, ColumnCount = 4, RowCount = 1 };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, Height = 410, ColumnCount = 4, RowCount = 1 };
             for (int i = 0; i < 4; i++)
             {
                 grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
                 var card = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, Dock = DockStyle.Fill, Padding = new Padding(4) };
                 int slot = i;
                 _fCur[i] = NewPic(); _fNew[i] = NewPic();
+                _fNew[i].Cursor = Cursors.Hand;
+                _fNew[i].AllowDrop = true;
+                _fNew[i].Click += (_, _) => ChooseSlotPng(slot);
+                _fNew[i].DragEnter += (_, e) => e.Effect = DroppedPng(e) != null ? DragDropEffects.Copy : DragDropEffects.None;
+                _fNew[i].DragDrop += (_, e) => { if (DroppedPng(e) is { } path) { _fPng[slot] = path; RefreshSlots(); } };
+                _fNew[i].Paint += (_, e) =>
+                {
+                    if (_fNew[slot].Image != null) return;
+                    TextRenderer.DrawText(e.Graphics, slot == 3 && _fMirror.Checked ? "Left, flipped" : "Drop a PNG here\nor click", Font,
+                        _fNew[slot].ClientRectangle, Color.Gainsboro, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+                };
                 _fLbl[i] = new Label { AutoSize = true, MaximumSize = new Size(240, 0), ForeColor = Color.DimGray };
-                var choose = new Button { Text = "PNG...", AutoSize = true };
-                choose.Click += (_, _) => ChooseSlotPng(slot);
                 var clear = new Button { Text = "Clear", AutoSize = true };
                 clear.Click += (_, _) => { _fPng[slot] = null; RefreshSlots(); };
-                var row = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
-                row.Controls.AddRange([choose, clear]);
                 card.Controls.Add(new Label { Text = FrameImport.SlotNames[i], Font = new Font(Font, FontStyle.Bold), AutoSize = true });
-                                card.Controls.AddRange([_fCur[i], _fNew[i], row, _fLbl[i]]);
+                card.Controls.AddRange([_fCur[i], _fNew[i], clear, _fLbl[i]]);
                 grid.Controls.Add(card, i, 0);
             }
             _fFrame.ValueChanged += (_, _) => { if (!_fFilling) { Array.Clear(_fPng); RefreshSlots(); } };
             _fAllFrames.CheckedChanged += (_, _) => RefreshSlots();
             _fMirror.CheckedChanged += (_, _) => RefreshSlots();
             _fPad.CheckedChanged += (_, _) => RefreshSlots();
-            _fSprite.SelectedIndexChanged += (_, _) => { if (_fFilling) return; Array.Clear(_fPng); _fFrame.Value = 0; FillGroupCombo(); RefreshSlots(); };
+            _fSprite.SelectedIndexChanged += (_, _) => { if (_fFilling) return; Array.Clear(_fPng); _fFrame.Value = 0; FillGroupCombo(); RefreshSlots(); SyncList(); };
             _fGroup.SelectedIndexChanged += (_, _) => { if (_fFilling) return; Array.Clear(_fPng); _fFrame.Value = 0; RefreshSlots(); };
+            _play.CheckedChanged += (_, _) => { _playFrame = CurrentFrame; _playTimer.Enabled = _play.Checked; _play.Text = _play.Checked ? "Stop" : "Play"; if (!_play.Checked) RefreshSlots(); };
+            _playTimer.Tick += (_, _) => PlayStep();
 
-            var write = new Button { Text = "Write into ROM copy", AutoSize = true };
+            var write = new Button { Text = "Write frames", AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
             write.Click += (_, _) => WriteFrames();
+            var tips = new ToolTip { AutoPopDelay = 15000 };
+            tips.SetToolTip(write, "Writes your PNGs over the chosen frame (or every frame of the direction). File > Save As (Ctrl+S) to keep it.");
+            tips.SetToolTip(_fPad, "The game reserves sprite memory for the stock size shown under each direction. Smaller PNGs are centred in it.");
+            tips.SetToolTip(_fMirror, "The game draws Right as Left flipped; leave this on and give only a Left PNG.");
+            tips.SetToolTip(_fAllFrames, "Use the same picture for every frame of the direction (fine for still poses).");
+            tips.SetToolTip(_fAuto, "Place the frame where the stock one sits. Turn off to set the x/y offset yourself.");
+            for (int i = 0; i < 4; i++) tips.SetToolTip(_fNew[i], "Drop a PNG here or click to choose one. Paint transparent areas with palette colour 0.");
             var export = new Button { Text = "Export .bin files", AutoSize = true };
             export.Click += (_, _) => ConvertToBin();
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 38, Padding = new Padding(4) };
@@ -194,17 +246,137 @@ namespace DBZKit
             exportSprite.Click += (_, _) => ExportThisSprite();
             bar.Controls.AddRange([write, export, exportSprite, importOne, importAll, _importStatus]);
 
-            page.Controls.Add(bar); page.Controls.Add(grid); page.Controls.Add(top); page.Controls.Add(_fInfo);
-            page.Scroll += (_, _) => { };
+            var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, AutoScrollMinSize = new Size(760, 720) };
+            page.Controls.Add(bar); page.Controls.Add(grid); page.Controls.Add(options); page.Controls.Add(stripRow); page.Controls.Add(head);
             page.VisibleChanged += (_, _) => { if (page.Visible) page.AutoScrollPosition = new Point(0, 0); };
             _content.Controls.Add(page);
+            _content.Controls.Add(new Splitter { Dock = DockStyle.Left, Width = 4 });
+            _content.Controls.Add(left);
+        }
+
+        private static string? DroppedPng(DragEventArgs e) =>
+            e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files && files[0].EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? files[0] : null;
+
+        /// <summary>Animates the four directions of the group in the "ROM" boxes. Stops on its own when the sprite or group changes.</summary>
+        private void PlayStep()
+        {
+            if (_rom == null) return;
+            int frames = Math.Max(1, (int)_fFrame.Maximum + 1);
+            _playFrame = (_playFrame + 1) % frames;
+            for (int i = 0; i < 4; i++)
+            {
+                var old = _fCur[i].Image;
+                _fCur[i].Image = FrameImport.RenderSlot(_rom, SelectedSprite, GroupOffset + i * 4, _playFrame) ?? FrameImport.RenderSlot(_rom, SelectedSprite, GroupOffset + i * 4, 0);
+                old?.Dispose();
+            }
+            HighlightStrip(_playFrame);
+        }
+
+        /// <summary>One thumbnail per frame of the group (the Down direction, or the first direction that has frames). Click one to edit it.</summary>
+        private void FillStrip(int frames)
+        {
+            foreach (Control c in _strip.Controls) c.Dispose();
+            _strip.Controls.Clear();
+            if (_rom == null) return;
+            int slot = Enumerable.Range(0, 4).FirstOrDefault(i => FrameImport.SlotFrameCount(_rom, SelectedSprite, GroupOffset + i * 4) > 0);
+            for (int f = 0; f < frames; f++)
+            {
+                int frame = f;
+                var pic = NewPic(56);
+                pic.Margin = new Padding(0, 0, 4, 0);
+                pic.Cursor = Cursors.Hand;
+                pic.Image = FrameImport.RenderSlot(_rom, SelectedSprite, GroupOffset + slot * 4, f);
+                pic.Click += (_, _) => { if (_play.Checked) _play.Checked = false; _fFrame.Value = frame; };
+                _strip.Controls.Add(pic);
+            }
+            HighlightStrip(CurrentFrame);
+        }
+
+        private void HighlightStrip(int frame)
+        {
+            for (int i = 0; i < _strip.Controls.Count; i++)
+                if (_strip.Controls[i] is PictureBox p) { p.BorderStyle = i == frame ? BorderStyle.Fixed3D : BorderStyle.FixedSingle; p.Padding = new Padding(i == frame ? 2 : 0); p.BackColor = i == frame ? Color.DodgerBlue : SystemColors.Control; }
         }
 
         private int SelectedSprite => _fSprite.SelectedItem is SpriteChoice c ? c.Id : 0;
 
         private sealed record SpriteChoice(int Id, string Label) { public override string ToString() => Label; }
 
+        private List<SpriteChoice> _choices = [];
+
+        /// <summary>The sprite list on the left, filtered by the search box. Thumbnails are drawn in the background.</summary>
+        private void FillList()
+        {
+            string q = _search.Text.Trim();
+            bool was = _fFilling;
+            _fFilling = true;
+            _list.BeginUpdate();
+            _list.Items.Clear();
+            foreach (var c in _choices.Where(c => q.Length == 0 || c.Label.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                _list.Items.Add(new ListViewItem(c.Label.Replace(" - ", "\n"), _thumbs.Images.ContainsKey(c.Id.ToString()) ? c.Id.ToString() : "") { Tag = c.Id, ToolTipText = c.Label, ImageKey = c.Id.ToString() });
+            _list.EndUpdate();
+            _fFilling = was;
+            SyncList();
+        }
+
+        private void SyncList()
+        {
+            bool was = _fFilling;
+            _fFilling = true;
+            foreach (ListViewItem item in _list.Items)
+            {
+                bool on = (int)item.Tag! == SelectedSprite;
+                item.Selected = on;
+                if (on) item.EnsureVisible();
+            }
+            _fFilling = was;
+            int sprite = SelectedSprite;
+            _title.Text = $"Sprite {sprite}";
+        }
+
+        private async void FillThumbnails()
+        {
+            if (_rom == null) return;
+            _thumbCancel?.Cancel();
+            var cancel = _thumbCancel = new CancellationTokenSource();
+            var copy = ROM.FromBytes(_rom.ToArray());
+            var ids = _choices.Select(c => c.Id).ToList();
+            var thumbs = await Task.Run(() =>
+            {
+                var result = new List<(int Id, Bitmap Image)>();
+                foreach (int id in ids)
+                {
+                    if (cancel.IsCancellationRequested) break;
+                    using var frame = FrameImport.RenderSlot(copy, id, FrameImport.FirstGroup, 0);
+                    var thumb = new Bitmap(40, 40);
+                    if (frame != null)
+                    {
+                        using var g = Graphics.FromImage(thumb);
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                        float scale = Math.Min(40f / frame.Width, 40f / frame.Height);
+                        scale = scale >= 1 ? MathF.Floor(scale) : scale;
+                        int w = (int)(frame.Width * scale), h = (int)(frame.Height * scale);
+                        g.DrawImage(frame, (40 - w) / 2, (40 - h) / 2, w, h);
+                    }
+                    result.Add((id, thumb));
+                }
+                return result;
+            });
+            if (cancel.IsCancellationRequested || IsDisposed) { foreach (var (_, b) in thumbs) b.Dispose(); return; }
+            _thumbs.Images.Clear();
+            foreach (var (id, image) in thumbs) _thumbs.Images.Add(id.ToString(), image);
+            _list.Invalidate();
+        }
+
         // Only sprites that already have a record with at least one real frame; labelled with the party slot / display row that uses them.
+        /// <summary>Opens the editor on this sprite (the Characters page's "Edit frames").</summary>
+        public void SelectSprite(int id)
+        {
+            int idx = _choices.FindIndex(c => c.Id == id);
+            if (idx >= 0 && _fSprite.SelectedIndex != idx) _fSprite.SelectedIndex = idx;
+        }
+
         private void FillSpriteCombo(int keep = -1)
         {
             if (_rom == null) return;
@@ -219,15 +391,27 @@ namespace DBZKit
                 for (int slot = 0; slot < party.Count; slot++)
                     if (party[slot].DisplayIndex < rows.Count && rows[party[slot].DisplayIndex].SpriteId == id) users.Add($"party slot {slot}");
                 var formRows = Enumerable.Range(0, rows.Count).Where(r => rows[r].SpriteId == id).ToList();
-                if (users.Count == 0 && formRows.Count > 0) users.Add("display row " + string.Join(",", formRows.Take(3)));
+                if (users.Count == 0 && formRows.Count > 0) users.Add("form " + string.Join(",", formRows.Take(3)));
                 choices.Add(new SpriteChoice(id, users.Count > 0 ? $"{id} - {string.Join(", ", users)}" : $"{id}"));
             }
+            // The party's sprites first (in party-slot order), then the other playable forms, then everything else by id.
+            int Rank(SpriteChoice c)
+            {
+                for (int slot = 0; slot < party.Count; slot++)
+                    if (party[slot].DisplayIndex < rows.Count && rows[party[slot].DisplayIndex].SpriteId == c.Id) return slot;
+                return Enumerable.Range(0, rows.Count).Any(r => rows[r].SpriteId == c.Id) ? 100 : 1000;
+            }
+            choices = [.. choices.OrderBy(Rank).ThenBy(c => c.Id)];
+            bool thumbsStale =!choices.Select(c => c.Id).SequenceEqual(_choices.Select(c => c.Id)) || keep < 0;
             _fFilling = true;
             _fSprite.Items.Clear();
             foreach (var c in choices) _fSprite.Items.Add(c);
             int idx = choices.FindIndex(c => c.Id == want);
             _fSprite.SelectedIndex = idx >= 0 ? idx : 0;   // no earlier pick: the first sprite in the list
             _fFilling = false;
+            _choices = choices;
+            FillList();
+            if (thumbsStale) FillThumbnails();
             FillGroupCombo();
         }
 
@@ -246,6 +430,7 @@ namespace DBZKit
         }
 
         private bool _fFilling;
+        private (int Sprite, int Group) _stripKey = (-1, -1);
 
         private int CurrentFrame => (int)_fFrame.Value;
 
@@ -276,9 +461,13 @@ namespace DBZKit
                 _fFilling = was;
             }
             _fFrameInfo.Text = frames == 0 ? "(no frames)" : $"of {frames}";
+            if (_play.Checked) _play.Checked = false;
+            if (_strip.Controls.Count != frames || _stripKey != (sprite, GroupOffset)) { _stripKey = (sprite, GroupOffset); FillStrip(frames); }
+            else HighlightStrip(CurrentFrame);
             for (int i = 0; i < 4; i++)
             {
                 var cur = FrameImport.RenderSlot(_rom, sprite, GroupOffset + i * 4, CurrentFrame);
+                _fCur[i].Image?.Dispose();
                 _fCur[i].Image = cur;
                 string curSize = cur == null ? "empty in ROM" : $"stock {cur.Width}x{cur.Height}";
                 bool mirrored = i == 3 && _fMirror.Checked;
@@ -347,6 +536,7 @@ namespace DBZKit
             }
             catch (Exception ex) { Fail(ex.Message); return; }
             _session.NotifyChanged(this);
+            _stripKey = (-1, -1); // frames changed: redraw the strip
             RefreshSlots();
             var problems = FrameImport.Inspect(_rom, sprite).Split('\n').Where(l => l.Contains($"group +0x{start:X}") && (l.Contains("PROBLEM") || l.Contains("BAD") || l.Contains("MISALIGNED"))).ToList();
             if (problems.Count > 0) Fail("Written, but the game may not accept this group:\n\n" + string.Join("\n", problems));

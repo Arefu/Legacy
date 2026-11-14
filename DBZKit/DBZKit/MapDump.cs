@@ -28,18 +28,13 @@ namespace DBZKit
     /// </summary>
     internal static class MapDumper
     {
-        // Confirmed offsets from Dragon Radar's games/ALFE.json (this ROM) -- only what the map
-        // reader needs, like NpcGame in DBZKit.cs.
-        private static readonly Game MapGame = new()
-        {
-            MapEntriesOffset = 0x409368,
-            MapEntryCount = 327,
-            BGPaletteOffset = 0x1DA4C8,
-            TileAtlasOffset = 0x4DF574,
-        };
+        // Map table, palette and atlas offsets come from the ROM's game profile (games/<CODE>.json); a private copy keeps the
+        // renderer's per-Game caches apart from the ROM Browser's.
+        private static Game MapGame = new();
 
-        public static (int Maps, int Banks, int Errors) DumpAll(ROM rom, string folder, Action<string>? progress = null)
+        public static (int Maps, int Banks, int Errors) DumpAll(ROM rom, Game game, string folder, Action<string>? progress = null)
         {
+            MapGame = game.Clone();
             Directory.CreateDirectory(folder);
             var errors = new StringBuilder();
             MapRenderer.ResetCache(MapGame);
@@ -163,7 +158,7 @@ namespace DBZKit
                 int layerAddress = rom.ReadPointer();
                 rom.PopPosition();
 
-                var editor = TileLayerEditor.Open(rom, layerAddress);
+                var editor = TileLayerEditor.Open(rom, layerAddress, MapGame);
                 if (editor == null) continue; // empty or an unsupported layer format
 
                 File.WriteAllBytes(Path.Combine(dir, $"layer{layer}_tilemap.bin"), editor.ExportTilemap());

@@ -1,5 +1,12 @@
 name: Release
 
+# Push a tag like v1.0.5 and this builds DBZKit, Dragon Radar and Legacy and attaches them to a GitHub Release for that
+# tag -- no binaries need to be built or uploaded by hand. "Run workflow" on the Actions tab makes a throwaway
+# prerelease (build-<run id>) to try a build without tagging.
+#
+#   git tag v1.0.5
+#   git push origin v1.0.5
+
 on:
   push:
     tags:
@@ -34,30 +41,25 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Restore DBZKit
-        run: dotnet restore DBZKit/DBZKit/DBZKit.csproj
+      # One build of the whole solution, exactly what Visual Studio / a local `dotnet build` makes. All three apps land in
+      # DBZKit/Build/Release (Directory.Build.props) with one copy of each shared DLL. The old workflow published each app
+      # separately into one folder -- Dragon Radar as AnyCPU, the others as x86 -- so the shared DrGero/Bulma DLLs of one
+      # overwrote the others' with a mismatched build.
+      - name: Build
+        run: dotnet build DBZKit/DBZKit.slnx -c Release -p:Platform=x86
 
-      - name: Restore Dragon Radar
-        run: dotnet restore "DBZKit/Dragon Radar/Dragon Radar.csproj"
-
-      - name: Restore Legacy
-        run: dotnet restore DBZKit/Legacy/Legacy.csproj
-
-      - name: Publish DBZKit
-        run: dotnet publish DBZKit/DBZKit/DBZKit.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/release
-
-      - name: Publish Dragon Radar
-        run: dotnet publish "DBZKit/Dragon Radar/Dragon Radar.csproj" -c Release -o publish/release
-
-      - name: Publish Legacy
-        run: dotnet publish DBZKit/Legacy/Legacy.csproj -c Release -p:Platform=x86 -r win-x86 --self-contained false -o publish/release
-
-      - name: Zip artifacts
+      - name: Zip
         shell: pwsh
         run: |
-          Compress-Archive -Path publish/release/* -DestinationPath DBZKit-${{ env.RELEASE_TAG }}.zip
+          $out = "DBZKit/Build/Release"
+          foreach ($exe in "DBZKit.exe", "Dragon Radar.exe", "Legacy.exe", "JCALG1.dll") {
+            if (-not (Test-Path (Join-Path $out $exe))) { throw "Build output is missing $exe" }
+          }
+          # Debug symbols stay out of the download.
+          Get-ChildItem $out -Recurse -Filter *.pdb | Remove-Item
+          Compress-Archive -Path "$out/*" -DestinationPath "DBZKit-${{ env.RELEASE_TAG }}.zip"
 
-      - name: Clean up previous transient release
+      - name: Remove the previous test build's release
         if: env.IS_TRANSIENT == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,25 +68,13 @@ jobs:
           gh release delete ${{ env.RELEASE_TAG }} --yes --cleanup-tag 2>$null
           exit 0
 
-      - name: Create GitHub Release (transient)
-        if: env.IS_TRANSIENT == 'true'
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          gh release create ${{ env.RELEASE_TAG }} `
-            DBZKit-${{ env.RELEASE_TAG }}.zip `
-            --title "${{ env.RELEASE_TAG }}" `
-            --generate-notes `
-            --prerelease
-
-      - name: Create GitHub Release (versioned)
-        if: env.IS_TRANSIENT == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          gh release create ${{ env.RELEASE_TAG }} `
-            DBZKit-${{ env.RELEASE_TAG }}.zip `
-            --title "${{ env.RELEASE_TAG }}" `
-            --generate-notes
+          $notes = "Needs the .NET 10 Desktop Runtime (x86): https://dotnet.microsoft.com/download/dotnet/10.0`n`nUnzip anywhere and run DBZKit.exe, Dragon Radar.exe or Legacy.exe."
+          $flags = @()
+          if ($env:IS_TRANSIENT -eq 'true') { $flags += '--prerelease' }
+          gh release create ${{ env.RELEASE_TAG }} "DBZKit-${{ env.RELEASE_TAG }}.zip" `
+            --title "${{ env.RELEASE_TAG }}" --notes $notes --generate-notes @flags
