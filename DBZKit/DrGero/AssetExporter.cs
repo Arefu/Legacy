@@ -53,6 +53,12 @@ namespace DrGero.Catalog
                         string path = Path.Combine(folder, name);
                         for (int n = 2; !used.Add(path); n++) path = Path.Combine(folder, $"{name}_{n}");
                         jobs.Add((category, node, path));
+                        foreach (var variant in node.Variants) // a map's alternate layouts: saved next to it, under their own names
+                        {
+                            string vname = Slug(variant.Name), vpath = Path.Combine(folder, vname);
+                            for (int n = 2; !used.Add(vpath); n++) vpath = Path.Combine(folder, $"{vname}_{n}");
+                            jobs.Add((category, variant, vpath));
+                        }
                         if (node.Children.Count > 0) Walk(node.Children, path);
                     }
                 }

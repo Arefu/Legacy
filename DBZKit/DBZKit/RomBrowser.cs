@@ -358,8 +358,13 @@ namespace DBZKit
             private readonly NumericUpDown _width = new() { Minimum = 1, Maximum = 256, Value = 16, Width = 140 };
             private readonly NumericUpDown _bank = new() { Minimum = 0, Maximum = 15, Value = 0, Width = 140 };
             private readonly List<Control> _rawRows = [];
+            // A map with alternate layouts: one row in the list, and this box switches which layout is shown.
+            private readonly ComboBox _variant = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+            private readonly TableLayoutPanel _variantRow = new() { ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 0, 0, 8), Visible = false };
+            private bool _fillingVariants;
 
             private AssetNode? _node;
+            private AssetNode? _shown; // _node, or the variant of it picked in _variant
             private AssetPreview? _preview;
             private int _request;
 
@@ -422,7 +427,16 @@ namespace DBZKit
                 Row(_view, "Palette", _palette, raw: true);
                 Row(_view, "4bpp bank", _bank, raw: true);
 
-                _sideFlow.Controls.AddRange([_title, _state, _facts, _about, _buttons, _view]);
+                _variantRow.Controls.Add(new Label { Text = "Variation", AutoSize = true, ForeColor = Color.DimGray, Anchor = AnchorStyles.Left, Margin = new Padding(0, 4, 12, 4) });
+                _variantRow.Controls.Add(_variant);
+                _variant.SelectedIndexChanged += (_, _) =>
+                {
+                    if (_fillingVariants || _node == null) return;
+                    int i = _variant.SelectedIndex;
+                    LoadPreview(i <= 0 ? _node : _node.Variants[i - 1]);
+                };
+
+                _sideFlow.Controls.AddRange([_title, _state, _variantRow, _facts, _about, _buttons, _view]);
                 _side.Controls.Add(_sideFlow);
                 _side.Paint += (_, e) => e.Graphics.DrawLine(SystemPens.ControlLight, 0, 0, 0, _side.Height); // a quiet divider from the preview
 
@@ -499,7 +513,7 @@ namespace DBZKit
                 _tree.BeginUpdate();
                 Walk(_tree.Nodes);
                 _tree.EndUpdate();
-                ShowDetails(_node, null);
+                ShowDetails(_shown ?? _node, null);
             }
 
             public string CategoryName => _category.Name;
@@ -509,7 +523,7 @@ namespace DBZKit
             {
                 string? wanted = keepSelection ? _node?.Name : null;
                 _request++;
-                _node = null;
+                _node = null; _shown = null; _variantRow.Visible = false;
                 DisposePreview();
                 _category = category;
                 Fill();
@@ -599,10 +613,26 @@ namespace DBZKit
                 return tree;
             }
 
-            private async void Select(AssetNode? node)
+            private void Select(AssetNode? node)
+            {
+                _node = node;
+                _fillingVariants = true;
+                _variant.Items.Clear();
+                if (node is { Variants.Count: > 0 })
+                {
+                    _variant.Items.Add("1 (normal)");
+                    for (int i = 0; i < node.Variants.Count; i++) _variant.Items.Add($"{i + 2}");
+                    _variant.SelectedIndex = 0;
+                }
+                _variantRow.Visible = _variant.Items.Count > 1;
+                _fillingVariants = false;
+                LoadPreview(node);
+            }
+
+            private async void LoadPreview(AssetNode? node)
             {
                 int request = ++_request;
-                _node = node;
+                _shown = node;
                 DisposePreview();
                 ShowDetails(node, null);
                 ShowActions();
@@ -843,7 +873,7 @@ namespace DBZKit
 
             // ---- export / audio ----
 
-            private string BaseName => string.Concat((_node?.Name ?? "asset").Split(Path.GetInvalidFileNameChars())).Replace(' ', '_').Replace("__", "_");
+            private string BaseName => string.Concat(((_shown ?? _node)?.Name ?? "asset").Split(Path.GetInvalidFileNameChars())).Replace(' ', '_').Replace("__", "_");
 
             private void ExportPng()
             {
@@ -856,7 +886,7 @@ namespace DBZKit
                 }
                 if (_preview.Images.Count == 1) { SaveOne(_preview.Images[0].Image, BaseName); return; }
 
-                using var folder = new FolderBrowserDialog { Description = $"Folder for the {_preview.Images.Count} images of {_node?.Name}" };
+                using var folder = new FolderBrowserDialog { Description = $"Folder for the {_preview.Images.Count} images of {(_shown ?? _node)?.Name}" };
                 if (folder.ShowDialog(this) != DialogResult.OK) return;
                 int n = 0;
                 foreach (var (label, image) in _preview.Images)

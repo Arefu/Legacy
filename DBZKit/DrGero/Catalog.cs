@@ -61,6 +61,11 @@ namespace DrGero.Catalog
         /// <summary>The asset's number in its own table (sprite id, portrait index, ...), for actions that open an editor on it. -1 = none.</summary>
         public int Id { get; init; } = -1;
         public List<AssetNode> Children { get; } = [];
+        /// <summary>
+        /// Other versions of this same asset (a map's alternate layouts), picked from a Variation box instead of listed as rows.
+        /// This node is variation 1; Variants[0] is variation 2, and so on. They are indexed and exported like any other node.
+        /// </summary>
+        public List<AssetNode> Variants { get; } = [];
         public Func<ROM, Game, AssetPreview>? Preview { get; init; }
         /// <summary>Run <see cref="Preview"/> while indexing to learn which blocks it decodes.</summary>
         public bool Index { get; init; } = true;
@@ -76,6 +81,8 @@ namespace DrGero.Catalog
         public IEnumerable<AssetNode> SelfAndDescendants()
         {
             yield return this;
+            foreach (var variant in Variants)
+                yield return variant;
             foreach (var child in Children)
                 foreach (var node in child.SelfAndDescendants())
                     yield return node;
@@ -461,10 +468,12 @@ namespace DrGero.Catalog
             foreach (var zone in ByZone(maps))
             {
                 var group = new AssetNode { Name = $"Zone {zone.Key}" };
+                // One row per map entry; its alternate layouts are variants of that row (the Variation box), not rows of their own.
+                var rows = new Dictionary<int, AssetNode>();
                 foreach (var map in zone.Where(m => m.MapOffset > 0))
                 {
                     var m = map;
-                    group.Children.Add(new AssetNode
+                    var node = new AssetNode
                     {
                         Name = m.Label, Address = m.MapOffset, Kind = AssetKind.Image, Id = m.Index,
                         Details =
@@ -478,7 +487,9 @@ namespace DrGero.Catalog
                         Info = "Edit maps in Dragon Radar.",
                         Preview = (r, g) => MapPreview(r, g, m.MapOffset),
                         IndexWith = (r, g) => MapDecode(r, g, m.MapOffset),
-                    });
+                    };
+                    if (rows.TryGetValue(m.Index, out var row)) row.Variants.Add(node);
+                    else { rows[m.Index] = node; group.Children.Add(node); }
                 }
                 if (group.Children.Count > 0) category.Nodes.Add(group);
             }
