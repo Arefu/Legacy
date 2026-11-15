@@ -38,15 +38,20 @@ namespace Dragon_Radar
             viewportToolStrip.GripStyle = ToolStripGripStyle.Hidden;
 
             mapPictureBox.Paint += mapPictureBox_Paint;
-            mapPictureBox.MouseDown += mapPictureBox_MouseDown;
-            mapPictureBox.MouseMove += mapPictureBox_MouseMove;
-            mapPictureBox.MouseUp += mapPictureBox_MouseUp;
+            // The mouse handlers work in map pixels; the picture is drawn at _zoom, so convert on the way in.
+            mapPictureBox.MouseDown += (s, e) => mapPictureBox_MouseDown(s, ToMap(e));
+            mapPictureBox.MouseMove += (s, e) => mapPictureBox_MouseMove(s, ToMap(e));
+            mapPictureBox.MouseUp += (s, e) => mapPictureBox_MouseUp(s, ToMap(e));
+            mapPictureBox.MouseWheel += mapPictureBox_MouseWheel;
+            BuildMapScriptsMenu();
             listView1.SelectedIndexChanged += listView1_SelectedIndexChanged;
             KeyPreview = true;
             KeyDown += DragonRadarUI_KeyDown;
 
             mapTreeView.KeyDown += MapTreeView_KeyDown;
             BuildLevelGatePanel();
+            BuildEnemyStatsPanel();
+            npcListView.MouseUp += npcListView_MouseUp;
             BuildViewportPanel();
             mapPictureBox.Paint += DrawViewportOverlay; // after mapPictureBox_Paint so it draws on top
             BuildEditorTab();
@@ -898,7 +903,7 @@ namespace Dragon_Radar
 
             _currentMapBitmap?.Dispose();
             _currentMapBitmap = bitmap;
-            mapPictureBox.Size = bitmap.Size; // a resized map changes the picture's size
+            SizeMapPicture(); // a resized map changes the picture's size
             _currentTilesets = tilesets;
             _hasUnsupportedLayer = hasUnsupportedLayer;
             _collisionGrid = collisionGrid;
@@ -1071,9 +1076,327 @@ namespace Dragon_Radar
             mapPictureBox.Invalidate();
         }
 
+        // ---- enemy stats: they belong to a stat-table entry that every enemy of that type shares (DrGero.EnemyStats).
+        // One enemy: the Properties tab (click it on the map) -- applying gives it its own entry if others share it.
+        // A whole type: right-click it in Place: Enemies -- either for enemies placed from now on, or for every one already placed. ----
+        private Panel _enemyStatsPanel = null!;
+        private NumericUpDown _enemyHp = null!, _enemyStr = null!, _enemyPow = null!, _enemyEnd = null!;
+        private ExpEditor _enemyExp = null!;
+        private Label _enemyStatsNote = null!;
+
+        private static NumericUpDown StatBox(int max) => new() { Minimum = 0, Maximum = max, Width = 90 };
+
+        private void BuildEnemyStatsPanel()
+        {
+            _enemyHp = StatBox(999999); _enemyStr = StatBox(255); _enemyPow = StatBox(255); _enemyEnd = StatBox(255);
+            _enemyExp = new ExpEditor(null);
+            var grid = new TableLayoutPanel { ColumnCount = 4, AutoSize = true };
+            void Cell(string label, Control c)
+            {
+                grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 4, 0) });
+                grid.Controls.Add(c);
+            }
+            Cell("HP", _enemyHp); Cell("STR", _enemyStr);
+            Cell("POW", _enemyPow); Cell("END", _enemyEnd);
+            var apply = new Button { Text = "Apply to this enemy", AutoSize = true };
+            apply.Click += (_, _) => ApplySelectedEnemyStats();
+            _enemyStatsNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
+            var stack = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Location = new Point(8, 6) };
+            stack.Controls.AddRange([grid, new Label { Text = "EXP", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 6, 0, 0) },
+                _enemyExp, apply, _enemyStatsNote]);
+            _enemyStatsPanel = new Panel { Dock = DockStyle.Top, Height = 290, Visible = false, AutoScroll = true };
+            _enemyStatsPanel.Controls.Add(stack);
+            propertiesTabPage.Controls.Add(_enemyStatsPanel);
+        }
+
+        // Fills the panel for the selected enemy (called from UpdatePropertiesPanel).
+        private void ShowEnemyStatsPanel(Entity entity)
+        {
+            if (_rom == null || _game == null || EnemyStats.Read(_rom, _game.Config, entity.StatIndex) is not { } s)
+            {
+                _enemyStatsPanel.Visible = false;
+                return;
+            }
+            _enemyHp.Value = Math.Clamp(s.Hp, 0, (int)_enemyHp.Maximum);
+            _enemyStr.Value = s.Str; _enemyPow.Value = s.Pow; _enemyEnd.Value = s.End;
+            _enemyExp.ExpTable = EnemyStats.ExpTable(_rom, _game.Config); // this ROM's table (a different ROM may be open now)
+            _enemyExp.Value = s.Exp;
+            int sharing = EnemyStats.CountUsers(_rom, _game.MapEntries, entity.StatIndex);
+            if (entity.SourceAddress == 0) sharing++; // this one isn't written into the ROM yet
+            string name = EnemyStats.Name(_rom, _game.Config, s) ?? $"stat entry {s.Index}";
+            _enemyStatsNote.Text = (sharing > 1
+                ? $"{name}: {sharing} enemies share these stats. Applying here gives this enemy its own copy, so the others keep theirs. "
+                + "To change the whole type, right-click it in NPCs > Place: Enemies."
+                : $"{name}: only this enemy uses these stats.")
+                + " EXP is scaled by the game to the player's level (see the type editor's Rewards list).";
+            _enemyStatsPanel.Visible = true;
+        }
+
+        private void ApplySelectedEnemyStats()
+        {
+            if (_rom == null || _game == null || _selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
+            var entity = _currentEntities[_selectedIndex];
+            if (entity.Kind != EntityKind.Enemy || EnemyStats.Read(_rom, _game.Config, entity.StatIndex) is not { } s) return;
+            try
+            {
+                if (entity.SourceAddress == 0)
+                {
+                    if (!MaterializeSelected()) return;
+                    entity = _currentEntities[_selectedIndex];
+                }
+                int index = entity.StatIndex;
+                if (EnemyStats.CountUsers(_rom, _game.MapEntries, index) > 1)
+                {
+                    index = EnemyStats.MakeUnique(_rom, _game.Config, _game.MapEntries, entity.SourceAddress);
+                    _currentEntities[_selectedIndex] = entity with { StatIndex = index };
+                    _enemyTemplates = null; // the palette's counts changed
+                }
+                EnemyStats.Write(_rom, _game.Config, s with
+                {
+                    Index = index, Hp = (int)_enemyHp.Value, Str = (int)_enemyStr.Value, Pow = (int)_enemyPow.Value,
+                    End = (int)_enemyEnd.Value, Exp = _enemyExp.Value,
+                });
+                _dirty = true;
+                statusLabel.Text = index != s.Index
+                    ? $"This enemy now has its own stats (entry {index}); the rest of its type are unchanged. Save the ROM to keep it."
+                    : "Stats updated for this enemy. Save the ROM to keep it.";
+                UpdatePropertiesPanel();
+            }
+            catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(ex.Message, "Enemy stats", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // Right-click in Place: Enemies.
+        private void npcListView_MouseUp(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right) return;
+            if (npcListView.GetItemAt(e.X, e.Y) is not { Tag: EnemyRecords.Template t }) return;
+            var menu = new ContextMenuStrip();
+            menu.Items.Add($"Edit stats for this enemy type (Enemy {t.StatIndex})...", null, (_, _) => EditEnemyTypeStats(t));
+            menu.Show(npcListView, e.Location);
+        }
+
+        private void EditEnemyTypeStats(EnemyRecords.Template template)
+        {
+            if (_rom == null || _game == null) return;
+            if (EnemyStats.Read(_rom, _game.Config, template.StatIndex) is not { } stats)
+            {
+                MessageBox.Show($"Stat entry {template.StatIndex} isn't in this ROM's stat table.", "Edit stats", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string typeName = EnemyStats.Name(_rom, _game.Config, stats) ?? $"stat entry {stats.Index}";
+            int placed = EnemyStats.CountUsers(_rom, _game.MapEntries, stats.Index);
+
+            using var form = new Form
+            {
+                Text = $"Edit enemy type -- {typeName} (Enemy {stats.Index})", FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false,
+                MinimizeBox = false, StartPosition = FormStartPosition.CenterParent, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(10)
+            };
+            var grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
+            var hp = StatBox(999999); hp.Value = Math.Clamp(stats.Hp, 0, 999999);
+            var str = StatBox(255); str.Value = stats.Str;
+            var pow = StatBox(255); pow.Value = stats.Pow;
+            var end = StatBox(255); end.Value = stats.End;
+            var expTable = EnemyStats.ExpTable(_rom, _game.Config);
+            var exp = new ExpEditor(expTable) { Value = stats.Exp };
+            void Row(string label, Control c)
+            {
+                grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 7, 8, 3) });
+                grid.Controls.Add(c);
+            }
+            Row("HP", hp);
+            Row("STR", str);
+            Row("POW", pow);
+            Row("END", end);
+            Row("EXP", exp);
+
+            if (expTable != null)
+            {
+                var rewardBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300, MaxDropDownItems = 20 };
+                void FillRewards()
+                {
+                    int keep = Math.Max(0, rewardBox.SelectedIndex), b = exp.Value;
+                    rewardBox.BeginUpdate();
+                    rewardBox.Items.Clear();
+                    for (int level = 1; level <= EnemyStats.MaxLevel; level++)
+                    {
+                        int got = EnemyStats.Reward(b, level, expTable);
+                        string why = b <= 0 ? "no EXP set" : b <= 5 ? "small values are exact"
+                            : level >= EnemyStats.MaxLevel ? "max level, no EXP"
+                            : got > b ? "raised to 1/128 of a level" : got < b ? "capped at 1/2 of a level" : "exactly as set";
+                        rewardBox.Items.Add($"Level {level}: {got:N0} EXP  ({why})");
+                    }
+                    rewardBox.SelectedIndex = Math.Min(keep, rewardBox.Items.Count - 1);
+                    rewardBox.EndUpdate();
+                }
+                FillRewards();
+                exp.ValueChanged += (_, _) => FillRewards();
+                Row("Rewards at level", rewardBox);
+            }
+
+            var applyToPlaced = new CheckBox
+            {
+                AutoSize = true, Margin = new Padding(3, 10, 3, 3), Checked = false, Enabled = placed > 0,
+                Text = $"Apply to enemies already placed ({placed})",
+            };
+            grid.Controls.Add(applyToPlaced);
+            grid.SetColumnSpan(applyToPlaced, 2);
+            var note = new Label
+            {
+                AutoSize = true, MaximumSize = new Size(400, 0), ForeColor = SystemColors.GrayText, Margin = new Padding(3, 4, 3, 8),
+                Text = "Unticked: only enemies you place from now on get these stats; the ones already on maps keep theirs. " +
+                       "Ticked: every enemy of this type in the game changes, and new ones too.",
+            };
+            grid.Controls.Add(note);
+            grid.SetColumnSpan(note, 2);
+
+            var ok = new Button { Text = "Apply", DialogResult = DialogResult.OK, AutoSize = true };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+            var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill };
+            buttons.Controls.Add(cancel);
+            buttons.Controls.Add(ok);
+            grid.Controls.Add(buttons);
+            grid.SetColumnSpan(buttons, 2);
+            form.Controls.Add(grid);
+            form.AcceptButton = ok;
+            form.CancelButton = cancel;
+            if (form.ShowDialog(this) != DialogResult.OK) return;
+
+            try
+            {
+                // Unticked with enemies already using the entry: new placements get a new entry of their own, so those keep theirs.
+                int index = stats.Index;
+                if (!applyToPlaced.Checked && placed > 0)
+                    index = EnemyStats.AddEntry(_rom, _game.Config, _game.MapEntries, stats.Index);
+                EnemyStats.Write(_rom, _game.Config, stats with
+                {
+                    Index = index, Hp = (int)hp.Value, Str = (int)str.Value, Pow = (int)pow.Value, End = (int)end.Value, Exp = exp.Value,
+                });
+
+                if (index != stats.Index && _enemyTemplates != null)
+                {
+                    // The palette entry now places the new entry. (Next time the ROM is opened it is listed under its own number
+                    // once at least one enemy uses it.)
+                    int at = _enemyTemplates.IndexOf(template);
+                    var replaced = template with { StatIndex = index, Count = 0 };
+                    if (at >= 0) _enemyTemplates[at] = replaced; else _enemyTemplates.Insert(0, replaced);
+                    if (_placingEnemy is { } p && p.StatIndex == stats.Index && p.SpriteId == template.SpriteId) _placingEnemy = (index, template.SpriteId);
+                }
+                else _enemyTemplates = null; // counts are re-read
+
+                _dirty = true;
+                PopulateNpcList();
+                statusLabel.Text = index != stats.Index
+                    ? $"{typeName}: enemies you place from now on get the new stats (entry {index}); the {placed} already placed keep theirs. Save the ROM to keep it."
+                    : $"{typeName}: stats changed for all {placed} enemies of this type and for new ones. Save the ROM to keep it.";
+                UpdatePropertiesPanel();
+            }
+            catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(ex.Message, "Edit stats", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // ---- map scripts: MapEntry +0x30 runs every time the map loads (Map_LoadInternal / Map_LoadCutscene, skipped when 0),
+        // +0x34 runs as the player leaves it (read from the outgoing map before the new one loads). Gates that stay open, NPCs that
+        // move after a story event and similar "remember what happened" logic live here. ----
+        private const int EnterScriptOffset = 0x30, LeaveScriptOffset = 0x34;
+        private readonly ToolStripDropDownButton _mapScriptsButton = new("Map Scripts") { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        private readonly ToolStripMenuItem _enterScriptItem = new(), _leaveScriptItem = new();
+
+        private void BuildMapScriptsMenu()
+        {
+            _enterScriptItem.Click += (_, _) => EditMapScript(EnterScriptOffset);
+            _leaveScriptItem.Click += (_, _) => EditMapScript(LeaveScriptOffset);
+            _mapScriptsButton.DropDownItems.AddRange([_enterScriptItem, _leaveScriptItem]);
+            _mapScriptsButton.ToolTipText = "The scripts this map runs when you enter and leave it";
+            viewportToolStrip.Items.Insert(viewportToolStrip.Items.IndexOf(toolStrip_AddTrigger) + 1, _mapScriptsButton);
+            UpdateMapScriptsMenu();
+        }
+
+        private int MapScriptPointer(int offset)
+        {
+            if (_rom == null || CurrentMapEntryAddress() is not int entry) return 0;
+            _rom.PushPosition(entry + offset);
+            uint p = (uint)_rom.ReadInt();
+            _rom.PopPosition();
+            return p is >= 0x08000000 and < 0x0A000000 ? (int)(p & 0x01FFFFFF) : 0;
+        }
+
+        private void UpdateMapScriptsMenu()
+        {
+            bool open = _rom != null && _currentEntry != null;
+            _mapScriptsButton.Enabled = open;
+            string State(int offset) => !open ? "" : MapScriptPointer(offset) is int p and > 0 ? $"  (0x{0x08000000 | p:X8})" : "  (none -- add one)";
+            _enterScriptItem.Text = "When entering this map..." + State(EnterScriptOffset);
+            _leaveScriptItem.Text = "When leaving this map..." + State(LeaveScriptOffset);
+        }
+
+        private async void EditMapScript(int offset)
+        {
+            if (_rom == null || _currentEntry == null || CurrentMapEntryAddress() is not int entry) return;
+            string when = offset == EnterScriptOffset ? "enter" : "leave";
+            string title = $"Z{_currentEntry.Zone} A{_currentEntry.Area} {when} script";
+            await LaunchLegacyForSelectedEntity($"--kind=script --field=0x{entry + offset:X} --title=\"{title}\"");
+        }
+
+        // ---- zoom: mouse wheel over the map. Everything else stays in map pixels; only drawing,
+        // the picture's size and incoming mouse positions are scaled. ----
+        private static readonly float[] ZoomLevels = [0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f];
+        private float _zoom = 1f;
+
+        private MouseEventArgs ToMap(MouseEventArgs e) => _zoom == 1f ? e
+            : new MouseEventArgs(e.Button, e.Clicks, (int)Math.Floor(e.X / _zoom), (int)Math.Floor(e.Y / _zoom), e.Delta);
+
+        private Point ToScreen(Point mapPoint) => new((int)(mapPoint.X * _zoom), (int)(mapPoint.Y * _zoom));
+
+        // The picture box is the map's size times the zoom, so the panel scrolls over the zoomed map.
+        private void SizeMapPicture()
+        {
+            if (_currentMapBitmap == null) return;
+            mapPictureBox.Size = new Size((int)Math.Ceiling(_currentMapBitmap.Width * _zoom), (int)Math.Ceiling(_currentMapBitmap.Height * _zoom));
+        }
+
+        // Scrolls so map point (x, y) is in the middle of the view.
+        private void CenterMapOn(int x, int y)
+        {
+            var p = ToScreen(new Point(x, y));
+            mapScrollPanel.AutoScrollPosition = new Point(
+                Math.Max(0, p.X - mapScrollPanel.ClientSize.Width / 2),
+                Math.Max(0, p.Y - mapScrollPanel.ClientSize.Height / 2));
+        }
+
+        private void mapPictureBox_MouseWheel(object? sender, MouseEventArgs e)
+        {
+            if (e is HandledMouseEventArgs handled) handled.Handled = true; // the wheel zooms instead of scrolling the panel
+            if (_currentMapBitmap == null || e.Delta == 0) return;
+
+            int level = Array.FindIndex(ZoomLevels, z => z >= _zoom - 0.001f);
+            if (level < 0) level = ZoomLevels.Length - 1;
+            level = Math.Clamp(level + (e.Delta > 0 ? 1 : -1), 0, ZoomLevels.Length - 1);
+            float zoom = ZoomLevels[level];
+            if (zoom == _zoom) return;
+
+            // Keep the map pixel under the cursor under the cursor.
+            float mapX = e.X / _zoom, mapY = e.Y / _zoom;
+            var inPanel = mapScrollPanel.PointToClient(mapPictureBox.PointToScreen(e.Location));
+            _zoom = zoom;
+            SizeMapPicture();
+            mapScrollPanel.AutoScrollPosition = new Point(
+                Math.Max(0, (int)(mapX * _zoom) - inPanel.X),
+                Math.Max(0, (int)(mapY * _zoom) - inPanel.Y));
+            mapPictureBox.Invalidate();
+            statusLabel.Text = $"Zoom {_zoom * 100:0}%  (mouse wheel over the map to zoom)";
+        }
+
         private void DrawViewportOverlay(object? sender, PaintEventArgs e)
         {
             if (!_showViewportCheck.Checked || _currentMapBitmap == null) return;
+            e.Graphics.ResetTransform();
+            e.Graphics.ScaleTransform(_zoom, _zoom);
             var rect = ViewportRect;
             using var fill = new SolidBrush(Color.FromArgb(28, 0, 200, 255));
             using var pen = new Pen(Color.FromArgb(230, 0, 200, 255), 2);
@@ -1465,6 +1788,15 @@ namespace Dragon_Radar
             if (!ReferenceEquals(entry, _variantEntry)) { _variantEntry = entry; _variantIndex = 0; } // a different map starts on its default layout
             _currentEntry = entry;
             SyncVariantBox();
+            UpdateMapScriptsMenu();
+
+            // Enemies an older Dragon Radar placed with a lone waypoint hang the game (see EnemyRecords.StationaryBehavior).
+            int repairedEnemies = 0;
+            if (CurrentMapEntryAddress() is int repairAt)
+            {
+                repairedEnemies = EnemyRecords.RepairLoneWaypointEnemies(_rom, _game.MapEntries, entry);
+                if (repairedEnemies > 0) entry.RefreshFrom(_rom, repairAt);
+            }
 
             var layouts = MapLayouts(entry);
             int mapOffset;
@@ -1500,7 +1832,7 @@ namespace Dragon_Radar
             // do it explicitly so mapScrollPanel's AutoScroll can reach every part of maps
             // bigger than the visible viewport (previously silently clipped, which is what
             // made entities/triggers near map edges look misplaced).
-            mapPictureBox.Size = bitmap.Size;
+            SizeMapPicture();
 
             _currentEntities = EntityReader.ReadLevelGates(_rom, entry);
             _currentEntities.AddRange(EntityReader.ReadMapTriggers(_rom, entry));
@@ -1517,6 +1849,12 @@ namespace Dragon_Radar
             mapPictureBox.Invalidate();
             UpdateStatusLabel();
             UpdatePropertiesPanel();
+            if (repairedEnemies > 0)
+            {
+                _dirty = true;
+                statusLabel.Text = $"Fixed {repairedEnemies} placed enemy/enemies that would hang the game (they stood on a single waypoint; " +
+                    "they now stand and wait, like the game's own stationary enemies). Save the ROM to keep it.";
+            }
         }
 
         private void DisposeDecorationSprites()
@@ -1651,7 +1989,14 @@ namespace Dragon_Radar
                 return;
             }
 
-            g.DrawImage(_currentMapBitmap, 0, 0);
+            // Draw in map pixels at _zoom; the repaint area arrives in screen pixels, so convert it too.
+            g.ScaleTransform(_zoom, _zoom);
+            var mapClip = _zoom == 1f ? e.ClipRectangle : Rectangle.FromLTRB(
+                (int)Math.Floor(e.ClipRectangle.Left / _zoom), (int)Math.Floor(e.ClipRectangle.Top / _zoom),
+                (int)Math.Ceiling(e.ClipRectangle.Right / _zoom), (int)Math.Ceiling(e.ClipRectangle.Bottom / _zoom));
+            e = new PaintEventArgs(g, mapClip);
+
+            g.DrawImage(_currentMapBitmap, 0, 0, _currentMapBitmap.Width, _currentMapBitmap.Height);
 
             if (toolStrip_ShowCollision.Checked && _collisionGrid != null)
             {
@@ -1992,9 +2337,13 @@ namespace Dragon_Radar
                             : $"{who}Always present (map layout trigger, no condition)") { Enabled = false });
                         if (mainList)
                             menu.Items.Add($"Edit {Name(captured)} condition...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(condition: true); });
-                        if (ReadDoorWarp(ent) is { } warp)
+                        foreach (var target in FindWarps(ent))
                         {
-                            menu.Items.Add(new ToolStripMenuItem($"{who}Warps to {DescribeWarp(warp)}") { Enabled = false });
+                            var t = target;
+                            menu.Items.Add($"{who}Go to {DescribeWarpTarget(t)}", null, (_, _) => GoToWarp(t));
+                        }
+                        if (ReadDoorWarp(ent) != null)
+                        {
                             menu.Items.Add($"Edit {Name(captured)} warp destination...", null, (_, _) => { SelectEntity(captured); EditDoorWarp(captured); });
                             continue; // a door has no script; its "code" is the destination above
                         }
@@ -2021,7 +2370,7 @@ namespace Dragon_Radar
                 menu.Items.Add(multi ? $"Delete {Name(captured)}" : "Delete", null, (_, _) => DeleteEntityAt(captured));
             }
 
-            menu.Show(mapPictureBox, location);
+            menu.Show(mapPictureBox, ToScreen(location)); // location is in map pixels
         }
 
         private static string KindName(EntityKind kind) => kind switch
@@ -2161,6 +2510,20 @@ namespace Dragon_Radar
                 _viewportGrabOffset = new Point(e.X - _viewportPos.X, e.Y - _viewportPos.Y);
                 mapPictureBox.Capture = true;
                 return;
+            }
+
+            // Double-click a warp (door, or a trigger whose script changes map): open where it goes.
+            // A single click still selects/drags it, so warps stay movable and editable.
+            if (e.Button == MouseButtons.Left && e.Clicks == 2 && !_paintTilesButton.Checked && !_paintCollisionButton.Checked)
+            {
+                foreach (int idx in HitTestAll(e.Location))
+                {
+                    var warps = FindWarps(_currentEntities[idx]);
+                    if (warps.Count == 0) continue;
+                    _dragging = false;
+                    GoToWarp(warps[0]);
+                    return;
+                }
             }
 
             // Paint mode: click and HOLD paints (see PaintStrokeTo); nothing gets selected/dragged.
@@ -2514,6 +2877,7 @@ namespace Dragon_Radar
             deleteTriggerButton.Enabled = false;
             addDialogueTriggerButton.Enabled = false;
             _levelGatePanel.Visible = false; // re-shown below for a Level Gate
+            _enemyStatsPanel.Visible = false; // and this for an Enemy
 
             if (!hasSelection)
             {
@@ -2549,8 +2913,8 @@ namespace Dragon_Radar
                         uint handler = (uint)_rom.ReadInt();
                         _rom.PopPosition();
                         lines.Add($"Type: {TriggerHandlerName(handler)} (handler 0x{handler:X8})");
-                        if (ReadDoorWarp(entity) is { } warp)
-                            lines.Add($"Warps to: {DescribeWarp(warp)}");
+                        foreach (var warp in FindWarps(entity))
+                            lines.Add($"Warps to: {DescribeWarpTarget(warp)} (double-click to open)");
                     }
 
                     var payload = ResolveTriggerScriptPayload(entity);
@@ -2630,6 +2994,13 @@ namespace Dragon_Radar
                 case EntityKind.Enemy:
                     lines.Add($"Sprite ID: {entity.TypeId}");
                     lines.Add($"Enemy stat entry: {entity.StatIndex} (g_ScouterStatDatabase)");
+                    if (_rom != null && _game != null)
+                    {
+                        int ofType = EnemyStats.CountUsers(_rom, _game.MapEntries, entity.StatIndex) + (entity.SourceAddress == 0 ? 1 : 0);
+                        int total = EnemyRecords.EnumerateRecords(_rom, _game.MapEntries).Count();
+                        lines.Add($"Enemies of this type in the ROM: {ofType} (of {total} enemies in total)");
+                    }
+                    ShowEnemyStatsPanel(entity); // HP / STR / POW / END / EXP, editable for this enemy (top of the tab)
                     lines.Add("");
                     if (entity.SourceAddress == 0)
                     {
@@ -3017,9 +3388,7 @@ namespace Dragon_Radar
             mapPictureBox.Invalidate();
 
             var entity = _currentEntities[idx];
-            mapScrollPanel.AutoScrollPosition = new Point(
-                Math.Max(0, entity.X - mapScrollPanel.ClientSize.Width / 2),
-                Math.Max(0, entity.Y - mapScrollPanel.ClientSize.Height / 2));
+            CenterMapOn(entity.X, entity.Y);
         }
 
         /// <summary>
@@ -3227,6 +3596,80 @@ namespace Dragon_Radar
             UpdatePropertiesPanel();
         }
 
+        // Where a warp goes. Variation follows Map_Load: 0 = the map's own variation script picks, N = layout N.
+        private readonly record struct WarpTarget(int Zone, int Area, int Variation, int X, int Y);
+
+        private string DescribeWarpTarget(WarpTarget t) =>
+            DescribeWarp(new DoorWarp(0, 0, t.Zone, t.Area, t.Variation, t.X, t.Y));
+
+        // Every map change a trigger makes: a door's destination, or the LoadMap/WarpToMap calls (action opcodes
+        // 35/36/38/39, each popping zone, area, variation, x, y) in its script or in its dialogue's script steps.
+        private List<WarpTarget> FindWarps(Entity entity)
+        {
+            var warps = new List<WarpTarget>();
+            if (_rom == null || entity.Kind != EntityKind.Trigger) return warps;
+            if (ReadDoorWarp(entity) is { } door)
+            {
+                warps.Add(new WarpTarget(door.Zone, door.Area, door.Variation, door.X, door.Y));
+                return warps;
+            }
+
+            int record = TriggerRecordAddress(entity);
+            if (record <= 0 || ResolveTriggerScriptPayload(entity) is not { } payload) return warps;
+            _rom.PushPosition(record);
+            uint handler = (uint)_rom.ReadInt();
+            _rom.PopPosition();
+
+            int address = payload.ScriptAddress;
+            var scripts = new List<byte[]>();
+            if (handler == TriggerScriptHandler)
+                scripts.Add(_rom.ReadBytesAt(address, Math.Min(512, _rom.Length - address)));
+            else if (DrGero.Quests.DialogTableReader.Read(_rom, address, out _) is { } table)
+                scripts.AddRange(table.Where(s => s.Line is { Kind: DrGero.Quests.DialogLineKind.Script }).Select(s => s.Line!.ScriptBytes));
+            else
+                scripts.AddRange(DrGero.Quests.DialogReader.Read(_rom, address).Lines.Where(l => l.Kind == DrGero.Quests.DialogLineKind.Script).Select(l => l.ScriptBytes));
+
+            foreach (var bytes in scripts)
+            {
+                var pushed = new List<long>(); // constants pushed since the last other instruction
+                foreach (var ins in DrGero.Quests.InstructionDecoder.Decode(bytes))
+                {
+                    if (ins.Opcode is 0x00 or 0x01 or 0x1D) { pushed.AddRange(ins.Args); continue; }
+                    if (ins.Opcode == 0x02 && ins.StepIndex is 35 or 36 or 38 or 39 && pushed.Count >= 5)
+                    {
+                        var a = pushed.Skip(pushed.Count - 5).ToArray();
+                        var target = new WarpTarget((int)a[0], (int)a[1], (int)a[2], (int)a[3], (int)a[4]);
+                        if (!warps.Contains(target)) warps.Add(target);
+                    }
+                    pushed.Clear();
+                }
+            }
+            return warps;
+        }
+
+        // Opens the warp's destination map (on the layout it names) and scrolls to where the player arrives.
+        private void GoToWarp(WarpTarget target)
+        {
+            if (_game == null) return;
+            var dest = _game.MapEntries.FirstOrDefault(e => e.Zone == target.Zone && e.Area == target.Area);
+            var node = dest == null ? null : FindMapNode(mapTreeView.Nodes, dest);
+            if (dest == null || node == null)
+            {
+                statusLabel.Text = $"This warp goes to Z{target.Zone} A{target.Area}, which isn't a map in this ROM.";
+                return;
+            }
+
+            _variantEntry = dest; // keep the layout chosen here instead of AfterSelect's reset to the default
+            _variantIndex = target.Variation > 0 ? target.Variation - 1 : 0;
+            mainViewTabControl.SelectedTab = mapViewerTabPage;
+            if (mapTreeView.SelectedNode == node) mapTreeView_AfterSelect(this, new TreeViewEventArgs(node));
+            else mapTreeView.SelectedNode = node;
+            node.EnsureVisible();
+
+            CenterMapOn(target.X, target.Y);
+            statusLabel.Text = $"Followed warp to {DescribeWarpTarget(target)}.";
+        }
+
         private static string TriggerHandlerName(uint handler) => handler switch
         {
             TriggerDialogHandler => "dialogue / event",
@@ -3418,9 +3861,13 @@ namespace Dragon_Radar
         private async Task LaunchLegacyForSelectedEntity(string? microArgs = null)
         {
             if (_rom == null || _currentEntry == null) return;
-            if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
-            var entity = _currentEntities[_selectedIndex];
-            if (microArgs == null && entity.Kind != EntityKind.Trigger && entity.Kind != EntityKind.Object) return;
+            // The micro editor can work on the map itself (its enter/leave scripts), so only the full IDE needs a selection.
+            if (microArgs == null)
+            {
+                if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
+                var entity = _currentEntities[_selectedIndex];
+                if (entity.Kind != EntityKind.Trigger && entity.Kind != EntityKind.Object) return;
+            }
 
             uint? focusAddr = null;
             if (_selectedTriggerPayloadFileOffset != null)
@@ -3904,7 +4351,7 @@ namespace Dragon_Radar
             if (npcPlaceModeCombo.SelectedIndex == 3)
             {
                 _enemyTemplates ??= EnemyRecords.FindTemplates(_rom, _game.MapEntries);
-                palette.AddRange(_enemyTemplates.Select(t => (t.SpriteId, $"Enemy {t.StatIndex} x{t.Count}", (object)t)));
+                palette.AddRange(_enemyTemplates.Select(t => (t.SpriteId, $"Enemy {t.StatIndex}", (object)t)));
             }
             else
             {

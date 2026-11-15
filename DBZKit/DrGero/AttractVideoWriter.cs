@@ -21,6 +21,11 @@ namespace DrGero.Boot
     {
         public const int FrameBytes = GameIntroVideo.FrameWidth * GameIntroVideo.FrameHeight;
         private const int HeaderWords = 129;
+        /// <summary>The cartridge window the GBA can address (0x08000000-0x09FFFFFF).</summary>
+        public const long MaxRomBytes = 0x2000000;
+
+        /// <summary>Playback rate: GameIntroVideo_Update_DecodeFrame shows a new frame every 6 vblanks (cmp r1, #6), ~9.95 fps.</summary>
+        public const double FramesPerSecond = 59.7275 / 6;
 
         private static int Table(ROM rom) => GameIntroVideo.TableOffset(rom);
 
@@ -82,13 +87,24 @@ namespace DrGero.Boot
                 : [.. Enumerable.Range(0, 256).SelectMany(i => BitConverter.GetBytes(i < palette.Length ? ImageImport.ToBgr555(palette[i]) : (ushort)0))];
             long before = rom.Length;
 
+            // Compress everything first (each frame only needs the one before it, so in parallel), and check it fits before the ROM is
+            // touched: the GBA maps at most 32 MB of cartridge, so nothing past that can be pointed at.
+            var encoded = new (int Mode, byte[] Stream)[tiledFrames.Count];
+            int done = 0;
+            Parallel.For(0, tiledFrames.Count, i =>
+            {
+                encoded[i] = Encode(tiledFrames[i], i > 0 ? tiledFrames[i - 1] : null);
+                progress?.Report(Interlocked.Increment(ref done));
+            });
+            long needed = encoded.Sum(e => (long)((8 + e.Stream.Length + 3) & ~3)) + (HeaderWords + tiledFrames.Count) * 4 + 64;
+            if (rom.Length + needed > MaxRomBytes)
+                throw new InvalidOperationException($"This video needs {needed / 1024 / 1024.0:0.0} MB but the ROM only has room for {(MaxRomBytes - rom.Length) / 1024 / 1024.0:0.0} MB more " +
+                    "(a GBA cartridge tops out at 32 MB). Use a shorter clip. Nothing was changed.");
+
             // Frames first (they only append), then the table.
             var addresses = new int[tiledFrames.Count];
             for (int i = 0; i < tiledFrames.Count; i++)
-            {
-                addresses[i] = WriteFrame(rom, tiledFrames[i], i > 0 ? tiledFrames[i - 1] : null);
-                progress?.Report(i + 1);
-            }
+                addresses[i] = ImageImport.WriteResource(rom, encoded[i].Mode, FrameBytes, encoded[i].Stream);
 
             int at = table;
             string moved = "";

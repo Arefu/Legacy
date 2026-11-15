@@ -895,19 +895,84 @@ namespace DBZKit
         private readonly CheckBox _attractNewPalette = new() { Text = "Import builds a new palette from the PNGs", Location = new Point(737, 536), AutoSize = true };
         private readonly Label _attractEditStatus = new() { Location = new Point(737, 562), Size = new Size(320, 60), ForeColor = Color.DimGray };
 
+        private readonly Button _attractImportMp4 = new() { Text = "Import MP4...", Location = new Point(1047, 500), Size = new Size(145, 28) };
+        private readonly ComboBox _attractFit = new() { Location = new Point(1047, 534), Size = new Size(145, 23), DropDownStyle = ComboBoxStyle.DropDownList };
+
         private void BuildAttractEditing()
         {
-            TabPage_AttractMode.Controls.AddRange([_attractReplaceFrame, _attractImportVideo, _attractNewPalette, _attractEditStatus]);
+            _attractFit.Items.AddRange(["Fit (black bars)", "Crop to fill", "Stretch"]);
+            _attractFit.SelectedIndex = 0;
+            TabPage_AttractMode.Controls.AddRange([_attractReplaceFrame, _attractImportVideo, _attractImportMp4, _attractFit, _attractNewPalette, _attractEditStatus]);
             _attractReplaceFrame.Click += async (_, _) => await ReplaceAttractFrame();
             _attractImportVideo.Click += async (_, _) => await ImportAttractVideo();
+            _attractImportMp4.Click += async (_, _) => await ImportAttractMp4();
             UpdateAttractEditing();
         }
 
         private void UpdateAttractEditing()
         {
             bool ok = _GBARom != null && HasBootLayout;
-            _attractReplaceFrame.Enabled = _attractImportVideo.Enabled = _attractNewPalette.Enabled = ok;
+            _attractReplaceFrame.Enabled = _attractImportVideo.Enabled = _attractImportMp4.Enabled = _attractFit.Enabled = _attractNewPalette.Enabled = ok;
             if (!ok) _attractEditStatus.Text = "";
+        }
+
+        /// <summary>
+        /// Replaces the attract-mode video with a video file. It is resampled to the game's rate (a new frame every 6 vblanks, ~9.95 fps)
+        /// and scaled to 240x160, a 255-colour palette is built for it, and every frame is stored JCALG1-compressed as a keyframe or as a
+        /// delta against the frame before, whichever is smaller (AttractVideoWriter). The game's music is separate and stays as it is.
+        /// </summary>
+        private async Task ImportAttractMp4()
+        {
+            var rom = _session.Rom;
+            if (rom == null) return;
+            using var open = new OpenFileDialog { Title = "Replace the attract-mode video", Filter = "Video|*.mp4;*.m4v;*.mov;*.wmv;*.avi;*.mkv|All files|*.*" };
+            if (open.ShowDialog(this) != DialogResult.OK) return;
+
+            string path = open.FileName;
+            var fit = (VideoImport.Fit)Math.Max(0, _attractFit.SelectedIndex);
+            const int MaxFrames = 6000; // ~10 minutes; the 32 MB cartridge limit usually stops it first
+            int w = GameIntroVideo.FrameWidth, h = GameIntroVideo.FrameHeight;
+            double fps = AttractVideoWriter.FramesPerSecond;
+            _attractImportMp4.Enabled = _attractImportVideo.Enabled = false;
+            try
+            {
+                var status = new Progress<string>(s => _attractEditStatus.Text = s);
+                IProgress<string> say = status;
+                string result = await Task.Run(() =>
+                {
+                    // Pass 1: a spread of frames (at most ~240, evenly spaced) to build the palette from.
+                    var samples = new List<Bitmap>();
+                    int stride = 1, index = 0;
+                    try
+                    {
+                        VideoImport.ReadFrames(path, w, h, fps, fit, MaxFrames, frame =>
+                        {
+                            if (index++ % stride == 0) samples.Add((Bitmap)frame.Clone());
+                            if (samples.Count > 240)
+                            {
+                                for (int i = samples.Count - 1; i >= 0; i--) if (i % 2 == 1) { samples[i].Dispose(); samples.RemoveAt(i); }
+                                stride *= 2;
+                            }
+                        }, new Progress<string>(s => say.Report("Reading video (1/3): " + s)));
+                        if (index == 0) throw new InvalidOperationException("No frames could be read from that file.");
+                        say.Report("Building a palette...");
+                        Color[] palette = [Color.Black, .. ImageImport.BuildPalette(samples, 255)];
+
+                        // Pass 2: every frame, straight to tile-order palette indices (38 KB each instead of a full bitmap).
+                        var frames = new List<byte[]>(index);
+                        VideoImport.ReadFrames(path, w, h, fps, fit, MaxFrames,
+                            frame => frames.Add(AttractFrameFromPng(frame, palette, $"frame {frames.Count + 1}")),
+                            new Progress<string>(s => say.Report("Converting colours (2/3): " + s)));
+
+                        var compressing = new Progress<int>(n => say.Report($"Compressing (3/3): frame {n} / {frames.Count}"));
+                        return AttractVideoWriter.WriteVideo(rom, frames, palette, compressing) + $" {frames.Count / fps:0.0}s at {fps:0.00} fps.";
+                    }
+                    finally { foreach (var b in samples) b.Dispose(); }
+                });
+                await AfterAttractEdit(result, 0);
+            }
+            catch (Exception ex) { _attractEditStatus.Text = ex.Message; }
+            finally { UpdateAttractEditing(); }
         }
 
         /// <summary>Loads a 240x160 PNG as tile-order indices into <paramref name="palette"/> (transparent pixels = index 0).</summary>

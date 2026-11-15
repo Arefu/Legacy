@@ -729,9 +729,8 @@ namespace DrGero.Catalog
         /// <summary>HP and STR/POW/END from the Scouter stat table; null for stat index 0 (the game shows "???").</summary>
         private static (int Hp, int Str, int Pow, int End)? ScouterStats(ROM rom, Game game, int stat)
         {
-            if (stat == 0 || game.ScouterStatsOffset == 0 || game.ScouterStatsOffset + stat * 24 + 24 > rom.Length) return null;
-            var b = rom.ReadBytesAt(game.ScouterStatsOffset + stat * 24, 24);
-            return (BitConverter.ToInt32(b, 4), b[12], b[13], b[14]);
+            if (stat == 0 || EnemyStats.Read(rom, game, stat) is not { } e) return null; // follows the table if it was moved
+            return (e.Hp, e.Str, e.Pow, e.End);
         }
 
         private static AssetPreview ScouterPreview(ROM rom, Game game, int index, int sprite, int portrait, int stat, uint descPtr)

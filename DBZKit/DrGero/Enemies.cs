@@ -102,17 +102,63 @@ namespace DrGero
         }
 
         /// <summary>
+        /// The behaviour a stationary enemy gets: FaceAndWait {fn, u32 param} with the param the game's own one-entry lists use most
+        /// (0x7D00 in the US ROM). 311 real enemies have a one-entry list, and NONE of them is a waypoint -- they are FaceAndWait,
+        /// StandWait or a wander. A lone waypoint at the enemy's own spawn finishes the moment it starts, so the endlessly cycled
+        /// behaviour list never yields and the game hangs (reported: placing "Enemy 9" froze the game, script or not).
+        /// </summary>
+        private static byte[] StationaryBehavior(ROM rom, IReadOnlyList<MapEntry> entries)
+        {
+            var counts = new Dictionary<int, int>();
+            foreach (var (_, record) in EnumerateRecords(rom, entries))
+            {
+                if (U32(rom, record + BehaviorCountOffset) != 1) continue;
+                int b = U32(rom, record + BehaviorListOffset) & 0x00FFFFFF;
+                if (b == 0 || b + 8 > rom.Length || U32(rom, b) != IdleHandler) continue;
+                int param = U32(rom, b + 4);
+                counts[param] = counts.GetValueOrDefault(param) + 1;
+            }
+            int best = counts.Count == 0 ? 0x7D00 : counts.OrderByDescending(kv => kv.Value).First().Key;
+            return [.. BitConverter.GetBytes(IdleHandler), .. BitConverter.GetBytes(best)];
+        }
+
+        /// <summary>
+        /// Repairs enemies placed by older versions of this tool on <paramref name="entry"/>: a behaviour list that is one waypoint
+        /// (the game never ships one -- see <see cref="StationaryBehavior"/>) gets the stationary behaviour instead. Returns how many.
+        /// </summary>
+        public static int RepairLoneWaypointEnemies(ROM rom, IReadOnlyList<MapEntry> allEntries, MapEntry entry)
+        {
+            byte[]? stationary = null;
+            int fixedCount = 0;
+            foreach (var (_, record) in EnumerateRecords(rom, [entry]))
+            {
+                if (U32(rom, record + BehaviorCountOffset) != 1) continue;
+                int b = U32(rom, record + BehaviorListOffset) & 0x00FFFFFF;
+                if (b == 0 || b + 4 > rom.Length || U32(rom, b) != WaypointHandler) continue;
+                stationary ??= StationaryBehavior(rom, allEntries);
+                int at = rom.AllocateFreeSpace(stationary.Length);
+                rom.WriteBytesAt(at, stationary);
+                rom.PatchInt32(record + BehaviorListOffset, 0x08000000 | at);
+                fixedCount++;
+            }
+            return fixedCount;
+        }
+
+        /// <summary>
         /// Appends new enemy records (Entity.Kind == Enemy, SourceAddress == 0) to the map's
         /// mapScripts[]. Each gets its own action object cloned from the game's most common
-        /// one and a single waypoint at its own spawn point (a stationary enemy -- 311 real
-        /// ones use a one-entry list), all freshly allocated so nothing is shared.
+        /// one and the stationary FaceAndWait behaviour (<see cref="StationaryBehavior"/>), all
+        /// freshly allocated so nothing is shared. Enemies an older version placed with a lone
+        /// waypoint are repaired on the way (<see cref="RepairLoneWaypointEnemies"/>).
         /// </summary>
         public static int PersistNewEnemies(ROM rom, IReadOnlyList<MapEntry> allEntries, MapEntry entry, int mapEntryAddress, List<MapEntry.Entity> entities)
         {
+            RepairLoneWaypointEnemies(rom, allEntries, entry);
             var fresh = entities.Where(e => e.Kind == MapEntry.EntityKind.Enemy && e.SourceAddress == 0).ToList();
             if (fresh.Count == 0) return 0;
 
             var (actionFunc, actionPayload) = MostCommonAction(rom, allEntries);
+            byte[] stationary = StationaryBehavior(rom, allEntries);
 
             var existing = new List<byte>();
             if (entry.MapScripts != 0 && entry.ScriptCount > 0)
@@ -122,13 +168,8 @@ namespace DrGero
             foreach (var enemy in fresh)
             {
                 // Sub-objects first so the record can point at them.
-                var waypoint = new List<byte>();
-                waypoint.AddRange(BitConverter.GetBytes(WaypointHandler));
-                waypoint.AddRange(BitConverter.GetBytes((ushort)enemy.X));
-                waypoint.AddRange(BitConverter.GetBytes((ushort)enemy.Y));
-                waypoint.AddRange(BitConverter.GetBytes(0x80));
-                int waypointAddr = rom.AllocateFreeSpace(waypoint.Count);
-                rom.WriteBytesAt(waypointAddr, waypoint.ToArray());
+                int behaviorAddr = rom.AllocateFreeSpace(stationary.Length);
+                rom.WriteBytesAt(behaviorAddr, stationary);
 
                 var action = new List<byte>();
                 action.AddRange(BitConverter.GetBytes(actionFunc));
@@ -145,7 +186,7 @@ namespace DrGero
                 record.AddRange(BitConverter.GetBytes(enemy.TypeId));            // spriteId
                 record.AddRange(BitConverter.GetBytes(0x08000000 | actionAddr));
                 record.AddRange(BitConverter.GetBytes(1));                       // behavior count
-                record.AddRange(BitConverter.GetBytes(0x08000000 | waypointAddr));
+                record.AddRange(BitConverter.GetBytes(0x08000000 | behaviorAddr));
                 int recordAddr = rom.AllocateFreeSpace(record.Count);
                 rom.WriteBytesAt(recordAddr, record.ToArray());
 

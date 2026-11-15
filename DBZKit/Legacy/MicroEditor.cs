@@ -35,7 +35,7 @@ namespace Legacy
             if (romPath == null || kind == null || fieldText == null || !File.Exists(romPath)
                 || !int.TryParse(fieldText.Replace("0x", "", StringComparison.OrdinalIgnoreCase), System.Globalization.NumberStyles.HexNumber, null, out int field))
             {
-                MessageBox.Show("--micro-edit needs --rom=<existing file>, --kind=<trigger|object|npc|enemy|dialog> and --field=0x<offset>.", "Legacy");
+                MessageBox.Show("--micro-edit needs --rom=<existing file>, --kind=<trigger|object|npc|enemy|dialog|script> and --field=0x<offset>.", "Legacy");
                 return;
             }
 
@@ -117,8 +117,9 @@ namespace Legacy
                         address = 0;
                 }
 
-                bool isSequence = kind == "object" || kind == "dialog" || address <= 0
-                    || (kind == "enemy" ? enemyFunc == DrGero.EnemyRecords.RunDialogFunc : DialogScanner.LooksLikeDialogSequence(rom, address));
+                // "script": a plain bytecode pointer that is never a dialog table (a map's enter/leave script).
+                bool isSequence = kind != "script" && (kind == "object" || kind == "dialog" || address <= 0
+                    || (kind == "enemy" ? enemyFunc == DrGero.EnemyRecords.RunDialogFunc : DialogScanner.LooksLikeDialogSequence(rom, address)));
                 rawScript = !isSequence;
 
                 string? tableProblem = null;
@@ -230,7 +231,7 @@ namespace Legacy
                     {
                         // An NPC condition that's just END means "no condition" -- clear it rather
                         // than store a script that would never evaluate true.
-                        if (kind == "npc" && script.Length <= 1)
+                        if ((kind == "npc" || kind == "script") && script.Length <= 1) // map scripts: 0 = none (Map_LoadInternal skips it)
                         {
                             rom.PatchInt32(field, 0);
                         }
