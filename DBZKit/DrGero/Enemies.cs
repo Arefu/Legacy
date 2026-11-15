@@ -231,5 +231,85 @@ namespace DrGero
 
         /// <summary>The address of an enemy's action object (0 if none).</summary>
         public static int ActionObject(ROM rom, int record) => U32(rom, record + ActionObjOffset) & 0x00FFFFFF;
+
+        // ---- exact ("absolute") EXP ----
+        // The game scales a stat entry's EXP base to the player's level (sub_800E4D6). The enemy's action object, though, is queued
+        // to run when it dies (CombatEntity_TakeDamage -> defeat handler sub_801A74C -> sub_800E39C), and VM action 139 AddEXP gives
+        // its amount to the active character unscaled (BytecodeVM_AddEXP -> CharStats_AddEXP). So exact EXP for one enemy = EXP base
+        // 0 in its stat entry + "AddEXP(N);" at the start of its own action script.
+        public const int AddExpStep = 139;
+        public const int DoNothingFunc = 0x08010699;
+
+        /// <summary>The N of an "AddEXP(N);" this enemy's action script starts with, or null.</summary>
+        public static int? ReadExactExp(ROM rom, int record)
+        {
+            int obj = ActionObject(rom, record);
+            if (obj <= 0 || obj + 8 > rom.Length || U32(rom, obj) != RunScriptFunc) return null;
+            int script = U32(rom, obj + 4) & 0x00FFFFFF;
+            if (script <= 0 || script + 4 > rom.Length) return null;
+            var b = rom.ReadBytesAt(script, Math.Min(12, rom.Length - script));
+            int len = ExactExpPrefixLength(b);
+            if (len == 0) return null;
+            int i = 1, raw = 0;
+            while (true) { byte c = b[i++]; raw = (raw << 7) | (c & 0x7F); if ((c & 0x80) == 0) break; }
+            return (raw >> 1) ^ -(raw & 1);
+        }
+
+        // Length of a leading "PushVarint n; Step AddEXP" (01 <varint> 02 8B), or 0.
+        private static int ExactExpPrefixLength(byte[] b)
+        {
+            if (b.Length < 4 || b[0] != 0x01) return 0;
+            int i = 1;
+            while (i < b.Length && (b[i] & 0x80) != 0) i++;
+            i++; // the varint's last byte
+            return i + 1 < b.Length && b[i] == 0x02 && b[i + 1] == AddExpStep ? i + 2 : 0;
+        }
+
+        private static byte[] ExactExpPrefix(int amount)
+        {
+            uint zig = (uint)((amount << 1) ^ (amount >> 31));
+            var groups = new List<byte>();
+            do { groups.Insert(0, (byte)(zig & 0x7F)); zig >>= 7; } while (zig != 0);
+            for (int i = 0; i < groups.Count - 1; i++) groups[i] |= 0x80;
+            return [0x01, .. groups, 0x02, (byte)AddExpStep];
+        }
+
+        /// <summary>
+        /// Gives this one enemy exact EXP (<paramref name="amount"/>), or removes it (null): writes a copy of its action script with
+        /// "AddEXP(amount);" in front (or without it) and a new action object for this record only -- the scripts are shared by
+        /// hundreds of enemies, so nothing existing is changed. Returns null when done, else why it can't be.
+        /// </summary>
+        public static string? SetExactExp(ROM rom, int record, int? amount)
+        {
+            int obj = ActionObject(rom, record);
+            int func = obj > 0 && obj + 8 <= rom.Length ? U32(rom, obj) : DoNothingFunc;
+            if (func == RunDialogFunc)
+                return "This enemy's defeat action is a conversation, not a script, so exact EXP can't be added to it.";
+
+            byte[] rest = [0x11]; // END: nothing else to run
+            if (func == RunScriptFunc)
+            {
+                int script = U32(rom, obj + 4) & 0x00FFFFFF;
+                if (script > 0 && script < rom.Length)
+                {
+                    var bytes = rom.ReadBytesAt(script, Math.Min(1024, rom.Length - script));
+                    var decoded = Quests.InstructionDecoder.Decode(bytes);
+                    if (decoded.Count == 0 || decoded[^1].Opcode != 0x11)
+                        return "This enemy's defeat script couldn't be read to its end, so it wasn't changed.";
+                    rest = bytes[..(decoded[^1].Offset + 1)];
+                    int prefix = ExactExpPrefixLength(rest);
+                    if (prefix > 0) rest = rest[prefix..]; // replace an existing exact amount
+                }
+            }
+            else if (amount == null) return null; // no script and nothing to add
+
+            byte[] newScript = amount is int n and > 0 ? [.. ExactExpPrefix(n), .. rest] : rest;
+            int scriptAt = rom.AllocateFreeSpace(newScript.Length);
+            rom.WriteBytesAt(scriptAt, newScript);
+            int objAt = rom.AllocateFreeSpace(8);
+            rom.WriteBytesAt(objAt, [.. BitConverter.GetBytes(RunScriptFunc), .. BitConverter.GetBytes(0x08000000 | scriptAt)]);
+            rom.PatchInt32(record + ActionObjOffset, 0x08000000 | objAt);
+            return null;
+        }
     }
 }

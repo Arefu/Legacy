@@ -1082,7 +1082,7 @@ namespace Dragon_Radar
         private Panel _enemyStatsPanel = null!;
         private NumericUpDown _enemyHp = null!, _enemyStr = null!, _enemyPow = null!, _enemyEnd = null!;
         private ExpEditor _enemyExp = null!;
-        private Label _enemyStatsNote = null!;
+        private Label _enemyStatsNote = null!, _enemyCountLabel = null!;
 
         private static NumericUpDown StatBox(int max) => new() { Minimum = 0, Maximum = max, Width = 90 };
 
@@ -1101,12 +1101,14 @@ namespace Dragon_Radar
             var apply = new Button { Text = "Apply to this enemy", AutoSize = true };
             apply.Click += (_, _) => ApplySelectedEnemyStats();
             _enemyStatsNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
+            _enemyCountLabel = new Label { AutoSize = true, MaximumSize = new Size(330, 0), Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 0, 0, 4) };
             var stack = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Location = new Point(8, 6) };
-            stack.Controls.AddRange([grid, new Label { Text = "EXP", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 6, 0, 0) },
+            stack.Controls.AddRange([_enemyCountLabel, grid, new Label { Text = "EXP", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 6, 0, 0) },
                 _enemyExp, apply, _enemyStatsNote]);
-            _enemyStatsPanel = new Panel { Dock = DockStyle.Top, Height = 290, Visible = false, AutoScroll = true };
+            _enemyStatsPanel = new Panel { Dock = DockStyle.Top, Height = 360, Visible = false, AutoScroll = true };
             _enemyStatsPanel.Controls.Add(stack);
             propertiesTabPage.Controls.Add(_enemyStatsPanel);
+            propertiesTabPage.AutoScroll = true; // the stats panel plus the text can be taller than the tab
         }
 
         // Fills the panel for the selected enemy (called from UpdatePropertiesPanel).
@@ -1120,15 +1122,17 @@ namespace Dragon_Radar
             _enemyHp.Value = Math.Clamp(s.Hp, 0, (int)_enemyHp.Maximum);
             _enemyStr.Value = s.Str; _enemyPow.Value = s.Pow; _enemyEnd.Value = s.End;
             _enemyExp.ExpTable = EnemyStats.ExpTable(_rom, _game.Config); // this ROM's table (a different ROM may be open now)
-            _enemyExp.Value = s.Exp;
+            _enemyExp.ExactAllowed = true; // an unsaved enemy is written into the ROM on Apply
+            _enemyExp.Load(s.Exp, entity.SourceAddress != 0 ? EnemyRecords.ReadExactExp(_rom, entity.SourceAddress) : null);
             int sharing = EnemyStats.CountUsers(_rom, _game.MapEntries, entity.StatIndex);
             if (entity.SourceAddress == 0) sharing++; // this one isn't written into the ROM yet
+            int total = EnemyRecords.EnumerateRecords(_rom, _game.MapEntries).Count();
             string name = EnemyStats.Name(_rom, _game.Config, s) ?? $"stat entry {s.Index}";
-            _enemyStatsNote.Text = (sharing > 1
-                ? $"{name}: {sharing} enemies share these stats. Applying here gives this enemy its own copy, so the others keep theirs. "
+            _enemyCountLabel.Text = $"{name} (Enemy {s.Index}): {sharing} in the ROM, of {total} enemies in total";
+            _enemyStatsNote.Text = sharing > 1
+                ? $"{sharing} enemies share these stats. Applying here gives this enemy its own copy, so the others keep theirs. "
                 + "To change the whole type, right-click it in NPCs > Place: Enemies."
-                : $"{name}: only this enemy uses these stats.")
-                + " EXP is scaled by the game to the player's level (see the type editor's Rewards list).";
+                : "Only this enemy uses these stats.";
             _enemyStatsPanel.Visible = true;
         }
 
@@ -1144,6 +1148,19 @@ namespace Dragon_Radar
                     if (!MaterializeSelected()) return;
                     entity = _currentEntities[_selectedIndex];
                 }
+                // Exact EXP goes into this enemy's own defeat script (and the scaled EXP base becomes 0); switching back to a
+                // scaled value takes the AddEXP out again. Done first so a refusal changes nothing.
+                int? hadExact = EnemyRecords.ReadExactExp(_rom, entity.SourceAddress);
+                if (_enemyExp.IsExact || hadExact != null)
+                {
+                    string? refused = EnemyRecords.SetExactExp(_rom, entity.SourceAddress, _enemyExp.IsExact ? _enemyExp.ExactAmount : null);
+                    if (refused != null)
+                    {
+                        MessageBox.Show(refused, "Enemy stats", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
+
                 int index = entity.StatIndex;
                 if (EnemyStats.CountUsers(_rom, _game.MapEntries, index) > 1)
                 {
@@ -1154,12 +1171,13 @@ namespace Dragon_Radar
                 EnemyStats.Write(_rom, _game.Config, s with
                 {
                     Index = index, Hp = (int)_enemyHp.Value, Str = (int)_enemyStr.Value, Pow = (int)_enemyPow.Value,
-                    End = (int)_enemyEnd.Value, Exp = _enemyExp.Value,
+                    End = (int)_enemyEnd.Value, Exp = _enemyExp.Value, // 0 in Exact mode
                 });
                 _dirty = true;
-                statusLabel.Text = index != s.Index
-                    ? $"This enemy now has its own stats (entry {index}); the rest of its type are unchanged. Save the ROM to keep it."
-                    : "Stats updated for this enemy. Save the ROM to keep it.";
+                string expText = _enemyExp.IsExact ? $" It gives exactly {_enemyExp.ExactAmount:N0} EXP at every level." : "";
+                statusLabel.Text = (index != s.Index
+                    ? $"This enemy now has its own stats (entry {index}); the rest of its type are unchanged."
+                    : "Stats updated for this enemy.") + expText + " Save the ROM to keep it.";
                 UpdatePropertiesPanel();
             }
             catch (InvalidOperationException ex)
@@ -1201,7 +1219,8 @@ namespace Dragon_Radar
             var pow = StatBox(255); pow.Value = stats.Pow;
             var end = StatBox(255); end.Value = stats.End;
             var expTable = EnemyStats.ExpTable(_rom, _game.Config);
-            var exp = new ExpEditor(expTable) { Value = stats.Exp };
+            var exp = new ExpEditor(expTable) { ExactAllowed = placed > 0 };
+            exp.Load(stats.Exp, null);
             void Row(string label, Control c)
             {
                 grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 7, 8, 3) });
@@ -1223,8 +1242,8 @@ namespace Dragon_Radar
                     rewardBox.Items.Clear();
                     for (int level = 1; level <= EnemyStats.MaxLevel; level++)
                     {
-                        int got = EnemyStats.Reward(b, level, expTable);
-                        string why = b <= 0 ? "no EXP set" : b <= 5 ? "small values are exact"
+                        int got = exp.IsExact ? exp.ExactAmount : EnemyStats.Reward(b, level, expTable);
+                        string why = exp.IsExact ? "exact" : b <= 0 ? "no EXP set" : b <= 5 ? "small values are exact"
                             : level >= EnemyStats.MaxLevel ? "max level, no EXP"
                             : got > b ? "raised to 1/128 of a level" : got < b ? "capped at 1/2 of a level" : "exactly as set";
                         rewardBox.Items.Add($"Level {level}: {got:N0} EXP  ({why})");
@@ -1264,9 +1283,28 @@ namespace Dragon_Radar
             form.AcceptButton = ok;
             form.CancelButton = cancel;
             if (form.ShowDialog(this) != DialogResult.OK) return;
+            if (exp.IsExact && !applyToPlaced.Checked)
+            {
+                MessageBox.Show("Exact EXP is written into each enemy's own defeat script, so for a type it can only go to enemies already " +
+                    "placed: tick \"Apply to enemies already placed\", or set it on one enemy in its Properties tab.",
+                    "Edit stats", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
             try
             {
+                // Exact EXP (or taking it out again) for every enemy of this type, before the stats change so a refusal is reported.
+                int exactRefused = 0;
+                if (applyToPlaced.Checked)
+                {
+                    foreach (var (_, record) in EnemyRecords.EnumerateRecords(_rom, _game.MapEntries).ToList())
+                    {
+                        if (BitConverter.ToInt32(_rom.ReadBytesAt(record + EnemyRecords.StatIndexOffset, 4)) != stats.Index) continue;
+                        if (!exp.IsExact && EnemyRecords.ReadExactExp(_rom, record) == null) continue;
+                        if (EnemyRecords.SetExactExp(_rom, record, exp.IsExact ? exp.ExactAmount : null) != null) exactRefused++;
+                    }
+                }
+
                 // Unticked with enemies already using the entry: new placements get a new entry of their own, so those keep theirs.
                 int index = stats.Index;
                 if (!applyToPlaced.Checked && placed > 0)
@@ -1291,7 +1329,10 @@ namespace Dragon_Radar
                 PopulateNpcList();
                 statusLabel.Text = index != stats.Index
                     ? $"{typeName}: enemies you place from now on get the new stats (entry {index}); the {placed} already placed keep theirs. Save the ROM to keep it."
-                    : $"{typeName}: stats changed for all {placed} enemies of this type and for new ones. Save the ROM to keep it.";
+                    : $"{typeName}: stats changed for all {placed} enemies of this type and for new ones."
+                      + (exp.IsExact ? $" Each gives exactly {exp.ExactAmount:N0} EXP." : "")
+                      + (exactRefused > 0 ? $" {exactRefused} of them have a conversation as their defeat action, so they can't take exact EXP and now give none." : "")
+                      + " Save the ROM to keep it.";
                 UpdatePropertiesPanel();
             }
             catch (InvalidOperationException ex)
