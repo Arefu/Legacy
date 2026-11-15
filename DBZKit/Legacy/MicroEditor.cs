@@ -72,7 +72,7 @@ namespace Legacy
                 uint type = cond >> 16;
                 string text;
                 if (cond == 0)
-                    text = "// No spawn condition: this NPC always appears.\r\n// To gate it, end with a value that is true when it should appear, e.g.:\r\n//   StackTestStoryFlag(191);\r\n";
+                    text = "// No condition: this always appears.\r\n// To gate it, end with a value that is true when it should appear, e.g.:\r\n//   StackTestStoryFlag(191);\r\n";
                 else if (type == 1)
                     text = $"StackTestStoryFlag({cond & 0xFFFF});";
                 else if (type == 2)
@@ -80,7 +80,7 @@ namespace Legacy
                 else if (type == 3)
                 {
                     text = "// (one-shot flag test: shows once, then clears its flag)";
-                    warning = $"This NPC uses a one-shot flag test on flag {cond & 0xFFFF}, which has no script form here. Applying replaces it.";
+                    warning = $"This uses a one-shot flag test on flag {cond & 0xFFFF}, which has no script form here. Applying replaces it.";
                 }
                 else if ((cond & 0xFF000000) == 0x08000000 && (int)(cond & 0x00FFFFFF) < rom.Length)
                 {
@@ -99,6 +99,11 @@ namespace Legacy
                 rom.PushPosition(field);
                 int address = rom.ReadPointer(); // plain file offset (0 = nothing there yet)
                 rom.PopPosition();
+                if (address >= rom.Length)
+                {
+                    MessageBox.Show($"The value at 0x{field:X} doesn't point inside the ROM (0x{address:X}), so there is no script or dialogue here to edit.", title);
+                    return;
+                }
 
                 int enemyFunc = 0;
                 if (kind == "enemy")

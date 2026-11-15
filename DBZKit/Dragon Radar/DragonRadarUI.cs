@@ -283,35 +283,63 @@ namespace Dragon_Radar
 
         private bool _suppressVariantEvents;
 
-        // Fills the toolbar's Variant box with every variant of the open map's Zone/Area.
+        // Which layout of the open map's VariationArray is shown (0 = the one the game loads by default).
+        // A map's "variations" are these layouts, not separate MapEntries: no two MapEntries in the
+        // shipped ROM share a Zone/Area, so the old sibling-entry list was always a single item.
+        private int _variantIndex;
+        private MapEntry? _variantEntry;
+
+        // The map's layouts: VariationArray has no count (scripts pick an index, MapEntry_GetVariation),
+        // so follow it while each entry points at a layout ending in the shared tile atlas pointer (+0x4C)
+        // -- the same rule DrGero.Catalog uses.
+        private List<int> MapLayouts(MapEntry entry)
+        {
+            var layouts = new List<int>();
+            if (_rom == null || entry.VariationArray <= 0) return layouts;
+            int atlas = _game?.Config.TileAtlasOffset ?? 0;
+            for (int i = 0; i < 16; i++)
+            {
+                int at = entry.VariationArray + i * 4;
+                if (at + 4 > _rom.Length) break;
+                _rom.PushPosition(at);
+                uint p = (uint)_rom.ReadInt();
+                _rom.PopPosition();
+                int layout = (int)(p & 0x01FFFFFF);
+                if (p is < 0x08000000 or >= 0x0A000000 || layout + 0x50 > _rom.Length) break;
+                if (i > 0)
+                {
+                    if (atlas == 0) break;
+                    _rom.PushPosition(layout + 0x4C);
+                    int layoutAtlas = _rom.ReadInt() & 0x01FFFFFF;
+                    _rom.PopPosition();
+                    if (layoutAtlas != atlas) break;
+                }
+                layouts.Add(layout);
+            }
+            return layouts;
+        }
+
+        // Fills the toolbar's Variant box with every layout of the open map.
         private void SyncVariantBox()
         {
             if (_game == null || _currentEntry == null) return;
             _suppressVariantEvents = true;
             toolStrip_VariantCombo.Items.Clear();
-            var siblings = _game.MapEntries
-                .Where(e => e.Zone == _currentEntry.Zone && e.Area == _currentEntry.Area)
-                .OrderBy(e => e.Variation).ToList();
-            foreach (var e in siblings)
-                toolStrip_VariantCombo.Items.Add(new VariantItem(e));
-            toolStrip_VariantCombo.SelectedIndex = siblings.FindIndex(e => ReferenceEquals(e, _currentEntry));
-            toolStrip_VariantCombo.Enabled = siblings.Count > 1;
+            int count = MapLayouts(_currentEntry).Count;
+            for (int i = 0; i < count; i++)
+                toolStrip_VariantCombo.Items.Add(i == 0 ? "Variation 1 (default)" : $"Variation {i + 1}");
+            if (count > 0) toolStrip_VariantCombo.SelectedIndex = Math.Min(_variantIndex, count - 1);
+            toolStrip_VariantCombo.Enabled = count > 1;
             _suppressVariantEvents = false;
         }
 
         private void toolStrip_VariantCombo_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            if (_suppressVariantEvents || toolStrip_VariantCombo.SelectedItem is not VariantItem item) return;
-            if (ReferenceEquals(item.Entry, _currentEntry)) return;
-            var node = FindMapNode(mapTreeView.Nodes, item.Entry);
-            if (node == null) return;
-            mapTreeView.SelectedNode = node; // AfterSelect loads the variant
-            node.EnsureVisible();
-        }
-
-        private sealed record VariantItem(MapEntry Entry)
-        {
-            public override string ToString() => $"Variation {Entry.Variation}";
+            if (_suppressVariantEvents || mapTreeView.SelectedNode == null) return;
+            int index = toolStrip_VariantCombo.SelectedIndex;
+            if (index < 0 || index == _variantIndex) return;
+            _variantIndex = index;
+            mapTreeView_AfterSelect(this, new TreeViewEventArgs(mapTreeView.SelectedNode)); // reload on the chosen layout
         }
 
         private int CurrentMapIndex()
@@ -1434,12 +1462,19 @@ namespace Dragon_Radar
                 return;
             }
 
+            if (!ReferenceEquals(entry, _variantEntry)) { _variantEntry = entry; _variantIndex = 0; } // a different map starts on its default layout
             _currentEntry = entry;
             SyncVariantBox();
 
-            _rom.PushPosition(entry.VariationArray);
-            int mapOffset = _rom.ReadPointer();
-            _rom.PopPosition();
+            var layouts = MapLayouts(entry);
+            int mapOffset;
+            if (layouts.Count > 0) mapOffset = layouts[Math.Min(_variantIndex, layouts.Count - 1)];
+            else
+            {
+                _rom.PushPosition(entry.VariationArray);
+                mapOffset = _rom.ReadPointer();
+                _rom.PopPosition();
+            }
             _currentMapOffset = mapOffset;
 
             RefreshPaintLayerChoices(); // needs _currentMapOffset (set above); picks the first editable layer
@@ -1876,11 +1911,10 @@ namespace Dragon_Radar
             int n = OrdinalOf(index).Ordinal;
             return entity.Kind switch
             {
-                // TypeId for Trigger is the raw vTable dispatch pointer read in ReadMapTriggers/
-                // ReadVariationTriggers -- shown as a hex address since we don't have a confirmed
-                // mapping from vtable address to trigger sub-type (DualRect/Dialog/Script/
-                // SavePoint) yet. Not fabricating a friendly name we can't back up.
-                EntityKind.Trigger => $"Trigger #{n} ({entity.Width}x{entity.Height}) vtable=0x{entity.TypeId:X}",
+                // TypeId for a mapTriggers[] trigger is its spawn condition (Condition_Evaluate), 0 for layout triggers.
+                EntityKind.Trigger => entity.TypeId == 0
+                    ? $"Trigger #{n} ({entity.Width}x{entity.Height})"
+                    : $"Trigger #{n} ({entity.Width}x{entity.Height}) if {DescribeTriggerCondition(entity.TypeId)}",
                 EntityKind.Object => $"Object #{n} — item id {entity.TypeId}",
                 EntityKind.Item => $"Item #{n} — id {entity.TypeId} (position approximate)",
                 EntityKind.Decoration => $"Decoration #{n} — frame {entity.TypeId}",
@@ -1949,6 +1983,22 @@ namespace Dragon_Radar
                 }
                 else
                 {
+                    if (ent.Kind == EntityKind.Trigger)
+                    {
+                        string who = multi ? $"{Name(captured)}: " : "";
+                        bool mainList = IsMainListTrigger(ent);
+                        menu.Items.Add(new ToolStripMenuItem(mainList
+                            ? $"{who}Appears when {DescribeTriggerCondition(ent.TypeId)}"
+                            : $"{who}Always present (map layout trigger, no condition)") { Enabled = false });
+                        if (mainList)
+                            menu.Items.Add($"Edit {Name(captured)} condition...", null, (_, _) => { SelectEntity(captured); EditSelectedPayload(condition: true); });
+                        if (ReadDoorWarp(ent) is { } warp)
+                        {
+                            menu.Items.Add(new ToolStripMenuItem($"{who}Warps to {DescribeWarp(warp)}") { Enabled = false });
+                            menu.Items.Add($"Edit {Name(captured)} warp destination...", null, (_, _) => { SelectEntity(captured); EditDoorWarp(captured); });
+                            continue; // a door has no script; its "code" is the destination above
+                        }
+                    }
                     menu.Items.Add($"Edit {Name(captured)} code...", null, (_, _) =>
                     {
                         SelectEntity(captured);
@@ -2488,19 +2538,29 @@ namespace Dragon_Radar
             {
                 case EntityKind.Trigger:
                     lines.Add("A trigger zone -- the game runs its handler when the player enters this rectangle.");
-                    lines.Add($"Dispatch (vtable) address: 0x{entity.TypeId:X}");
-                    lines.Add("Specific trigger type (save point / dialog / script / warp) isn't identified from ROM data alone yet.");
+                    bool mainList = IsMainListTrigger(entity);
+                    lines.Add(mainList
+                        ? $"Appears when: {DescribeTriggerCondition(entity.TypeId)}"
+                        : "Appears when: always (from this map layout's own trigger list, which has no condition)");
+                    int record = TriggerRecordAddress(entity);
+                    if (record > 0)
+                    {
+                        _rom.PushPosition(record);
+                        uint handler = (uint)_rom.ReadInt();
+                        _rom.PopPosition();
+                        lines.Add($"Type: {TriggerHandlerName(handler)} (handler 0x{handler:X8})");
+                        if (ReadDoorWarp(entity) is { } warp)
+                            lines.Add($"Warps to: {DescribeWarp(warp)}");
+                    }
 
                     var payload = ResolveTriggerScriptPayload(entity);
                     _selectedTriggerPayloadFileOffset = payload?.PayloadFieldOffset;
-                    editScriptButton.Enabled = _selectedTriggerPayloadFileOffset != null;
+                    editScriptButton.Enabled = _selectedTriggerPayloadFileOffset != null || ReadDoorWarp(entity) != null;
                     editDialogueButton.Enabled = _selectedTriggerPayloadFileOffset != null;
-                    // Duplicate/Delete only need the trigger's own slot to be resolvable
-                    // (entity.SourceAddress inside the current map's trigger array) --
-                    // they don't touch the payload at all, so they're not gated on
-                    // ResolveTriggerScriptPayload succeeding.
-                    duplicateTriggerButton.Enabled = _currentEntry != null && entity.SourceAddress != 0;
-                    deleteTriggerButton.Enabled = _currentEntry != null && entity.SourceAddress != 0;
+                    // Duplicate/Delete rewrite MapEntry.mapTriggers[], so they only apply to triggers in
+                    // that list -- not to the layout's own trigger list (doors/warps).
+                    duplicateTriggerButton.Enabled = _currentEntry != null && mainList;
+                    deleteTriggerButton.Enabled = _currentEntry != null && mainList;
 
                     if (payload != null)
                     {
@@ -3030,26 +3090,164 @@ namespace Dragon_Radar
         /// </summary>
         private TriggerScriptPayload? ResolveTriggerScriptPayload(Entity entity)
         {
-            if (_rom == null || entity.Kind != EntityKind.Trigger || entity.SourceAddress == 0)
+            int dataPtr = TriggerRecordAddress(entity);
+            if (dataPtr <= 0 || dataPtr + 0x14 > _rom!.Length)
                 return null;
 
-            _rom.PushPosition(entity.SourceAddress);
-            _rom.Skip(4);
-            int dataPtr = _rom.ReadPointer();
+            // Only dialog-table and plain-script triggers keep a payload pointer at +0x10 (see Legacy.cs's
+            // survey); doors/warps and the rest store other data there, which must not be read as a pointer.
+            _rom.PushPosition(dataPtr);
+            uint handler = (uint)_rom.ReadInt();
             _rom.PopPosition();
-
-            if (dataPtr <= 0)
+            if (handler != TriggerDialogHandler && handler != TriggerScriptHandler)
                 return null;
 
             int payloadFieldFileOffset = dataPtr + 0x10;
             _rom.PushPosition(payloadFieldFileOffset);
-            int scriptAddress = _rom.ReadPointer();
+            uint raw = (uint)_rom.ReadInt();
             _rom.PopPosition();
 
-            if (scriptAddress <= 0)
+            int scriptAddress = (int)(raw & 0x01FFFFFF);
+            if (raw is < 0x08000000 or >= 0x0A000000 || scriptAddress <= 0 || scriptAddress >= _rom.Length)
                 return null;
 
             return new TriggerScriptPayload(payloadFieldFileOffset, scriptAddress);
+        }
+
+        private const uint TriggerDialogHandler = 0x0800D7E1; // MapTrigger_OnEnter: dialog sequence[] at +0x10
+        private const uint TriggerScriptHandler = 0x0800C2C3; // one plain script at +0x10
+        private const uint TriggerDoorHandler = 0x0800C233;   // MapTrigger_CreateDoorWarp
+
+        // True for a trigger from MapEntry.mapTriggers[] ({condition, record} pairs), false for one from the
+        // layout's own list (Map_VariationEntry +0x40/+0x44: bare record pointers, see ReadVariationTriggers).
+        private bool IsMainListTrigger(Entity entity) =>
+            _currentEntry != null && entity.SourceAddress >= _currentEntry.MapTriggers
+            && entity.SourceAddress < _currentEntry.MapTriggers + _currentEntry.TriggerCount * 8;
+
+        // File offset of the trigger's record (the struct its +0 handler / +8 rectangle / +0x10 payload live in).
+        private int TriggerRecordAddress(Entity entity)
+        {
+            if (_rom == null || entity.Kind != EntityKind.Trigger || entity.SourceAddress <= 0) return 0;
+            _rom.PushPosition(entity.SourceAddress + (IsMainListTrigger(entity) ? 4 : 0));
+            uint raw = (uint)_rom.ReadInt();
+            _rom.PopPosition();
+            int record = (int)(raw & 0x01FFFFFF);
+            return raw is >= 0x08000000 and < 0x0A000000 && record < _rom.Length ? record : 0;
+        }
+
+        // Door/warp trigger record (0x18 bytes), confirmed from MapTrigger_DoorWarp_Poll (0x0800C1AC) -> Map_Load:
+        //   +0x10 low nibble = facing on arrival   +0x11 zone   +0x12 area
+        //   +0x13 variation (0 = the map's own variation script picks, MapEntry_GetVariationIndex)
+        //   +0x14/+0x16 = arrival X/Y (int16, world pixels; Map_Load centres the camera on it)
+        private readonly record struct DoorWarp(int Record, int Facing, int Zone, int Area, int Variation, int X, int Y);
+
+        private DoorWarp? ReadDoorWarp(Entity entity)
+        {
+            int record = TriggerRecordAddress(entity);
+            if (record <= 0 || record + 0x18 > _rom!.Length) return null;
+            _rom.PushPosition(record);
+            uint handler = (uint)_rom.ReadInt();
+            _rom.PopPosition();
+            if (handler != TriggerDoorHandler) return null;
+            var b = _rom.ReadBytesAt(record + 0x10, 8);
+            return new DoorWarp(record, b[0] & 0xF, b[1], b[2], b[3], BitConverter.ToInt16(b, 4), BitConverter.ToInt16(b, 6));
+        }
+
+        private string DescribeWarp(DoorWarp w)
+        {
+            var dest = _game?.MapEntries.FirstOrDefault(e => e.Zone == w.Zone && e.Area == w.Area);
+            string where = dest == null ? $"Z{w.Zone} A{w.Area} (no such map!)" : MapLabelFor(dest);
+            string variation = w.Variation == 0 ? "" : $", variation {w.Variation}";
+            return $"{where}{variation}, arriving at ({w.X}, {w.Y})";
+        }
+
+        private void EditDoorWarp(int entityIndex)
+        {
+            if (_rom == null || _game == null || entityIndex < 0 || entityIndex >= _currentEntities.Count) return;
+            if (ReadDoorWarp(_currentEntities[entityIndex]) is not { } w) return;
+
+            using var form = new Form
+            {
+                Text = $"Edit warp -- {DescribeEntityAt(entityIndex)}", FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false, MinimizeBox = false, StartPosition = FormStartPosition.CenterParent,
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(10)
+            };
+            var grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
+
+            var mapCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
+            var maps = _game.MapEntries.GroupBy(e => (e.Zone, e.Area)).Select(g => g.First()).OrderBy(e => e.Zone).ThenBy(e => e.Area).ToList();
+            foreach (var m in maps) mapCombo.Items.Add(MapLabelFor(m));
+            int current = maps.FindIndex(m => m.Zone == w.Zone && m.Area == w.Area);
+            if (current < 0) { mapCombo.Items.Add($"Z{w.Zone} A{w.Area} (no such map)"); current = mapCombo.Items.Count - 1; }
+            mapCombo.SelectedIndex = current;
+
+            NumericUpDown Num(int value, int min, int max) => new() { Minimum = min, Maximum = max, Value = Math.Clamp(value, min, max), Width = 90 };
+            var variation = Num(w.Variation, 0, 255);
+            var x = Num(w.X, short.MinValue, short.MaxValue);
+            var y = Num(w.Y, short.MinValue, short.MaxValue);
+            var facing = Num(w.Facing, 0, 15);
+
+            void Row(string label, Control c)
+            {
+                grid.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 7, 8, 3) });
+                grid.Controls.Add(c);
+            }
+            Row("Destination map", mapCombo);
+            Row("Variation (0 = map decides)", variation);
+            Row("Arrival X", x);
+            Row("Arrival Y", y);
+            Row("Facing (low nibble of +0x10)", facing);
+
+            var ok = new Button { Text = "Apply", DialogResult = DialogResult.OK, AutoSize = true };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+            var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill };
+            buttons.Controls.Add(cancel);
+            buttons.Controls.Add(ok);
+            grid.Controls.Add(buttons);
+            grid.SetColumnSpan(buttons, 2);
+            form.Controls.Add(grid);
+            form.AcceptButton = ok;
+            form.CancelButton = cancel;
+
+            if (form.ShowDialog(this) != DialogResult.OK) return;
+
+            int zone = w.Zone, area = w.Area;
+            if (mapCombo.SelectedIndex < maps.Count) { zone = maps[mapCombo.SelectedIndex].Zone; area = maps[mapCombo.SelectedIndex].Area; }
+            byte flags = _rom.ReadBytesAt(w.Record + 0x10, 1)[0];
+            _rom.PatchByte(w.Record + 0x10, (byte)((flags & 0xF0) | (int)facing.Value));
+            _rom.PatchByte(w.Record + 0x11, (byte)zone);
+            _rom.PatchByte(w.Record + 0x12, (byte)area);
+            _rom.PatchByte(w.Record + 0x13, (byte)variation.Value);
+            _rom.PatchInt16(w.Record + 0x14, (short)x.Value);
+            _rom.PatchInt16(w.Record + 0x16, (short)y.Value);
+            _dirty = true;
+
+            if (ReadDoorWarp(_currentEntities[entityIndex]) is { } updated)
+                statusLabel.Text = $"Warp now goes to {DescribeWarp(updated)}.";
+            UpdatePropertiesPanel();
+        }
+
+        private static string TriggerHandlerName(uint handler) => handler switch
+        {
+            TriggerDialogHandler => "dialogue / event",
+            TriggerScriptHandler => "script",
+            TriggerDoorHandler => "door / warp",
+            _ => "other"
+        };
+
+        // mapTriggers[i]'s first word, as Map_InitTriggers hands it to Condition_Evaluate (0x08003F06): the trigger is
+        // only created on map load when this is true. 0 = always; high half 1/2/3 = story flag (low half) set / not set /
+        // set-then-cleared; anything else is a pointer to a bytecode script whose result decides.
+        private static string DescribeTriggerCondition(int value)
+        {
+            uint v = (uint)value;
+            uint kind = v >> 16, flag = v & 0xFFFF;
+            return v == 0 ? "always"
+                : kind == 1 ? $"story flag {flag} is set"
+                : kind == 2 ? $"story flag {flag} is NOT set"
+                : kind == 3 ? $"story flag {flag} is set (and clears it, so only once)"
+                : v is >= 0x08000000 and < 0x0A000000 ? $"the condition script at 0x{v:X8} returns true"
+                : $"unrecognised condition 0x{v:X8}";
         }
 
         /// <summary>
@@ -3115,7 +3313,7 @@ namespace Dragon_Radar
         private void editDialogueButton_Click(object? sender, EventArgs e) => EditSelectedPayload(dialogue: true);
 
         /// <param name="focus">"quest" or "idle": the editor opens on that kind of conversation and greys out the rest.</param>
-        private async void EditSelectedPayload(bool dialogue = false, string? focus = null)
+        private async void EditSelectedPayload(bool dialogue = false, string? focus = null, bool condition = false)
         {
             if (_rom == null || _selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
             var entity = _currentEntities[_selectedIndex];
@@ -3172,6 +3370,19 @@ namespace Dragon_Radar
                     field = entity.SourceAddress + 0xC;
                     title += " dialogue";
                     break;
+
+                case EntityKind.Trigger when condition:
+                    // mapTriggers[i]'s first word: the same Condition_Evaluate value as an NPC's spawn condition,
+                    // so the micro editor's "npc" mode reads and writes it unchanged.
+                    if (!IsMainListTrigger(entity)) return;
+                    kind = "npc";
+                    field = entity.SourceAddress;
+                    title += " condition";
+                    break;
+
+                case EntityKind.Trigger when ReadDoorWarp(entity) != null:
+                    EditDoorWarp(_selectedIndex); // a door's "code" is its destination, not a script
+                    return;
 
                 case EntityKind.Trigger:
                 case EntityKind.Object:
