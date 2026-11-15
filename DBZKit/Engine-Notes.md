@@ -6,6 +6,15 @@ ROM's own data. Certainty is marked: **HIGH** (decompile + data agree), **MEDIUM
 
 ## 1. What spawns things on a map
 
+**Level gates** (CONFIRMED against ALFE data, 2026-11): the 8-byte `npcArray` record
+(`x, y, graphicId, style, level, character`) only draws the number (LevelGate_Create /
+sub_8010304); nothing compares `level`. The barrier is the MapItem whose +4 equals the gate's
+`graphicId` (also the id `EntityList_FindByTypeAndIndex(6, id)` finds); its +0 condition script is
+`02 0B 00 cc 0B 00 cc 02 16 00 ll 0E|0D ...` -- `char == cc && StackGetCharLevel(cc) >= ll`
+(or `> ll-1` with 0x0D). ALFE maps 28/55 and 217/317 share one script; map 67 has no item and
+keeps the check inline in the triggers round the gate. Dragon Radar keeps all of this in step
+(`EntityReader.FindLevelGateChecks` / `SyncLevelGateChecks`).
+
 `Map_LoadInternal` (0x800C390) runs, in order: LevelGates (`npcArray`), items, objects, triggers,
 music, then **`mapScripts[]`** -- each record's first word is a handler called after its
 `flags` condition passes. Handlers seen in the ROM:

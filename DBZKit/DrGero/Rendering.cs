@@ -204,6 +204,149 @@ namespace DrGero.Rendering
             return result;
         }
 
+        /// <summary>One level comparison in the script that opens a level gate's barrier.</summary>
+        /// <param name="LevelAddress">File offset of the PushByte operand holding the level.</param>
+        /// <param name="OpAddress">File offset of the compare opcode (0x0D StackCmpGt or 0x0E StackCmpGe).</param>
+        /// <param name="ScriptAddress">File offset of the start of the script holding the check.</param>
+        /// <param name="ItemAddress">File offset of the barrier MapItem whose +0 points at the script, or -1 when the check is inline in a trigger.</param>
+        public readonly record struct LevelGateCheck(int LevelAddress, int OpAddress, bool GreaterThan, int ScriptAddress, int ItemAddress);
+
+        private const byte OpStackCmpGt = 0x0D, OpStackCmpGe = 0x0E;
+
+        /// <summary>
+        /// The number a gate record holds at +6 is only the overlay text (LevelGate_Create and
+        /// sub_8010304 draw it and never compare it). The barrier itself is a MapItem whose +4
+        /// (graphic object id) equals the gate's +4 (the id LevelGate_Create looks up with
+        /// EntityList_FindByTypeAndIndex(6, id)). That item's +0 is its condition script, which for
+        /// a level barrier reads
+        /// <c>Step 0x0B(char); PushByte char; Step StackGetCharLevel; PushByte level; StackCmpGe|StackCmpGt; ...</c>
+        /// (bytes <c>00 cc 02 16 00 ll 0E|0D</c>, <c>cc</c> = the gate's +7). Most gates use Ge with
+        /// the shown level; some use Gt with level-1 (ALFE maps 250, 268, 288, 310, 323). A few
+        /// maps share one barrier script (ALFE 28/55, 217/317). Map 67 has no barrier item: its
+        /// check is inline in the triggers wrapped round the gate, so triggers whose zone is near
+        /// the gate are searched when no item matches. The first Zone 2 gate (map 8, level 1)
+        /// has no check at all.
+        /// </summary>
+        public static List<LevelGateCheck> FindLevelGateChecks(ROM rom, MapEntry entry, int gateRecordAddress)
+        {
+            var result = new List<LevelGateCheck>();
+            byte[] b = rom.RawBytes;
+            if (gateRecordAddress <= 0 || gateRecordAddress + NpcEntrySize > b.Length) return result;
+
+            int gateX = BitConverter.ToInt16(b, gateRecordAddress), gateY = BitConverter.ToInt16(b, gateRecordAddress + 2);
+            int graphicId = b[gateRecordAddress + 4], character = b[gateRecordAddress + 7];
+            var seen = new HashSet<int>();
+
+            void Scan(int start, int length, int itemAddress, int requiredCharacter)
+            {
+                int end = Math.Min(start + length, b.Length - 7);
+                for (int p = Math.Max(0, start); p < end; p++)
+                {
+                    if (b[p] != 0x00 || b[p + 2] != 0x02 || b[p + 3] != 0x16 || b[p + 4] != 0x00) continue;
+                    if (b[p + 1] > 0x7F || (requiredCharacter >= 0 && b[p + 1] != requiredCharacter)) continue;
+                    byte op = b[p + 6];
+                    if (op != OpStackCmpGt && op != OpStackCmpGe) continue;
+                    if (seen.Add(p + 5)) result.Add(new LevelGateCheck(p + 5, p + 6, op == OpStackCmpGt, start, itemAddress));
+                }
+            }
+
+            // The barrier item: its condition script is short and the check sits a few bytes in.
+            for (int i = 0; entry.MapItems != 0 && i < entry.ItemCount; i++)
+            {
+                int slot = entry.MapItems + i * 4;
+                if (slot + 4 > b.Length) break;
+                int item = ToFileOffset(BitConverter.ToUInt32(b, slot), b.Length);
+                if (item < 0 || item + 5 > b.Length || b[item + 4] != graphicId) continue;
+
+                int script = ToFileOffset(BitConverter.ToUInt32(b, item), b.Length);
+                if (script >= 0) Scan(script, 0x18, item, -1);
+            }
+            if (result.Count > 0) return result;
+
+            // No barrier item: look in triggers whose zone touches the gate, and only for the
+            // gate's own character so an unrelated check close by isn't picked up.
+            const int Near = 32;
+            for (int t = 0; entry.MapTriggers != 0 && t < entry.TriggerCount; t++)
+            {
+                int slot = entry.MapTriggers + t * MapTriggerEntrySize + 4;
+                if (slot + 4 > b.Length) break;
+                int data = ToFileOffset(BitConverter.ToUInt32(b, slot), b.Length);
+                if (data < 0 || data + 16 > b.Length) continue;
+
+                int x1 = BitConverter.ToInt16(b, data + 8), y1 = BitConverter.ToInt16(b, data + 10);
+                int x2 = BitConverter.ToInt16(b, data + 12), y2 = BitConverter.ToInt16(b, data + 14);
+                if (gateX < Math.Min(x1, x2) - Near || gateX > Math.Max(x1, x2) + Near ||
+                    gateY < Math.Min(y1, y2) - Near || gateY > Math.Max(y1, y2) + Near) continue;
+
+                Scan(data, 0x40, -1, character);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Rewrites every check found by <see cref="FindLevelGateChecks"/> so the barrier opens at
+        /// <paramref name="level"/>. A barrier script that something else also points at (another
+        /// map's barrier) is copied first and this barrier repointed at the copy, so the other
+        /// gate keeps its own level.
+        /// </summary>
+        public static int SyncLevelGateChecks(ROM rom, MapEntry entry, int gateRecordAddress, byte level)
+        {
+            var checks = FindLevelGateChecks(rom, entry, gateRecordAddress);
+            var cloned = new Dictionary<int, int>(); // original script -> its private copy
+            foreach (var found in checks)
+            {
+                var c = found;
+                if (c.ItemAddress >= 0)
+                {
+                    if (!cloned.TryGetValue(c.ScriptAddress, out int copy) && CountPointersTo(rom, c.ScriptAddress) > 1)
+                    {
+                        const int CopySize = 0x40; // a superset of these short scripts; the VM stops at their own end
+                        int size = Math.Min(CopySize, rom.Length - c.ScriptAddress);
+                        byte[] bytes = rom.ReadBytesAt(c.ScriptAddress, size);
+                        copy = rom.AllocateFreeSpace(size);
+                        rom.WriteBytesAt(copy, bytes);
+                        rom.PatchInt32(c.ItemAddress, 0x08000000 | copy);
+                        cloned[c.ScriptAddress] = copy;
+                    }
+                    if (cloned.TryGetValue(c.ScriptAddress, out copy))
+                    {
+                        int delta = copy - c.ScriptAddress;
+                        c = c with { LevelAddress = c.LevelAddress + delta, OpAddress = c.OpAddress + delta, ScriptAddress = copy };
+                    }
+                }
+
+                if (c.GreaterThan && level > 0)
+                {
+                    rom.PatchByte(c.LevelAddress, (byte)(level - 1));
+                }
+                else
+                {
+                    rom.PatchByte(c.OpAddress, OpStackCmpGe); // "> -1" can't be written as a byte, so use ">= level"
+                    rom.PatchByte(c.LevelAddress, level);
+                }
+            }
+            return checks.Count;
+        }
+
+        /// <summary>How many word-aligned ROM pointers point at <paramref name="address"/>.</summary>
+        private static int CountPointersTo(ROM rom, int address)
+        {
+            byte[] b = rom.RawBytes;
+            uint target = 0x08000000u | (uint)address;
+            int count = 0;
+            for (int i = 0; i + 4 <= b.Length; i += 4)
+                if (BitConverter.ToUInt32(b, i) == target) count++;
+            return count;
+        }
+
+        private static int ToFileOffset(uint pointer, int romLength)
+        {
+            if (pointer < 0x08000000 || pointer >= 0x0A000000) return -1;
+            int offset = (int)(pointer - 0x08000000);
+            return offset < romLength ? offset : -1;
+        }
+
         // Real walking/talking NPCs (and presumably other scripted spawns:
         // enemies, cutscene actors) live here, not in the level-gate array.
         // CONFIRMED via IDA: MapEntry.mapScripts is an array of pointers to

@@ -940,8 +940,9 @@ namespace Dragon_Radar
 
         // "Required level" editor shown in the Properties tab for a selected Level Gate. Built
         // in code (not the Designer) and only visible for that entity kind. The requirement is
-        // one byte at +6 of the gate's 8-byte record (x s16, y s16, template, style, level,
-        // scanFlag -- see EntityReader.ReadLevelGates).
+        // one byte at +6 of the gate's 8-byte record (x s16, y s16, graphicId, style, level,
+        // character -- see EntityReader.ReadLevelGates). That byte is only the text; the real
+        // check is in the barrier's script, which LevelGateNud_ValueChanged keeps in step.
         private Panel _levelGatePanel = null!;
         private NumericUpDown _levelGateNud = null!;
         private bool _suppressLevelGateEvents;
@@ -969,6 +970,13 @@ namespace Dragon_Radar
             _rom.PatchByte(entity.SourceAddress + 6, level); // live, like drags -- Save ROM As copies _rom
             _currentEntities[_selectedIndex] = entity with { TypeId = level };
             _dirty = true;
+
+            // +6 is only the number drawn on the barrier; the real limit is in the condition
+            // script of the barrier's MapItem (see EntityReader.FindLevelGateChecks), so keep it in step.
+            int synced = _currentEntry == null ? 0 : EntityReader.SyncLevelGateChecks(_rom, _currentEntry, entity.SourceAddress, level);
+            statusLabel.Text = synced > 0
+                ? $"Level gate set to {level}; updated the barrier's level check to match."
+                : $"Level gate text set to {level}. This barrier has no level check to update (it opens on a story flag, or has no barrier item).";
 
             UpdatePropertiesPanel();
             mapPictureBox.Invalidate();
