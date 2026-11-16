@@ -111,8 +111,13 @@ namespace DrGero.IO
         public int ReadPointer()
         {
             int value = ReadInt();
-            // GBA pointers: 0x08xxxxxx (ROM), 0x09xxxxxx (ROM mirror), 0x02xxxxxx (EWRAM), etc.
-            // Strip the top byte to get the raw ROM offset.
+            // GBA pointers: 0x08000000-0x09FFFFFF is the whole 32 MB cartridge (0x09xxxxxx is its upper
+            // 16 MB, not a mirror), 0x0A-0x0D are its wait-state mirrors. A ROM grown past 16 MB (a long
+            // imported attract video) has real 0x09 pointers, so keep 25 bits for ROM addresses.
+            uint top = (uint)value >> 24;
+            if (top is >= 0x08 and <= 0x0D)
+                return value & 0x01FFFFFF;
+            // Anything else (EWRAM 0x02xxxxxx etc.): strip the top byte, as before.
             if ((value & 0xFF000000) != 0)
             {
                 return value & 0x00FFFFFF;
