@@ -51,6 +51,8 @@ namespace Dragon_Radar
             mapTreeView.KeyDown += MapTreeView_KeyDown;
             BuildLevelGatePanel();
             BuildTriggerActivationPanel();
+            BuildDecorVisiblePanel();
+            BuildDecorTab();
             BuildEnemyStatsPanel();
             npcListView.MouseUp += npcListView_MouseUp;
             BuildViewportPanel();
@@ -981,11 +983,242 @@ namespace Dragon_Radar
         private NumericUpDown _levelGateNud = null!;
         private bool _suppressLevelGateEvents;
 
+        // "Decor" tab: place decorations and level gates. A decoration's look is a frame of the LAYOUT's own sprite
+        // sheet (graphicObjects +0x10..+0x17 are OAM shape/size, tile index, depth), so the palette offers the kinds
+        // already on the open layout and a placed one copies such a record (see LevelGates.PersistNewDecorations).
+        private ListView _decorListView = null!;
+        private ImageList _decorThumbnails = null!;
+        private ComboBox _gateCharacterCombo = null!, _gateRockCombo = null!;
+        private NumericUpDown _gateLevelNud = null!;
+        private Button _placeGateButton = null!;
+        private Label _gateNoteLabel = null!;
+        private DecorKind? _placingDecoration;   // the look the next map click places
+        private bool _placingGate;
+
+        // A decoration look: a graphicObjects record to copy, and its layout when it's on another map (0 = the open one).
+        private sealed record DecorKind(int Template, int Layout, string Label)
+        {
+            public override string ToString() => Label;
+        }
+
+        // Every distinct decoration look in the ROM (built once per ROM, on first use): record -> sprite.
+        private List<DecorKind>? _allDecorKinds;
+        private readonly Dictionary<int, Bitmap> _allDecorSprites = new();
+        private ROM? _allDecorRom;
+
+        private Bitmap? DecorSprite(int record) =>
+            _decorationSprites.TryGetValue(record, out var s) ? s : _allDecorSprites.TryGetValue(record, out var a) ? a : null;
+
+        private List<DecorKind> AllDecorKinds()
+        {
+            if (_allDecorKinds != null && ReferenceEquals(_allDecorRom, _rom)) return _allDecorKinds;
+            foreach (var s in _allDecorSprites.Values) s.Dispose();
+            _allDecorSprites.Clear();
+            _allDecorKinds = new();
+            _allDecorRom = _rom;
+            if (_rom == null || _game == null) return _allDecorKinds;
+
+            Cursor = Cursors.WaitCursor;
+            var seen = new HashSet<string>();
+            var doneLayouts = new HashSet<int>();
+            foreach (var entry in _game.MapEntries)
+            {
+                foreach (int layout in MapLayouts(entry))
+                {
+                    if (!doneLayouts.Add(layout)) continue;
+                    Dictionary<int, Bitmap> sprites;
+                    try { sprites = MapRenderer.RenderGraphicObjectSprites(_rom, _game.Config, layout); }
+                    catch { continue; }
+                    foreach (var (record, sprite) in sprites.OrderBy(kv => kv.Key))
+                    {
+                        string key = SpriteKey(sprite);
+                        if (!seen.Add(key)) { sprite.Dispose(); continue; }
+                        _allDecorSprites[record] = sprite;
+                        int index = (record - (BitConverter.ToInt32(_rom.ReadBytesAt(layout + 0x28, 4)) & 0x01FFFFFF)) / 24; // graphicObjects records are 24 bytes
+                        _allDecorKinds.Add(new DecorKind(record, layout, $"{MapLabelFor(entry)} #{index} {sprite.Width}x{sprite.Height}"));
+                    }
+                }
+            }
+            Cursor = Cursors.Default;
+            return _allDecorKinds;
+        }
+
+        // Same pixels = same look, whichever map it came from.
+        private static string SpriteKey(Bitmap b)
+        {
+            var data = b.LockBits(new Rectangle(0, 0, b.Width, b.Height), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
+            {
+                var bytes = new byte[data.Stride * b.Height];
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+                return $"{b.Width}x{b.Height}:{Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(bytes))}";
+            }
+            finally { b.UnlockBits(data); }
+        }
+
+        private void BuildDecorTab()
+        {
+            _decorThumbnails = new ImageList { ImageSize = new Size(48, 48), ColorDepth = ColorDepth.Depth32Bit };
+            _decorListView = new ListView { Dock = DockStyle.Fill, View = View.LargeIcon, LargeImageList = _decorThumbnails, MultiSelect = false };
+            _decorListView.MouseDown += (_, e) =>
+            {
+                if (_decorListView.GetItemAt(e.X, e.Y)?.Tag is not DecorKind kind) return;
+                CancelAllPlacement();
+                _placingDecoration = kind;
+                statusLabel.Text = kind.Layout == 0
+                    ? "Placing a decoration -- click the map to put it there (Esc to cancel). It's saved with Save ROM."
+                    : "Placing a decoration from another map -- click the map (Esc to cancel). Save ROM copies its graphic into this layout's sprite sheet.";
+            };
+            var decorGroup = new GroupBox { Text = "Decorations from every map (this map's first) -- click one, then click the map", Dock = DockStyle.Fill, Padding = new Padding(6, 4, 6, 6) };
+            decorGroup.Controls.Add(_decorListView);
+
+            _gateCharacterCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+            _gateCharacterCombo.Items.AddRange(LevelGates.CharacterNames);
+            _gateCharacterCombo.SelectedIndex = 4;
+            _gateLevelNud = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 10, Width = 55 };
+            _gateRockCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+            _placeGateButton = new Button { Text = "Place Level Gate", AutoSize = true };
+            _placeGateButton.Click += (_, _) =>
+            {
+                if (_gateRockCombo.SelectedItem is not DecorKind) return;
+                CancelAllPlacement();
+                _placingGate = true;
+                statusLabel.Text = $"Placing a level gate ({_gateCharacterCombo.SelectedItem}, level {_gateLevelNud.Value}) -- click where the rock goes (Esc to cancel). It's built when you Save ROM.";
+            };
+            _gateNoteLabel = new Label { AutoSize = true, MaximumSize = new Size(320, 0), ForeColor = SystemColors.GrayText };
+
+            var gateFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+            Control Line(params Control[] cs) { var p = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) }; p.Controls.AddRange(cs); return p; }
+            Label Cap(string t) => new() { Text = t, AutoSize = true, Margin = new Padding(0, 6, 2, 0) };
+            gateFlow.Controls.Add(Line(Cap("Breaks for"), _gateCharacterCombo, Cap("at level"), _gateLevelNud));
+            gateFlow.Controls.Add(Line(Cap("Rock"), _gateRockCombo));
+            gateFlow.Controls.Add(_placeGateButton);
+            gateFlow.Controls.Add(_gateNoteLabel);
+            var gateGroup = new GroupBox { Text = "Level gate", Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(6, 4, 6, 6) };
+            gateGroup.Controls.Add(gateFlow);
+
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(decorGroup, 0, 0);
+            layout.Controls.Add(gateGroup, 0, 1);
+
+            var tab = new TabPage("Decor") { Padding = new Padding(0) };
+            tab.Controls.Add(layout);
+            sidebarTabControl.TabPages.Add(tab);
+        }
+
+        // One entry per distinct look (sprite frame + shape + depth + size) among the open layout's decorations.
+        private void PopulateDecorTab()
+        {
+            _decorListView.Items.Clear();
+            _decorThumbnails.Images.Clear();
+            _gateRockCombo.Items.Clear();
+            if (_rom == null || _currentEntry == null)
+            {
+                _placeGateButton.Enabled = false;
+                _gateNoteLabel.Text = "";
+                return;
+            }
+
+            var gateRocks = new HashSet<int>(); // decorations shipped gates use as their rock
+            foreach (var gate in _currentEntities.Where(e => e.Kind == EntityKind.LevelGate && e.SourceAddress != 0))
+                if (LevelGates.Read(_rom, _currentEntry, gate.SourceAddress) is { } b)
+                    gateRocks.Add(b.GraphicId);
+
+            // This layout's own looks first (no copying needed), one per distinct sprite.
+            var seen = new HashSet<string>();
+            var kinds = new List<DecorKind>();
+            foreach (var d in _currentEntities.Where(e => e.Kind == EntityKind.Decoration && e.SourceAddress != 0))
+            {
+                if (!_decorationSprites.TryGetValue(d.SourceAddress, out var sprite) || !seen.Add(SpriteKey(sprite))) continue;
+                bool rock = gateRocks.Contains(d.TypeId);
+                kinds.Add(new DecorKind(d.SourceAddress, 0, $"This map #{d.TypeId} {d.Width}x{d.Height}{(rock ? " (a gate rock)" : "")}"));
+            }
+
+            // Then every other map's: placing one copies its tiles into this layout's sheet on save.
+            foreach (var k in AllDecorKinds())
+                    if (k.Layout != _currentMapOffset && DecorSprite(k.Template) is { } sprite && seen.Add(SpriteKey(sprite)))
+                        kinds.Add(k);
+
+            foreach (var kind in kinds)
+            {
+                var thumb = new Bitmap(48, 48);
+                using (var g = Graphics.FromImage(thumb))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                    if (DecorSprite(kind.Template) is { } sprite)
+                    {
+                        float scale = Math.Min(1f, Math.Min(48f / sprite.Width, 48f / sprite.Height));
+                        int w = (int)(sprite.Width * scale), h = (int)(sprite.Height * scale);
+                        g.DrawImage(sprite, (48 - w) / 2, (48 - h) / 2, w, h);
+                    }
+                }
+                _decorThumbnails.Images.Add(thumb);
+                _decorListView.Items.Add(new ListViewItem(kind.Label, _decorThumbnails.Images.Count - 1) { Tag = kind });
+            }
+
+            _gateRockCombo.Items.AddRange(kinds.ToArray());
+            var preferred = kinds.FirstOrDefault(k => k.Label.EndsWith("(a gate rock)")) ?? kinds.FirstOrDefault();
+            if (preferred != null) _gateRockCombo.SelectedItem = preferred;
+            int sheetBytes = 0;
+            try
+            {
+                int sheet = BitConverter.ToInt32(_rom.ReadBytesAt(_currentMapOffset + 0x2C, 4)) & 0x01FFFFFF;
+                if (sheet != 0) sheetBytes = DrGero.Rendering.JCALG1.Decompress(_rom, sheet).Length;
+            }
+            catch { }
+
+            int layouts = MapLayouts(_currentEntry).Count;
+            _placeGateButton.Enabled = layouts == 1 && kinds.Count > 0;
+            _gateNoteLabel.Text = layouts != 1
+                ? $"This map has {layouts} layouts. A gate finds its rock by position in the layout's decoration list, which differs per layout, so gates can only be placed on single-layout maps."
+                : kinds.Count == 0 ? "No decorations could be read to use as a rock."
+                : "A placed gate gets the whole set: the number, a rock, a breakable barrier for that character and level, " +
+                  "its own story flag so a broken rock stays broken, and blocked collision under the rock.";
+            _gateNoteLabel.Text +=$"\r\n\r\nThis layout's sprite sheet: {sheetBytes} of {Decorations.MaxSheetBytes} bytes. A decoration from another map " +
+                    "adds its graphic once (a 32x32 adds 1024); decorations share sprite memory with characters and enemies.";
+        }
+
+        private void CancelAllPlacement()
+        {
+            _placingItemId = null;
+            _placingCustomPickup = false;
+            _placingCharacterSpriteId = null;
+            _placingEnemy = null;
+            _placingDecoration = null;
+            _placingGate = false;
+        }
+
         // "Activates" dropdown for a selected trigger: rewrites the record's activator getter (+4, see TriggerActivations),
         // which decides whether the trigger fires once per map visit or every time, and on what input.
         private Panel _triggerActivationPanel = null!;
         private ComboBox _triggerActivationCombo = null!;
         private bool _suppressTriggerActivationEvents;
+
+        // "Shown when the map loads" for a selected saved decoration (record +0x17, see Decorations.VisibleFlagOffset).
+        private Panel _decorVisiblePanel = null!;
+        private CheckBox _decorVisibleCheck = null!;
+        private bool _suppressDecorVisibleEvents;
+
+        private void BuildDecorVisiblePanel()
+        {
+            _decorVisibleCheck = new CheckBox { Text = "Shown when the map loads (scripts can still show or hide it)", AutoSize = true, Location = new Point(8, 10) };
+            _decorVisiblePanel = new Panel { Dock = DockStyle.Top, Height = 36, Visible = false };
+            _decorVisiblePanel.Controls.Add(_decorVisibleCheck);
+            propertiesTabPage.Controls.Add(_decorVisiblePanel);
+            _decorVisibleCheck.CheckedChanged += (_, _) =>
+            {
+                if (_suppressDecorVisibleEvents || _rom == null || _selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
+                var d = _currentEntities[_selectedIndex];
+                if (d.Kind != EntityKind.Decoration || d.SourceAddress == 0) return;
+                Decorations.SetVisible(_rom, d.SourceAddress, _decorVisibleCheck.Checked); // live, like every other edit
+                _dirty = true;
+                statusLabel.Text = _decorVisibleCheck.Checked ? "Decoration now shows when the map loads." : "Decoration now starts hidden (a script has to show it).";
+                UpdatePropertiesPanel();
+                mapPictureBox.Invalidate();
+            };
+        }
 
         private void BuildTriggerActivationPanel()
         {
@@ -1556,6 +1789,13 @@ namespace Dragon_Radar
                 _placingEnemy = null;
                 UpdateStatusLabel();
             }
+
+            if (_placingDecoration != null || _placingGate)
+            {
+                _placingDecoration = null;
+                _placingGate = false;
+                UpdateStatusLabel();
+            }
         }
 
         private void PopulateMapTree()
@@ -1723,13 +1963,17 @@ namespace Dragon_Radar
         /// its new record. Returns false (after telling the user) if that can't be done. A no-op for an entity that is
         /// already in the ROM.
         /// </summary>
+        // Writes EVERY not-yet-saved placement (items, NPCs, enemies, decorations, level gates) into _rom, reloads
+        // the map and reselects what was selected. Needed before anything that replaces _rom with a copy made
+        // from it -- Legacy edits do (they reload from Legacy's saved copy), and pending placements only live in
+        // _currentEntities, so they used to vanish when Legacy closed.
         private bool MaterializeSelected()
         {
             if (_rom == null || _game == null || _currentEntry == null) return false;
             if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return false;
 
             var want = _currentEntities[_selectedIndex];
-            if (want.SourceAddress != 0) return true;
+            if (!_currentEntities.Any(e => e.SourceAddress == 0)) return true;
 
             int? mapEntryAddress = CurrentMapEntryAddress();
             if (mapEntryAddress == null) return false;
@@ -1742,6 +1986,8 @@ namespace Dragon_Radar
                 EntityWriter.PersistNewObjects(_rom, _currentEntry, mapEntryAddress.Value, _currentEntities);
                 EntityWriter.PersistNewCharacters(_rom, _currentEntry, mapEntryAddress.Value, _currentEntities);
                 EnemyRecords.PersistNewEnemies(_rom, _game.MapEntries, _currentEntry, mapEntryAddress.Value, _currentEntities);
+                LevelGates.PersistNewDecorations(_rom, _currentMapOffset, _currentEntities);
+                LevelGates.PersistNewGates(_rom, _currentEntry, mapEntryAddress.Value, MapLayouts(_currentEntry), _currentEntities);
                 _currentEntry.RefreshFrom(_rom, mapEntryAddress.Value);
             }
             catch (InvalidOperationException ex)
@@ -1755,8 +2001,10 @@ namespace Dragon_Radar
                 mapTreeView_AfterSelect(this, new TreeViewEventArgs(mapTreeView.SelectedNode));
             _dirty = true;
 
+            // By what it is and where, not by address: saving rebuilds arrays, so a saved object's slot can move too.
             int idx = _currentEntities.FindLastIndex(e => e.Kind == want.Kind && e.SourceAddress != 0 && e.X == want.X && e.Y == want.Y
-                && e.TypeId == want.TypeId && (want.Kind != EntityKind.Enemy || e.StatIndex == want.StatIndex));
+                && (want.Kind is EntityKind.Decoration or EntityKind.Trigger || e.TypeId == want.TypeId)
+                && (want.Kind != EntityKind.Enemy || e.StatIndex == want.StatIndex));
             if (idx < 0)
             {
                 MessageBox.Show("It was written to the ROM but couldn't be found on the reloaded map.", "Edit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1801,6 +2049,8 @@ namespace Dragon_Radar
                 EntityWriter.PersistNewObjects(_rom, _currentEntry, mapEntryAddress, _currentEntities);
                 EntityWriter.PersistNewCharacters(_rom, _currentEntry, mapEntryAddress, _currentEntities);
                 EnemyRecords.PersistNewEnemies(_rom, _game!.MapEntries, _currentEntry, mapEntryAddress, _currentEntities);
+                LevelGates.PersistNewDecorations(_rom, _currentMapOffset, _currentEntities);
+                LevelGates.PersistNewGates(_rom, _currentEntry, mapEntryAddress, MapLayouts(_currentEntry), _currentEntities);
                 _currentEntry.RefreshFrom(_rom, mapEntryAddress);
             }
             catch (InvalidOperationException ex)
@@ -1878,6 +2128,7 @@ namespace Dragon_Radar
                 _collisionGrid = null;
                 _tileUsageIndex = new();
                 DisposeDecorationSprites();
+                PopulateDecorTab();
                 mapPictureBox.Invalidate();
                 UpdateStatusLabel();
                 UpdatePropertiesPanel();
@@ -1944,6 +2195,7 @@ namespace Dragon_Radar
             DisposeDecorationSprites();
             _decorationSprites = MapRenderer.RenderGraphicObjectSprites(_rom, _game.Config, mapOffset);
             PopulateTileList(tilesets, usedTilesets);
+            PopulateDecorTab();
 
             mapPictureBox.Invalidate();
             UpdateStatusLabel();
@@ -2131,10 +2383,22 @@ namespace Dragon_Radar
             for (int i = 0; i < _currentEntities.Count; i++)
             {
                 var entity = _currentEntities[i];
+                if (entity.Kind == EntityKind.LevelGate && entity.SourceAddress == 0 && DecorSprite(entity.Handler) is { } rockSprite)
+                    g.DrawImage(rockSprite, entity.X - rockSprite.Width / 2, entity.Y - rockSprite.Height / 2); // the rock a placed gate will get
                 if (entity.Kind != EntityKind.Decoration) continue;
 
-                if (_decorationSprites.TryGetValue(entity.SourceAddress, out var sprite))
-                    g.DrawImage(sprite, entity.X, entity.Y);
+                // A placed, not-yet-saved decoration draws with its template's sprite (Handler = template record).
+                if (DecorSprite(entity.SourceAddress != 0 ? entity.SourceAddress : entity.Handler) is { } sprite)
+                {
+                    if (entity.SourceAddress != 0 && _rom != null && !Decorations.IsVisible(_rom, entity.SourceAddress))
+                    {
+                        // Starts hidden in the game (record +0x17 = 0): faded so it doesn't look like it's there.
+                        using var faded = new System.Drawing.Imaging.ImageAttributes();
+                        faded.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.35f });
+                        g.DrawImage(sprite, new Rectangle(entity.X, entity.Y, sprite.Width, sprite.Height), 0, 0, sprite.Width, sprite.Height, GraphicsUnit.Pixel, faded);
+                    }
+                    else g.DrawImage(sprite, entity.X, entity.Y);
+                }
                 else
                     using (var pen = new Pen(ColorFor(entity.Kind), 1))
                         g.DrawRectangle(pen, entity.X, entity.Y, entity.Width, entity.Height);
@@ -2531,6 +2795,25 @@ namespace Dragon_Radar
             int mapEntryAddress = mapEntryAddressOrNull.Value;
             var entry = _currentEntry;
 
+            if (entity.Kind == EntityKind.LevelGate)
+            {
+                // The whole gate: number, barrier item, and the rock (scripted away on every load, the way the game
+                // keeps a broken rock gone -- decorations can't be removed outright, see LevelGates.Delete).
+                string gateNote = LevelGates.Delete(_rom, entry, mapEntryAddress, MapLayouts(entry), entity.SourceAddress);
+                _selectedIndex = -1;
+                ReloadKeepingSelection(-1);
+                statusLabel.Text = $"Deleted {what}: its number, barrier and collision are gone, and the rock is removed whenever the map loads. {gateNote}".Trim();
+                return;
+            }
+
+            if (entity.Kind == EntityKind.Decoration)
+            {
+                MessageBox.Show("A saved decoration can't be deleted: items and level gates find decorations by their position in the layout's list, " +
+                    "so removing one would shift the rest. Move it out of the way instead, or delete the level gate it belongs to.",
+                    "Delete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             // (array pointer field, count field, element stride, slot in that array) per kind.
             int ptrField, countField, stride, arrayBase, count, slot = -1;
             switch (entity.Kind)
@@ -2655,6 +2938,37 @@ namespace Dragon_Radar
                 return;
             }
 
+            if (_placingDecoration is { } decorKind && _rom != null)
+            {
+                byte[] box = _rom.ReadBytesAt(decorKind.Template, 16);
+                int w = BitConverter.ToInt32(box, 8) - BitConverter.ToInt32(box, 0), h = BitConverter.ToInt32(box, 12) - BitConverter.ToInt32(box, 4);
+                int x = e.Location.X - w / 2, y = e.Location.Y - h / 2;
+                if (_snapGridCheck.Checked) { x = (int)Math.Round(x / (double)TileSize) * TileSize; y = (int)Math.Round(y / (double)TileSize) * TileSize; }
+                _currentEntities.Add(new Entity(EntityKind.Decoration, x, y, 0, SourceAddress: 0, Width: w, Height: h, Handler: decorKind.Template, StatIndex: decorKind.Layout));
+                _selectedIndex = _currentEntities.Count - 1;
+                _placingDecoration = null;
+                _dirty = true;
+                UpdateStatusLabel();
+                UpdatePropertiesPanel();
+                mapPictureBox.Invalidate();
+                return;
+            }
+
+            if (_placingGate && _gateRockCombo.SelectedItem is DecorKind rockKind)
+            {
+                int x = e.Location.X, y = e.Location.Y;
+                if (_snapGridCheck.Checked) { x = (int)Math.Round(x / (double)TileSize) * TileSize; y = (int)Math.Round(y / (double)TileSize) * TileSize; }
+                _currentEntities.Add(new Entity(EntityKind.LevelGate, x, y, (int)_gateLevelNud.Value, SourceAddress: 0,
+                    Handler: rockKind.Template, Variant: Math.Max(0, _gateCharacterCombo.SelectedIndex), StatIndex: rockKind.Layout));
+                _selectedIndex = _currentEntities.Count - 1;
+                _placingGate = false;
+                _dirty = true;
+                UpdateStatusLabel();
+                UpdatePropertiesPanel();
+                mapPictureBox.Invalidate();
+                return;
+            }
+
             if (_placingItemId.HasValue)
             {
                 _currentEntities.Add(new Entity(EntityKind.Object, e.Location.X, e.Location.Y, _placingItemId.Value, SourceAddress: 0, OnPickup: _placingTemplate.OnPickup, CollectionMsg: _placingTemplate.CollectionMsg));
@@ -2730,6 +3044,7 @@ namespace Dragon_Radar
             {
                 var entity = _currentEntities[_selectedIndex];
                 _dragGrabOffset = new Point(e.Location.X - entity.X, e.Location.Y - entity.Y);
+                _dragStartPosition = new Point(entity.X, entity.Y);
                 _dragging = true;
             }
 
@@ -2905,15 +3220,49 @@ namespace Dragon_Radar
             }
 
             bool wasDraggingOrResizing = _dragging || _resizing;
+            bool wasDragging = _dragging;
             _dragging = false;
             _resizing = false;
             _resizeHandle = ResizeHandle.None;
+
+            // A saved level gate: the drag only moved its number; now move the rest of it (rock, barrier rects,
+            // entry-script block, blocked tiles) by the same amount, then reload so the rock shows where it went.
+            if (wasDragging && _selectedIndex >= 0 && _selectedIndex < _currentEntities.Count
+                && _currentEntities[_selectedIndex] is { Kind: EntityKind.LevelGate, SourceAddress: > 0 } gate
+                && (gate.X != _dragStartPosition.X || gate.Y != _dragStartPosition.Y))
+            {
+                MoveLevelGateBundle(gate, gate.X - _dragStartPosition.X, gate.Y - _dragStartPosition.Y);
+                return;
+            }
 
             // Full refresh (quest/dialog rescans etc, see UpdateStatusLabelFast's comment)
             // happens once here, now that the drag/resize is actually done, rather than on
             // every MouseMove sample during it.
             if (wasDraggingOrResizing)
                 UpdateStatusLabel();
+        }
+
+        private Point _dragStartPosition;
+
+        private void MoveLevelGateBundle(Entity gate, int dx, int dy)
+        {
+            if (_rom == null || _currentEntry == null || CurrentMapEntryAddress() is not int mapEntryAddress) return;
+            string note = LevelGates.Move(_rom, _currentEntry, mapEntryAddress, MapLayouts(_currentEntry), gate.SourceAddress, dx, dy);
+            ReloadKeepingSelection(gate.SourceAddress);
+            statusLabel.Text = $"Moved the level gate by ({dx}, {dy}) with its rock, barrier and collision. {note}".Trim();
+        }
+
+        // Reloads the open map from _rom (after edits that rewrite arrays or scripts), keeps the in-memory ROM
+        // marked as changed and reselects the entity whose record is at sourceAddress, if it's still there.
+        private void ReloadKeepingSelection(int sourceAddress)
+        {
+            _collisionEditor = null; // gate edits may have written a fresh collision grid
+            if (mapTreeView.SelectedNode != null)
+                mapTreeView_AfterSelect(this, new TreeViewEventArgs(mapTreeView.SelectedNode));
+            _dirty = true;
+            int index = _currentEntities.FindIndex(e => e.SourceAddress == sourceAddress);
+            if (index >= 0) SelectEntity(index);
+            else { UpdateStatusLabel(); mapPictureBox.Invalidate(); }
         }
 
         private void toolStrip_ShowCollision_CheckedChanged(object sender, EventArgs e)
@@ -2987,6 +3336,7 @@ namespace Dragon_Radar
             addDialogueTriggerButton.Enabled = false;
             _levelGatePanel.Visible = false; // re-shown below for a Level Gate
             _triggerActivationPanel.Visible = false; // and this for a trigger with a ROM record
+            _decorVisiblePanel.Visible = false;      // and this for a saved decoration
             _enemyStatsPanel.Visible = false; // and this for an Enemy
 
             if (!hasSelection)
@@ -3110,10 +3460,42 @@ namespace Dragon_Radar
                     lines.Add("Position is approximate -- derived from a decoration box, not stored directly.");
                     break;
                 case EntityKind.Decoration:
-                    lines.Add($"Sprite frame offset: {entity.TypeId}");
+                    if (entity.SourceAddress == 0)
+                    {
+                        lines.Add("New decoration (not saved yet) -- a copy of this layout's decoration look; Save ROM writes it.");
+                        break;
+                    }
+                    lines.Add($"Decoration #{entity.TypeId} in this layout's list");
+                    if (_rom != null)
+                    {
+                        bool shown = Decorations.IsVisible(_rom, entity.SourceAddress);
+                        lines.Add(shown ? "Shown when the map loads." : "Starts HIDDEN: the game only draws it once a script shows it (drawn faded here).");
+                        _suppressDecorVisibleEvents = true;
+                        _decorVisibleCheck.Checked = shown;
+                        _suppressDecorVisibleEvents = false;
+                        _decorVisiblePanel.Visible = true;
+                        byte[] tail = _rom.ReadBytesAt(entity.SourceAddress + 0x10, 8);
+                        lines.Add($"Sprite frame: tile {BitConverter.ToUInt16(tail, 4)} of the layout's decoration sheet, depth {tail[6]}");
+                        bool isRock = _currentEntities.Any(g => g.Kind == EntityKind.LevelGate && g.SourceAddress > 0 && _currentEntry != null
+                            && LevelGates.Read(_rom, _currentEntry, g.SourceAddress)?.GraphicId == entity.TypeId);
+                        if (isRock) lines.Add("This is a level gate's rock: move or delete the gate and the rock goes with it.");
+                    }
+                    break;
+                case EntityKind.LevelGate when entity.SourceAddress == 0:
+                    lines.Add($"New level gate (built when you Save ROM): breaks for {LevelGates.CharacterNames[Math.Clamp(entity.Variant, 0, 5)]} at level {entity.TypeId}.");
+                    lines.Add("Saving adds the number, the rock, a breakable barrier, its own story flag and blocked collision under the rock.");
                     break;
                 case EntityKind.LevelGate:
                     lines.Add($"Requires level: {entity.TypeId}");
+                    if (_rom != null && _currentEntry != null && LevelGates.Read(_rom, _currentEntry, entity.SourceAddress) is { } bundle)
+                    {
+                        lines.Add($"Breaks for: {(bundle.Character < LevelGates.CharacterNames.Length ? LevelGates.CharacterNames[bundle.Character] : "anyone (shows '?')")}");
+                        lines.Add($"Rock: decoration #{bundle.GraphicId}; barrier item{(bundle.Items.Count == 1 ? "" : "s")}: {bundle.Items.Count}");
+                        if (bundle.Flag is int flag) lines.Add($"Story flag set when broken: {flag} (the map's entry script removes the rock once it's set)");
+                        if (bundle.Rect is { } r) lines.Add($"Blocked area: ({r[0]}, {r[1]}) to ({r[2]}, {r[3]})");
+                        if (bundle.Note.Length > 0) lines.Add(bundle.Note);
+                        lines.Add("Drag it to move the whole gate; Delete removes the whole gate.");
+                    }
                     _suppressLevelGateEvents = true;
                     _levelGateNud.Value = Math.Clamp(entity.TypeId, 0, 255);
                     _suppressLevelGateEvents = false;
@@ -3979,12 +4361,9 @@ namespace Dragon_Radar
         private async void EditSelectedPayload(bool dialogue = false, string? focus = null, bool condition = false)
         {
             if (_rom == null || _selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
+            // Pending placements go into the ROM first, or they'd be lost when the map reloads from Legacy's copy.
+            if (!MaterializeSelected()) return;
             var entity = _currentEntities[_selectedIndex];
-            if (entity.SourceAddress == 0 && entity.Kind is EntityKind.Character or EntityKind.Enemy)
-            {
-                if (!MaterializeSelected()) return;
-                entity = _currentEntities[_selectedIndex];
-            }
             string title = $"Edit {DescribeEntityAt(_selectedIndex)}";
 
             string kind;
@@ -4780,6 +5159,8 @@ namespace Dragon_Radar
                         placed = EntityWriter.PersistNewObjects(editedRom, _currentEntry, mapEntryAddress, _currentEntities);
                         placed += EntityWriter.PersistNewCharacters(editedRom, _currentEntry, mapEntryAddress, _currentEntities);
                         placed += EnemyRecords.PersistNewEnemies(editedRom, _game.MapEntries, _currentEntry, mapEntryAddress, _currentEntities);
+                        placed += LevelGates.PersistNewDecorations(editedRom, _currentMapOffset, _currentEntities);
+                        placed += LevelGates.PersistNewGates(editedRom, _currentEntry, mapEntryAddress, MapLayouts(_currentEntry), _currentEntities);
 
                         // The persist calls patch the ROM bytes of this map entry (new array
                         // pointer + count); re-read them into the in-memory entry or the reload

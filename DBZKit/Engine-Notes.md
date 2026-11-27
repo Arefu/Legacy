@@ -15,6 +15,50 @@ sub_8010304); nothing compares `level`. The barrier is the MapItem whose +4 equa
 keeps the check inline in the triggers round the gate. Dragon Radar keeps all of this in step
 (`EntityReader.FindLevelGateChecks` / `SyncLevelGateChecks`).
 
+The rest of a gate (CONFIRMED on all 22 US gates, 2026-11-27; code in `DrGero/LevelGates.cs`):
+
+- **The rock** is the layout's `graphicObjects[graphicId]`. `Map_InitTilemap` spawns every
+  decoration as an entity with its list index, before the gates and items look them up, so
+  decorations can't be removed or reordered without breaking whatever refers to them by index.
+- **The barrier item**: 16 bytes, `condition, graphicId, 1, u16 3, handler 0x0800F9A3, hit script`.
+  It only spawns when the condition passes (right character, high enough level), and that version
+  is the breakable one. Its hit script is `PlayAudio(47); SetCollisionRect(r); RemoveRectFromMask2(r);
+  SetStoryFlag(F)`. Ops 71 and 117 make `r` passable (walk grid and shot mask).
+- **Staying broken**: the map's entry script (MapEntry +0x30) has, per gate,
+  `if (TestStoryFlag(F)) { op30(graphicId); SetCollisionRect(r); RemoveRectFromMask2(r) }`.
+  op30 broadcasts message 4 to the rock, which removes it. The shipped gates use flags 272-286.
+- **Blocking**: the walk grid (+0x34) is closed under `r` until it breaks. The shot mask (+0x38)
+  is already open under 20 of the 22 rocks.
+- Four story gates (Z8A48, Z10A1, Z12A15, Z14A1) test a story flag in the condition instead and
+  their hit script ends in `ReloadMap`.
+
+Script numbers are big-endian LEB128 with zigzag (`PushVarint` 0x01, `PushMultiVarint` 0x1D).
+
+Dragon Radar treats a gate as the whole set. **Move** shifts the rock, both script rects and the
+blocked tiles. **Delete** removes the number and the barrier item, and makes the entry block always
+run (the game's own "already broken" state), because the rock itself can't be taken out of the
+list. **Place** (Decor tab) builds a new set: a rock copied from a decoration on the layout, the
+barrier item, an entry block on the first story flag at or above 500 that no script uses, and a
+closed walk grid under the rock. That only works on single-layout maps, because the gate finds its
+rock by index and each layout has its own decoration list.
+
+**Decorations from other maps** (`DrGero/Decorations.cs`): a decoration's `+0x14` is a tile index
+into its layout's own sprite sheet (`+0x2C`, 8bpp, 2 OAM units per 64-byte tile), and the whole
+sheet goes into sprite VRAM (`ObjVram_Alloc(sheet size)`, which returns -1 when it's full). The OBJ
+palette is shared by the whole game, so only the tiles have to be copied. A decoration (or gate
+rock) from another map appends its frame to this layout's sheet, or reuses it if it's already
+there. The sheet is written back as a stored resource and only this layout is repointed. Sheets
+are 128-18432 bytes (median 2112); an import is refused past 10240, the largest a regular field
+map uses (Z8A48).
+
+**Record +0x17 is "visible"** (`GraphicObject_IsOnScreenAndVisible` 0x80071FA skips a decoration
+whose flag is 0). Scripts change it with message 4 (`GraphicObject_HandleMessage` 0x8007298,
+argument `index*2 + visible`). Opcode 30 sends `index*2`, so it hides decoration n. Some shipped
+decorations start hidden and are shown by their map's scripts (event objects). Copying one of
+those as a template gave an invisible decoration, so placed decorations and gate rocks are now
+always saved visible. Dragon Radar draws hidden ones faded and has a "Shown when the map loads"
+checkbox.
+
 `Map_LoadInternal` (0x800C390) runs, in order: LevelGates (`npcArray`), items, objects, triggers,
 music, then **`mapScripts[]`** -- each record's first word is a handler called after its
 `flags` condition passes. Handlers seen in the ROM:

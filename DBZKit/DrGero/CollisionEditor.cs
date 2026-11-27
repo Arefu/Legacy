@@ -23,17 +23,22 @@ namespace DrGero.Rendering
     {
         public const int GridSize = 256;
         private const int DataBytes = GridSize * GridSize / 8; // 8192
-        private const int PointerFieldOffset = 0x34;
+        public const int CollisionField = 0x34;
+        // Map_VariationEntry +0x38: the shot mask (g_MapMask2Bitmap), same 256x256-bit format; a set bit lets shots through.
+        public const int ShotMaskField = 0x38;
 
         private readonly ROM _rom;
         private readonly int _mapOffset;
+        private readonly int _field;
         private readonly byte[] _data;
         private int _romOffset; // our stored copy (0 = not written yet)
+        private int PointerFieldOffset => _field;
 
-        private CollisionEditor(ROM rom, int mapOffset, byte[] data)
+        private CollisionEditor(ROM rom, int mapOffset, int field, byte[] data)
         {
             _rom = rom;
             _mapOffset = mapOffset;
+            _field = field;
             _data = data;
         }
 
@@ -42,9 +47,9 @@ namespace DrGero.Rendering
         public int MapOffset => _mapOffset;
 
         /// <summary>Opens a map's collision grid; a map with none starts all-clear. Null if the data can't be read.</summary>
-        public static CollisionEditor? Open(ROM rom, int mapOffset)
+        public static CollisionEditor? Open(ROM rom, int mapOffset, int field = CollisionField)
         {
-            rom.PushPosition(mapOffset + PointerFieldOffset);
+            rom.PushPosition(mapOffset + field);
             int pointer = rom.ReadPointer();
             rom.PopPosition();
 
@@ -56,7 +61,7 @@ namespace DrGero.Rendering
                 catch { return null; }
                 Array.Copy(decoded, data, Math.Min(decoded.Length, DataBytes));
             }
-            return new CollisionEditor(rom, mapOffset, data);
+            return new CollisionEditor(rom, mapOffset, field, data);
         }
 
         private static bool InRange(int tileX, int tileY) => tileX >= 0 && tileX < GridSize && tileY >= 0 && tileY < GridSize;
