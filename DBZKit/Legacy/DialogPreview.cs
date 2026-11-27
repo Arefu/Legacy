@@ -93,11 +93,11 @@ namespace Legacy
             {
                 uint pointer = GBA.ReadUInt32(rom, PortraitTable + (uint)(index * 4));
                 if (pointer == 0) return null;
-                int deflatedSize = GBA.ReadInt32(rom, pointer + 4);
-                int dataOffset = GBA.ToOffset(pointer) + 8;
                 var palette = GBA.ReadPalette(rom, PalettePtr);
-                var result = Jcalg1Decompress.Decompress(rom, dataOffset, deflatedSize);
-                return GBA.Render8bpp(result.Data, 64, 64, palette);
+                // DrGero's decoder honours the header's mode word: 0 = stored (how DBZKit's portrait Replace writes them),
+                // nonzero = JCALG1 (the shipped portraits). Always JCALG-decoding left replaced portraits blank.
+                var pixels = DrGero.Rendering.JCALG1.Decompress(ROM.FromBytes(rom), GBA.ToOffset(pointer));
+                return GBA.Render8bpp(pixels, 64, 64, palette);
             }
             catch { return null; }
         }

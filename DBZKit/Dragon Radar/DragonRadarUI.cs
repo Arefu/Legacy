@@ -1127,7 +1127,7 @@ namespace Dragon_Radar
             int sharing = EnemyStats.CountUsers(_rom, _game.MapEntries, entity.StatIndex);
             if (entity.SourceAddress == 0) sharing++; // this one isn't written into the ROM yet
             int total = EnemyRecords.EnumerateRecords(_rom, _game.MapEntries).Count();
-            string name = EnemyStats.Name(_rom, _game.Config, s) ?? $"stat entry {s.Index}";
+            string name = EnemyStats.Name(_rom, _game.Config, s, entity.TypeId) ?? $"stat entry {s.Index}";
             _enemyCountLabel.Text = $"{name} (Enemy {s.Index}): {sharing} in the ROM, of {total} enemies in total";
             _enemyStatsNote.Text = sharing > 1
                 ? $"{sharing} enemies share these stats. Applying here gives this enemy its own copy, so the others keep theirs. "
@@ -1192,7 +1192,9 @@ namespace Dragon_Radar
             if (e.Button != MouseButtons.Right) return;
             if (npcListView.GetItemAt(e.X, e.Y) is not { Tag: EnemyRecords.Template t }) return;
             var menu = new ContextMenuStrip();
-            menu.Items.Add($"Edit stats for this enemy type (Enemy {t.StatIndex})...", null, (_, _) => EditEnemyTypeStats(t));
+            string typeLabel = _rom != null && _game != null && ScouterNames.ForEnemy(_rom, _game.Config, t.StatIndex, t.SpriteId) is { } typeName
+                ? $"{typeName}, Enemy {t.StatIndex}" : $"Enemy {t.StatIndex}";
+            menu.Items.Add($"Edit stats for this enemy type ({typeLabel})...", null, (_, _) => EditEnemyTypeStats(t));
             menu.Show(npcListView, e.Location);
         }
 
@@ -1204,7 +1206,7 @@ namespace Dragon_Radar
                 MessageBox.Show($"Stat entry {template.StatIndex} isn't in this ROM's stat table.", "Edit stats", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            string typeName = EnemyStats.Name(_rom, _game.Config, stats) ?? $"stat entry {stats.Index}";
+            string typeName = EnemyStats.Name(_rom, _game.Config, stats, template.SpriteId) ?? $"stat entry {stats.Index}";
             int placed = EnemyStats.CountUsers(_rom, _game.MapEntries, stats.Index);
 
             using var form = new Form
@@ -2291,6 +2293,16 @@ namespace Dragon_Radar
             return (ordinal, total);
         }
 
+        // An enemy's or NPC's name, read live from the ROM's scouter entries (so a renamed entry shows its new name); null if none.
+        private string? ScouterName(Entity entity) => _rom == null || _game == null ? null : entity.Kind switch
+        {
+            EntityKind.Enemy => ScouterNames.ForEnemy(_rom, _game.Config, entity.StatIndex, entity.TypeId),
+            EntityKind.Character => ScouterNames.ForSprite(_rom, _game.Config, entity.TypeId),
+            _ => null
+        };
+
+        private string NamePrefix(Entity entity) => ScouterName(entity) is { } name ? $"{name}, " : "";
+
         private string DescribeEntityAt(int index)
         {
             var entity = _currentEntities[index];
@@ -2305,8 +2317,8 @@ namespace Dragon_Radar
                 EntityKind.Item => $"Item #{n} — id {entity.TypeId} (position approximate)",
                 EntityKind.Decoration => $"Decoration #{n} — frame {entity.TypeId}",
                 EntityKind.LevelGate => $"Level Gate #{n} — requires level {entity.TypeId}",
-                EntityKind.Character => $"{(IsTalkableNpc(entity) || entity.SourceAddress == 0 && entity.Variant != 2 ? "NPC" : "Actor")} #{n} — sprite {entity.TypeId}",
-                EntityKind.Enemy => $"Enemy #{n} — sprite {entity.TypeId}, stat {entity.StatIndex}",
+                EntityKind.Character => $"{(IsTalkableNpc(entity) || entity.SourceAddress == 0 && entity.Variant != 2 ? "NPC" : "Actor")} #{n} — {NamePrefix(entity)}sprite {entity.TypeId}",
+                EntityKind.Enemy => $"Enemy #{n} — {NamePrefix(entity)}sprite {entity.TypeId}, stat {entity.StatIndex}",
                 EntityKind.SpawnScript => $"Spawn Script #{n}",
                 _ => entity.Kind.ToString()
             };
@@ -2933,6 +2945,8 @@ namespace Dragon_Radar
                 $"Kind: {entity.Kind}",
                 $"Position: ({entity.X}, {entity.Y})"
             };
+            if (entity.Kind is EntityKind.Character or EntityKind.Enemy)
+                lines.Insert(1, $"Name: {ScouterName(entity) ?? "(no scouter entry)"}");
 
             if (entity.Width > 0 || entity.Height > 0)
                 lines.Add($"Size: {entity.Width} x {entity.Height}");
@@ -2960,8 +2974,15 @@ namespace Dragon_Radar
 
                     var payload = ResolveTriggerScriptPayload(entity);
                     _selectedTriggerPayloadFileOffset = payload?.PayloadFieldOffset;
-                    editScriptButton.Enabled = _selectedTriggerPayloadFileOffset != null || ReadDoorWarp(entity) != null;
-                    editDialogueButton.Enabled = _selectedTriggerPayloadFileOffset != null;
+                    bool savePoint = IsSavePoint(entity) && SavePointDialogField() != null;
+                    editScriptButton.Enabled = _selectedTriggerPayloadFileOffset != null || ReadDoorWarp(entity) != null || savePoint;
+                    editDialogueButton.Enabled = _selectedTriggerPayloadFileOffset != null || savePoint;
+                    if (savePoint)
+                    {
+                        lines.Add("");
+                        lines.Add("Save point: touching it offers the party menu (when more than one member is active), then plays the save dialogue. " +
+                            "That dialogue is shared by every save point -- Edit Script/Dialogue changes all of them.");
+                    }
                     // Duplicate/Delete rewrite MapEntry.mapTriggers[], so they only apply to triggers in
                     // that list -- not to the layout's own trigger list (doors/warps).
                     duplicateTriggerButton.Enabled = _currentEntry != null && mainList;
@@ -3527,6 +3548,26 @@ namespace Dragon_Radar
         private const uint TriggerDialogHandler = 0x0800D7E1; // MapTrigger_OnEnter: dialog sequence[] at +0x10
         private const uint TriggerScriptHandler = 0x0800C2C3; // one plain script at +0x10
         private const uint TriggerDoorHandler = 0x0800C233;   // MapTrigger_CreateDoorWarp
+        private const uint TriggerEdgeHandler = 0x0800D9C3;   // MapTrigger_CreateEdgeWarp: seamless map-edge exit, door layout
+        private const uint TriggerSaveHandler = 0x08010AC7;   // MapTrigger_CreateSavePoint: no payload of its own
+        // MapTrigger_SavePoint_OnTouch plays one dialog sequence for EVERY save point (g_SavePointDialogSeq); this is the code
+        // literal (0x08010AF8) holding its address, so the editor repoints that one word.
+        private const int SavePointDialogLiteral = 0x10AF8;
+
+        private bool IsSavePoint(Entity entity)
+        {
+            int record = TriggerRecordAddress(entity);
+            if (record <= 0 || record + 4 > _rom!.Length) return false;
+            return (uint)BitConverter.ToInt32(_rom.ReadBytesAt(record, 4)) == TriggerSaveHandler;
+        }
+
+        // The shared save dialog's pointer field, or null when this ROM doesn't have it where the US ROM does.
+        private int? SavePointDialogField()
+        {
+            if (_rom == null || SavePointDialogLiteral + 4 > _rom.Length) return null;
+            uint p = (uint)BitConverter.ToInt32(_rom.ReadBytesAt(SavePointDialogLiteral, 4));
+            return p is >= 0x08000000 and < 0x0A000000 && (p & 0x01FFFFFF) < _rom.Length ? SavePointDialogLiteral : null;
+        }
 
         // True for a trigger from MapEntry.mapTriggers[] ({condition, record} pairs), false for one from the
         // layout's own list (Map_VariationEntry +0x40/+0x44: bare record pointers, see ReadVariationTriggers).
@@ -3549,7 +3590,10 @@ namespace Dragon_Radar
         //   +0x10 low nibble = facing on arrival   +0x11 zone   +0x12 area
         //   +0x13 variation (0 = the map's own variation script picks, MapEntry_GetVariationIndex)
         //   +0x14/+0x16 = arrival X/Y (int16, world pixels; Map_Load centres the camera on it)
-        private readonly record struct DoorWarp(int Record, int Facing, int Zone, int Area, int Variation, int X, int Y);
+        // Map edge exits (MapTrigger_CreateEdgeWarp, handler 0x0800D9C3; 342 in the US ROM) use the same layout, but +0x10 is the
+        // edge side (indexes byte_83ED654: 0 bottom, 2 left, 3 right, ...) and X/Y is the top-left of the destination's matching
+        // edge strip: the player keeps their offset along the edge (player position + (target xy - this trigger's rect xy)).
+        private readonly record struct DoorWarp(int Record, int Facing, int Zone, int Area, int Variation, int X, int Y, bool Edge = false);
 
         private DoorWarp? ReadDoorWarp(Entity entity)
         {
@@ -3558,9 +3602,9 @@ namespace Dragon_Radar
             _rom.PushPosition(record);
             uint handler = (uint)_rom.ReadInt();
             _rom.PopPosition();
-            if (handler != TriggerDoorHandler) return null;
+            if (handler != TriggerDoorHandler && handler != TriggerEdgeHandler) return null;
             var b = _rom.ReadBytesAt(record + 0x10, 8);
-            return new DoorWarp(record, b[0] & 0xF, b[1], b[2], b[3], BitConverter.ToInt16(b, 4), BitConverter.ToInt16(b, 6));
+            return new DoorWarp(record, b[0] & 0xF, b[1], b[2], b[3], BitConverter.ToInt16(b, 4), BitConverter.ToInt16(b, 6), handler == TriggerEdgeHandler);
         }
 
         private string DescribeWarp(DoorWarp w)
@@ -3568,7 +3612,7 @@ namespace Dragon_Radar
             var dest = _game?.MapEntries.FirstOrDefault(e => e.Zone == w.Zone && e.Area == w.Area);
             string where = dest == null ? $"Z{w.Zone} A{w.Area} (no such map!)" : MapLabelFor(dest);
             string variation = w.Variation == 0 ? "" : $", variation {w.Variation}";
-            return $"{where}{variation}, arriving at ({w.X}, {w.Y})";
+            return w.Edge ? $"{where}{variation}, edge exit arriving along ({w.X}, {w.Y})" : $"{where}{variation}, arriving at ({w.X}, {w.Y})";
         }
 
         private void EditDoorWarp(int entityIndex)
@@ -3638,13 +3682,17 @@ namespace Dragon_Radar
         }
 
         // Where a warp goes. Variation follows Map_Load: 0 = the map's own variation script picks, N = layout N.
-        private readonly record struct WarpTarget(int Zone, int Area, int Variation, int X, int Y);
+        // SameMap = an in-map warp (the player is moved, the map stays): X/Y only, Zone/Area/Variation unused.
+        private readonly record struct WarpTarget(int Zone, int Area, int Variation, int X, int Y, bool SameMap = false, bool Fly = false);
 
-        private string DescribeWarpTarget(WarpTarget t) =>
-            DescribeWarp(new DoorWarp(0, 0, t.Zone, t.Area, t.Variation, t.X, t.Y));
+        private string DescribeWarpTarget(WarpTarget t) => t.SameMap
+            ? $"({t.X}, {t.Y}) on this map ({(t.Fly ? "player flies there" : "player teleports there")})"
+            : DescribeWarp(new DoorWarp(0, 0, t.Zone, t.Area, t.Variation, t.X, t.Y));
 
-        // Every map change a trigger makes: a door's destination, or the LoadMap/WarpToMap calls (action opcodes
-        // 35/36/38/39, each popping zone, area, variation, x, y) in its script or in its dialogue's script steps.
+        // Every warp a trigger makes: a door's destination, the LoadMap/WarpToMap calls (action opcodes 35/36/38/39, each
+        // popping zone, area, variation, x, y), and in-map warps -- FlyToPosition (54) or SetEntityPositionInstant (62) on
+        // character 0, the player (each popping character, x, y; e.g. Snowy Highlands' ice crystals) -- in its script or
+        // in its dialogue's script steps.
         private List<WarpTarget> FindWarps(Entity entity)
         {
             var warps = new List<WarpTarget>();
@@ -3676,10 +3724,24 @@ namespace Dragon_Radar
                 foreach (var ins in DrGero.Quests.InstructionDecoder.Decode(bytes))
                 {
                     if (ins.Opcode is 0x00 or 0x01 or 0x1D) { pushed.AddRange(ins.Args); continue; }
+                    // Fold constant arithmetic: warps arriving off-screen push e.g. "3,3,1,128,24" then Negate (y = -24).
+                    if (ins.Opcode == 0x06 && pushed.Count >= 1) { pushed[^1] = -pushed[^1]; continue; }
+                    if (ins.Opcode is 0x07 or 0x08 or 0x09 && pushed.Count >= 2)
+                    {
+                        long r = pushed[^1], l = pushed[^2];
+                        pushed.RemoveRange(pushed.Count - 2, 2);
+                        pushed.Add(ins.Opcode == 0x07 ? l + r : ins.Opcode == 0x08 ? l - r : l * r);
+                        continue;
+                    }
                     if (ins.Opcode == 0x02 && ins.StepIndex is 35 or 36 or 38 or 39 && pushed.Count >= 5)
                     {
                         var a = pushed.Skip(pushed.Count - 5).ToArray();
                         var target = new WarpTarget((int)a[0], (int)a[1], (int)a[2], (int)a[3], (int)a[4]);
+                        if (!warps.Contains(target)) warps.Add(target);
+                    }
+                    else if (ins.Opcode == 0x02 && ins.StepIndex is 54 or 62 && pushed.Count >= 3 && pushed[^3] == 0)
+                    {
+                        var target = new WarpTarget(0, 0, 0, (int)pushed[^2], (int)pushed[^1], SameMap: true, Fly: ins.StepIndex == 54);
                         if (!warps.Contains(target)) warps.Add(target);
                     }
                     pushed.Clear();
@@ -3692,6 +3754,12 @@ namespace Dragon_Radar
         private void GoToWarp(WarpTarget target)
         {
             if (_game == null) return;
+            if (target.SameMap)
+            {
+                CenterMapOn(target.X, target.Y);
+                statusLabel.Text = $"Followed in-map warp to {DescribeWarpTarget(target)}.";
+                return;
+            }
             var dest = _game.MapEntries.FirstOrDefault(e => e.Zone == target.Zone && e.Area == target.Area);
             var node = dest == null ? null : FindMapNode(mapTreeView.Nodes, dest);
             if (dest == null || node == null)
@@ -3716,6 +3784,10 @@ namespace Dragon_Radar
             TriggerDialogHandler => "dialogue / event",
             TriggerScriptHandler => "script",
             TriggerDoorHandler => "door / warp",
+            TriggerEdgeHandler => "map edge exit",
+            TriggerSaveHandler => "save point",
+            0x080191CB => "Scouter log screen",          // MapTrigger_CreateScouterLog
+            0x0801A6B3 => "world map entity check",      // polls EntityList_AnyMatch(22, +0x10); purpose unknown
             _ => "other"
         };
 
@@ -3863,6 +3935,21 @@ namespace Dragon_Radar
                     field = entity.SourceAddress;
                     title += " condition";
                     break;
+
+                case EntityKind.Trigger when IsSavePoint(entity):
+                    {
+                        if (SavePointDialogField() is not { } saveField)
+                        {
+                            MessageBox.Show("This ROM's save point dialogue isn't where the US ROM keeps it.", "Edit save point", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return;
+                        }
+                        if (MessageBox.Show("Every save point plays the same dialogue (g_SavePointDialogSeq), so a change here changes all of them.\n\nEdit it?",
+                                "Edit save point", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
+                        kind = "trigger";
+                        field = saveField;
+                        title = "Edit save point dialogue (shared by every save point)";
+                        break;
+                    }
 
                 case EntityKind.Trigger when ReadDoorWarp(entity) != null:
                     EditDoorWarp(_selectedIndex); // a door's "code" is its destination, not a script
@@ -4392,11 +4479,15 @@ namespace Dragon_Radar
             if (npcPlaceModeCombo.SelectedIndex == 3)
             {
                 _enemyTemplates ??= EnemyRecords.FindTemplates(_rom, _game.MapEntries);
-                palette.AddRange(_enemyTemplates.Select(t => (t.SpriteId, $"Enemy {t.StatIndex}", (object)t)));
+                palette.AddRange(_enemyTemplates.Select(t => (t.SpriteId,
+                    ScouterNames.ForEnemy(_rom, _game.Config, t.StatIndex, t.SpriteId) is { } name ? $"{name} (Enemy {t.StatIndex})" : $"Enemy {t.StatIndex}",
+                    (object)t)));
             }
             else
             {
-                palette.AddRange(CharacterIconReader.EnumerateValidSpriteIds(_rom, _game.Config).Select(id => (id, $"NPC {id}", (object)id)));
+                palette.AddRange(CharacterIconReader.EnumerateValidSpriteIds(_rom, _game.Config).Select(id => (id,
+                    ScouterNames.ForSprite(_rom, _game.Config, id) is { } name ? $"{name} (NPC {id})" : $"NPC {id}",
+                    (object)id)));
             }
 
             foreach (var (spriteId, label, tag) in palette)

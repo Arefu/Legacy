@@ -13,7 +13,8 @@ namespace DrGero
     ///              nothing at level 50, else clamped to [need/128, need/2] where need = the active character's EXP from their level
     ///              to the next (EXP table via sub_800426A). So the number shown in game depends on who is fighting.
     ///   +0x04 s32  max HP (CombatEntity_Create copies it as the starting HP)
-    ///   +0x08 s32  scouter entry (CombatEntity_Create -> ScouterTarget_Register): the name/description the scouter shows
+    ///   +0x08 s32  passed on by CombatEntity_Create -> ScouterTarget_Register, but NOT an index into g_ScouterDatabase (it matches
+    ///              the scouter table's statIndex link for 1 of 122 entries). Names come from that table instead (ScouterNames).
     ///   +0x0C u8   STR, +0x0D u8 POW, +0x0E u8 END (the scouter's numbers)
     ///   +0x0F..+0x17  not mapped (0x80, 0x80/0x60, a ROM pointer)
     ///
@@ -131,18 +132,7 @@ namespace DrGero
         }
 
         /// <summary>The name the scouter shows for an entry (its +0x08 scouter entry's name), or null.</summary>
-        public static string? Name(ROM rom, Game game, Entry e)
-        {
-            if (game.ScouterTableOffset == 0 || e.ScouterIndex < 0 || e.ScouterIndex >= game.ScouterCount) return null;
-            int at = game.ScouterTableOffset + e.ScouterIndex * 20;
-            if (at + 4 > rom.Length) return null;
-            uint p = (uint)U32(rom, at);
-            int s = (int)(p & 0x01FFFFFF);
-            if (p is < 0x08000000 or >= 0x0A000000 || s >= rom.Length) return null;
-            int end = s;
-            while (end < rom.Length && end - s < 64 && rom.RawBytes[end] != 0) end++;
-            return System.Text.Encoding.ASCII.GetString(rom.RawBytes, s, end - s);
-        }
+        public static string? Name(ROM rom, Game game, Entry e, int spriteId = -1) => ScouterNames.ForEnemy(rom, game, e.Index, spriteId);
 
         /// <summary>How many enemy records in the game use stat entry <paramref name="index"/>.</summary>
         public static int CountUsers(ROM rom, IEnumerable<MapEntry> entries, int index) =>
