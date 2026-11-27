@@ -236,9 +236,9 @@
       <param name="y">Target Y.</param>
     </member>
     <member name="SetEntityFacing" arity="2" confidence="confirmed" originalName="BytecodeVM_SetEntityFacing" index="55">
-      <summary>Sets an entity&apos;s facing direction.</summary>
+      <summary>Sets an entity&apos;s facing direction: 0 = down, 1 = up, 2 = left, 3 = right.</summary>
       <param name="charIdx">Entity to update.</param>
-      <param name="direction">Facing direction.</param>
+      <param name="direction">0 = down, 1 = up, 2 = left, 3 = right.</param>
     </member>
     <member name="SetEntityFollow" arity="2" confidence="confirmed" originalName="BytecodeVM_SetEntityFollow" index="56">
       <summary>Sets one entity to follow another (e.g.</summary>

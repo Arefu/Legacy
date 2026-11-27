@@ -54,6 +54,36 @@ The outer array each of these lives inside (`MapEntry.mapTriggers[]`) is a
 flat list of 8-byte `{vTable, result}` pairs (`MapTriggerEntry`) -- `result`
 is the pointer to one of the structs above.
 
+## Activation: once or every time
+
+The record's second word (`function`, +4) picks the trigger's **activator**: the
+object that decides when it fires. The Properties panel shows it as
+**Activates:** and the dropdown under it changes it (it rewrites that one word).
+
+| Activator | Fires when | Repeats? |
+|---|---|---|
+| `0x0800D765` | the player touches the area | once per map visit |
+| `0x0800D8EB` | the player steps into the area | every time |
+| `0x0800D839` | A is pressed inside the area | every time |
+| `0x0800D87F` / `883` / `88F` / `889` | A is pressed while facing Up / Down / Left / Right | every time |
+| `0x0801087B` / `87F` / `885` / `88B` | the player walks in holding Up / Down / Left / Right | once per map visit |
+| `0x0800D8AF` | every frame inside, and the handler decides (all doors and edge exits) | every time |
+
+"Once per map visit" means the activator deletes the trigger from the live
+list after it fires (`TriggerList_Remove`). The list is rebuilt every time a
+map loads, so the trigger comes back on the next visit. Nothing is saved for
+it. If an event should only ever happen once, the trigger's "Appears when"
+condition has to test a story flag that its script sets.
+
+Every trigger the US ROM's maps reference (1053, none shared) uses one of
+these. Facing up is the common one (73 triggers: signs and counters), facing
+right is used 5 times, and facing down and left are never used.
+
+An entity's facing (`Entity.direction`, +0x10) is 0 Down, 1 Up, 2 Left,
+3 Right. These are the same values `SetEntityFacing` takes. Map edge exits
+show it: each needs the matching d-pad key held and sets the player's facing
+to its side.
+
 ## Duplicate / Delete: how they actually work
 
 **Duplicate**: reads the selected trigger's `{vTable, dataPtr}` slot, clones

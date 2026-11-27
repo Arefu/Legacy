@@ -50,6 +50,7 @@ namespace Dragon_Radar
 
             mapTreeView.KeyDown += MapTreeView_KeyDown;
             BuildLevelGatePanel();
+            BuildTriggerActivationPanel();
             BuildEnemyStatsPanel();
             npcListView.MouseUp += npcListView_MouseUp;
             BuildViewportPanel();
@@ -979,6 +980,61 @@ namespace Dragon_Radar
         private Panel _levelGatePanel = null!;
         private NumericUpDown _levelGateNud = null!;
         private bool _suppressLevelGateEvents;
+
+        // "Activates" dropdown for a selected trigger: rewrites the record's activator getter (+4, see TriggerActivations),
+        // which decides whether the trigger fires once per map visit or every time, and on what input.
+        private Panel _triggerActivationPanel = null!;
+        private ComboBox _triggerActivationCombo = null!;
+        private bool _suppressTriggerActivationEvents;
+
+        private void BuildTriggerActivationPanel()
+        {
+            _triggerActivationCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240, Location = new Point(80, 8) };
+            var label = new Label { Text = "Activates:", AutoSize = true, Location = new Point(8, 11) };
+            _triggerActivationPanel = new Panel { Dock = DockStyle.Top, Height = 40, Visible = false };
+            _triggerActivationPanel.Controls.Add(label);
+            _triggerActivationPanel.Controls.Add(_triggerActivationCombo);
+            propertiesTabPage.Controls.Add(_triggerActivationPanel);
+            _triggerActivationCombo.SelectedIndexChanged += TriggerActivationCombo_SelectedIndexChanged;
+        }
+
+        // Fills the dropdown for this trigger's current getter; an unrecognised getter gets its own entry so it can be kept.
+        private void ShowTriggerActivation(uint getter)
+        {
+            _suppressTriggerActivationEvents = true;
+            _triggerActivationCombo.Items.Clear();
+            _triggerActivationCombo.Items.AddRange(TriggerActivations);
+            var current = DescribeTriggerActivation(getter);
+            if (current == null)
+            {
+                current = new TriggerActivation(getter, $"Unknown (0x{getter:X8})", "unknown", false);
+                _triggerActivationCombo.Items.Add(current);
+            }
+            _triggerActivationCombo.SelectedItem = current;
+            _suppressTriggerActivationEvents = false;
+            _triggerActivationPanel.Visible = true;
+        }
+
+        private void TriggerActivationCombo_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (_suppressTriggerActivationEvents || _rom == null) return;
+            if (_selectedIndex < 0 || _selectedIndex >= _currentEntities.Count) return;
+            if (_triggerActivationCombo.SelectedItem is not TriggerActivation chosen) return;
+
+            var entity = _currentEntities[_selectedIndex];
+            int record = TriggerRecordAddress(entity);
+            if (record <= 0 || record + 8 > _rom.Length) return;
+
+            uint handler = (uint)BitConverter.ToInt32(_rom.ReadBytesAt(record, 4));
+            _rom.PatchInt32(record + 4, unchecked((int)chosen.Getter)); // live, like every other edit -- Save ROM As writes it out
+            _dirty = true;
+
+            bool warpHandler = handler is TriggerDoorHandler or TriggerEdgeHandler;
+            statusLabel.Text = warpHandler && chosen.Getter != 0x0800D8AF
+                ? $"Trigger now activates: {chosen.Summary}. Note: every door and edge exit in the game uses \"every frame inside\"; others are untested on warps."
+                : $"Trigger now activates: {chosen.Summary}.";
+            UpdatePropertiesPanel();
+        }
 
         private void BuildLevelGatePanel()
         {
@@ -2930,6 +2986,7 @@ namespace Dragon_Radar
             deleteTriggerButton.Enabled = false;
             addDialogueTriggerButton.Enabled = false;
             _levelGatePanel.Visible = false; // re-shown below for a Level Gate
+            _triggerActivationPanel.Visible = false; // and this for a trigger with a ROM record
             _enemyStatsPanel.Visible = false; // and this for an Enemy
 
             if (!hasSelection)
@@ -2956,7 +3013,7 @@ namespace Dragon_Radar
             switch (entity.Kind)
             {
                 case EntityKind.Trigger:
-                    lines.Add("A trigger zone -- the game runs its handler when the player enters this rectangle.");
+                    lines.Add("A trigger zone -- the game runs its handler when the player activates this rectangle.");
                     bool mainList = IsMainListTrigger(entity);
                     lines.Add(mainList
                         ? $"Appears when: {DescribeTriggerCondition(entity.TypeId)}"
@@ -2966,8 +3023,17 @@ namespace Dragon_Radar
                     {
                         _rom.PushPosition(record);
                         uint handler = (uint)_rom.ReadInt();
+                        uint activator = (uint)_rom.ReadInt();
                         _rom.PopPosition();
                         lines.Add($"Type: {TriggerHandlerName(handler)} (handler 0x{handler:X8})");
+                        var activation = DescribeTriggerActivation(activator);
+                        lines.Add(activation is { } a
+                            ? $"Activates: {a.Summary} (activator 0x{activator:X8})"
+                            : $"Activates: unknown (activator 0x{activator:X8})");
+                        ShowTriggerActivation(activator);
+                        if (activation is { Once: true })
+                            lines.Add("  Nothing in the script remembers it: re-entering the map shows it again unless \"Appears when\" " +
+                                "is a story flag the script sets.");
                         foreach (var warp in FindWarps(entity))
                             lines.Add($"Warps to: {DescribeWarpTarget(warp)} (double-click to open)");
                     }
@@ -3790,6 +3856,47 @@ namespace Dragon_Radar
             0x0801A6B3 => "world map entity check",      // polls EntityList_AnyMatch(22, +0x10); purpose unknown
             _ => "other"
         };
+
+        // The record's second word (+4) is a getter for the trigger's ACTIVATOR: MapTrigger_InitBase calls it and keeps the
+        // object it returns, and that object's Update (relative vtable slot 1) decides when the trigger fires. Traced in
+        // IDA over all nine getters the US ROM uses (2026-11-27):
+        //   0x0800D765 -> 0x3002094, vtbl 0x80238E4, TriggerActivator_FireOnce_Update (0x800D730): fires on touch, then
+        //                 TriggerList_Remove deletes the trigger. Map_InitTriggers rebuilds the list on every map load.
+        //   0x0800D839 -> 0x3002098, vtbl 0x8023E50, 0x800D818: fires while A is pressed (buttons +0x14 bit 0), stays.
+        //   0x0800D87F/883/88F/889 -> 0x300209C+0/8/0x10/0x18, vtbl 0x8025188, 0x800D844: A pressed AND player byte +0x10
+        //                 (Entity.direction) == 1/0/2/3, stays. Direction values 0 Down, 1 Up, 2 Left, 3 Right: from
+        //                 MapTrigger_EdgeWarp_Poll, which needs the d-pad key byte_83ED654[side] held (0x80/0x40/0x20/0x10)
+        //                 and then sets direction = side. Same byte BytecodeVM_SetEntityFacing writes (0x800DFFC).
+        //   0x0800D8AF -> 0x30020BC, vtbl 0x80240F0, 0x800D89C: calls the trigger's Update every frame inside (doors, edges).
+        //   0x0800D8EB -> allocates {vtbl 0x8024980, lastFrame}, 0x800D8B8: fires when the player steps in (not on the
+        //                 frame after it was already inside), stays.
+        //   0x0801087B/87F/885/88B -> 0x3002154+0/8/0x10/0x18 (masks 0x40/0x80/0x20/0x10 = Up/Down/Left/Right), vtbl
+        //                 0x802498C, 0x801083C: fires while that direction is held, then removes itself like FireOnce.
+        // A survey of every trigger record the US ROM's maps reference (1053, none shared between triggers) found only
+        // these getters in use; 0x0800D883 and 0x0800D88F exist in code but no shipped trigger uses them.
+        private sealed record TriggerActivation(uint Getter, string Label, string Summary, bool Once)
+        {
+            public override string ToString() => Label; // what the Activates dropdown shows
+        }
+
+        private static readonly TriggerActivation[] TriggerActivations =
+        {
+            new(0x0800D765, "Touch -- once per map visit", "touch it -- fires once, then is gone until the map loads again", true),
+            new(0x0800D8EB, "Step in -- every time", "step into the area -- every time you walk in", false),
+            new(0x0800D839, "Press A -- every time", "press A inside the area -- every time", false),
+            new(0x0800D87F, "Press A facing Up -- every time", "press A while facing up -- every time", false),
+            new(0x0800D883, "Press A facing Down -- every time", "press A while facing down -- every time", false),
+            new(0x0800D88F, "Press A facing Left -- every time", "press A while facing left -- every time", false),
+            new(0x0800D889, "Press A facing Right -- every time", "press A while facing right -- every time", false),
+            new(0x0801087B, "Hold Up -- once per map visit", "walk in holding Up -- fires once, then is gone until the map loads again", true),
+            new(0x0801087F, "Hold Down -- once per map visit", "walk in holding Down -- fires once, then is gone until the map loads again", true),
+            new(0x08010885, "Hold Left -- once per map visit", "walk in holding Left -- fires once, then is gone until the map loads again", true),
+            new(0x0801088B, "Hold Right -- once per map visit", "walk in holding Right -- fires once, then is gone until the map loads again", true),
+            new(0x0800D8AF, "Every frame inside (doors / edges)", "every frame the player is inside (the handler decides, e.g. a door)", false),
+        };
+
+        private static TriggerActivation? DescribeTriggerActivation(uint getter) =>
+            Array.Find(TriggerActivations, a => a.Getter == getter);
 
         // mapTriggers[i]'s first word, as Map_InitTriggers hands it to Condition_Evaluate (0x08003F06): the trigger is
         // only created on map load when this is true. 0 = always; high half 1/2/3 = story flag (low half) set / not set /
